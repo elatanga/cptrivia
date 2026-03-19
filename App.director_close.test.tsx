@@ -59,17 +59,17 @@ describe('CRUZPHAM TRIVIA - Director Close Logic', () => {
     
     // 3. Create Show
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Test Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Template Library/i));
     
     // 4. Create Template (which autostarts logic in mock)
     // We'll simulate creating a template and clicking Play.
     // Assuming dataService handles template creation correctly in background of component.
-    fireEvent.click(screen.getByText(/New Template/i));
-    await waitFor(() => screen.getByText(/Template Title/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Game 1' } });
-    fireEvent.click(screen.getByText('Create Template', { selector: 'button' }));
+    fireEvent.click(screen.getByRole('button', { name: /Start Manual Studio Building/i }));
     await waitFor(() => screen.getByText(/Save/i));
     fireEvent.click(screen.getByText(/Save/i));
     await waitFor(() => screen.getByText(/Play Show/i));
@@ -180,3 +180,6 @@ describe('CRUZPHAM TRIVIA - Director Close Logic', () => {
     // And Director window ref should still be active/open conceptually (we don't check ref here but UI flow)
   });
 });
+
+
+

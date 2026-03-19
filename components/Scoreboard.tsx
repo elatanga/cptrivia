@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Minus, Maximize2, Minimize2, UserPlus, ShieldAlert, Star } from 'lucide-react';
 import { Player, BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
-import { getPlayerNameFontSize } from '../services/utils';
+import { getScoreboardLayoutTokens, sanitizeBoardViewSettings } from '../services/boardViewSettings';
+import { useViewportWidth } from '../hooks/useViewportWidth';
 
 interface Props {
   players: Player[];
@@ -21,18 +22,22 @@ export const Scoreboard: React.FC<Props> = ({
   const [newName, setNewName] = useState('');
   const [isCondensed, setIsCondensed] = useState(false);
 
+  const safeViewSettings = useMemo(() => sanitizeBoardViewSettings(viewSettings), [viewSettings]);
+  const viewportWidth = useViewportWidth();
+  const layoutTokens = useMemo(() => getScoreboardLayoutTokens(safeViewSettings, viewportWidth), [safeViewSettings, viewportWidth]);
+
   const playerCount = players.length;
-  const is2Col = playerCount >= 5 && !isCondensed;
+  const is2Col = playerCount >= 5 && !isCondensed && layoutTokens.allowTwoColumn;
 
   useEffect(() => {
     logger.info("scoreboard_layout", {
       ts: new Date().toISOString(),
       playerCount,
       layoutMode: is2Col ? "grid-2col" : "list-1col",
-      scoreboardScale: viewSettings?.scoreboardScale || 1.0,
+      scoreboardScale: safeViewSettings.scoreboardScale || 1.0,
       viewport: { w: window.innerWidth, h: window.innerHeight }
     });
-  }, [playerCount, is2Col, viewSettings?.scoreboardScale]);
+  }, [playerCount, is2Col, safeViewSettings.scoreboardScale]);
 
   const handleAddManual = () => {
     if (newName.trim()) {
@@ -53,14 +58,16 @@ export const Scoreboard: React.FC<Props> = ({
   };
 
   const scoreboardStyles = {
-    '--scoreboard-scale': viewSettings?.scoreboardScale || 1.0,
-    '--name-font-px': `${getPlayerNameFontSize(viewSettings?.playerNameScale || 'M')}px`,
-    '--sb-score-font': `calc(clamp(14px, 1.2vw, 28px) * var(--scoreboard-scale, 1))`,
+    '--scoreboard-scale': layoutTokens.scoreboardScale,
+    '--name-font-px': `${layoutTokens.playerNameFontPx}px`,
+    '--sb-score-font-px': `${layoutTokens.scoreFontPx}px`,
+    '--badge-font-px': `${layoutTokens.badgeFontPx}px`,
+    '--scoreboard-panel-width': layoutTokens.panelWidthCss,
   } as React.CSSProperties;
 
   return (
     <div 
-      className="h-auto lg:h-full grid grid-rows-[auto_1fr_auto] border-t lg:border-t-0 lg:border-l border-gold-900/30 bg-black/95 w-full lg:w-[clamp(18rem,24vw*var(--scoreboard-scale),45rem)] shadow-2xl z-20 font-sans font-bold select-none transition-all duration-300 overflow-hidden"
+      className="h-auto lg:h-full grid grid-rows-[auto_1fr_auto] border-t lg:border-t-0 lg:border-l border-gold-900/30 bg-black/95 w-full lg:w-[var(--scoreboard-panel-width)] shadow-2xl z-20 font-sans font-bold select-none transition-all duration-300 overflow-hidden"
       style={scoreboardStyles}
       data-testid="scoreboard-root"
       data-layout={is2Col ? "grid-2col" : "list-1col"}
@@ -104,7 +111,7 @@ export const Scoreboard: React.FC<Props> = ({
                       {displayName}
                     </span>
                     {stealsCount > 0 && (
-                      <span className="bg-purple-900/40 border border-purple-500/30 text-purple-400 text-[8px] font-black px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                      <span className="bg-purple-900/40 border border-purple-500/30 text-purple-400 font-black px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ fontSize: 'var(--badge-font-px)' }}>
                         STEALS: {stealsCount}
                       </span>
                     )}
@@ -115,7 +122,7 @@ export const Scoreboard: React.FC<Props> = ({
                 </div>
                 
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="font-mono font-black text-gold-400 drop-shadow-md" style={{ fontSize: 'var(--sb-score-font)' }}>{p.score}</span>
+                  <span className="font-mono font-black text-gold-400 drop-shadow-md" style={{ fontSize: 'var(--sb-score-font-px)' }}>{p.score}</span>
                 </div>
 
                 {isSelected && <div className="absolute left-0 top-0 bottom-0 w-1 bg-gold-500 rounded-l animate-pulse" />}

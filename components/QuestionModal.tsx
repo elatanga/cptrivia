@@ -1,10 +1,11 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ShieldAlert, ArrowLeft, Trash2, Trophy, Eye } from 'lucide-react';
 import { Question, Player, GameTimer } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { CountdownOverlay } from './CountdownOverlay';
+import { AutoFitText } from './AutoFitText';
 
 interface Props {
   question: Question;
@@ -12,33 +13,50 @@ interface Props {
   players: Player[];
   selectedPlayerId: string | null;
   timer: GameTimer;
-  questionCountdownActive?: boolean;
-  questionCountdownDuration?: number;
-  onQuestionCountdownComplete?: () => void;
+  questionCountdownRemainingSeconds?: number;
+  questionCountdownDurationSeconds?: number;
+  isQuestionCountdownRunning?: boolean;
+  onQuestionCountdownRestart?: () => void;
+  onQuestionCountdownStop?: () => void;
   onClose: (action: 'return' | 'void' | 'award' | 'steal', playerId?: string) => void;
   onReveal: () => void;
   onTimerEnd?: () => void;
 }
 
 export const QuestionModal: React.FC<Props> = ({ 
-  question, categoryTitle, players, selectedPlayerId, timer, questionCountdownActive, questionCountdownDuration, onQuestionCountdownComplete, onClose, onReveal, onTimerEnd 
+  question,
+  categoryTitle,
+  players,
+  selectedPlayerId,
+  timer,
+  questionCountdownRemainingSeconds,
+  questionCountdownDurationSeconds,
+  isQuestionCountdownRunning,
+  onQuestionCountdownRestart,
+  onQuestionCountdownStop,
+  onClose,
+  onReveal,
+  onTimerEnd
 }) => {
   const [showStealSelect, setShowStealSelect] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
-  const [countdownStopped, setCountdownStopped] = useState(false);
   
   const isRevealed = question.isRevealed;
   const isDouble = question.isDoubleOrNothing || false;
 
-  const getQuestionFontSize = useCallback((text: string) => {
-    const length = (text || '').trim().length;
-    if (length > 320) return 'clamp(24px, 3vw, 48px)';
-    if (length > 220) return 'clamp(26px, 3.4vw, 56px)';
-    if (length > 140) return 'clamp(28px, 3.8vw, 64px)';
-    return 'clamp(30px, 4.5vw, 86px)';
-  }, []);
+  const answerOptions = useMemo(() => {
+    const q = question as Question & { options?: string[] };
+    if (!Array.isArray(q.options)) return [];
+    return q.options.filter((option) => typeof option === 'string' && option.trim().length > 0).slice(0, 4);
+  }, [question]);
 
-  const questionFontSize = getQuestionFontSize(question.text);
+  const optionGridClass = answerOptions.length === 4
+    ? 'grid-cols-2'
+    : answerOptions.length === 3
+      ? 'grid-cols-1 sm:grid-cols-2'
+      : answerOptions.length === 2
+        ? 'grid-cols-1 sm:grid-cols-2'
+        : 'grid-cols-1';
 
   // LOGGING & SCROLL LOCK
   useEffect(() => {
@@ -100,7 +118,7 @@ export const QuestionModal: React.FC<Props> = ({
       if ('stopPropagation' in event) event.stopPropagation();
     }
 
-    if (questionCountdownActive && !countdownStopped && action !== 'return') {
+    if (isQuestionCountdownRunning && action !== 'return') {
       return;
     }
 
@@ -142,7 +160,7 @@ export const QuestionModal: React.FC<Props> = ({
         }
         break;
     }
-  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, questionCountdownActive, countdownStopped]);
+  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, isQuestionCountdownRunning]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -180,20 +198,17 @@ export const QuestionModal: React.FC<Props> = ({
   return (
     <div 
       data-testid="reveal-root"
-      className="fixed inset-0 z-[9999] bg-black text-white font-roboto overflow-hidden flex flex-col items-center justify-center p-4 md:p-8"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      className="fixed inset-0 z-[9999] bg-black text-white font-roboto overflow-hidden flex flex-col items-center justify-center p-2 md:p-4"
+      style={{ height: '100dvh', maxHeight: '100dvh', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* QUESTION COUNTDOWN OVERLAY */}
-      {questionCountdownActive && !countdownStopped && questionCountdownDuration && (
+      {isQuestionCountdownRunning && questionCountdownDurationSeconds && questionCountdownRemainingSeconds !== undefined && (
         <CountdownOverlay
-          duration={questionCountdownDuration}
-          onComplete={() => {
-            setCountdownStopped(true);
-            if (onQuestionCountdownComplete) onQuestionCountdownComplete();
-          }}
-          onStop={() => {
-            setCountdownStopped(true);
-          }}
+          durationSeconds={questionCountdownDurationSeconds}
+          remainingSeconds={questionCountdownRemainingSeconds}
+          isRunning={isQuestionCountdownRunning}
+          onRestart={() => onQuestionCountdownRestart && onQuestionCountdownRestart()}
+          onStop={() => onQuestionCountdownStop && onQuestionCountdownStop()}
         />
       )}
 
@@ -215,7 +230,7 @@ export const QuestionModal: React.FC<Props> = ({
       {/* SINGLE LUXURY CENTERED CONTAINER */}
       <div 
         data-testid="luxury-container"
-        className="relative z-10 w-full max-w-7xl max-h-[85vh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-4 md:p-10 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden grid grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-3 md:gap-6"
+        className="relative z-10 w-full max-w-7xl h-[min(94dvh,920px)] max-h-[94dvh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2rem] md:rounded-[2.5rem] p-3 md:p-8 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden grid grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-2 md:gap-4"
       >
         {/* TIMER OVERLAY (Floating in container corner) */}
         {timeLeft !== null && (
@@ -238,37 +253,63 @@ export const QuestionModal: React.FC<Props> = ({
         </div>
 
         {/* 2. QUESTION AREA */}
-        <div data-testid="question-viewport" className="w-full px-2 md:px-6 overflow-hidden min-h-0 flex items-center justify-center">
-          <h2 
-            data-testid="question-text"
-            className={`font-roboto-bold text-center leading-[1.08] transition-all duration-700 max-h-full overflow-hidden break-words px-1 ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
-            style={{ fontSize: questionFontSize, overflowWrap: 'anywhere' }}
-          >
-            {question.text}
-          </h2>
+        <div data-testid="question-viewport" className="w-full px-1 md:px-4 overflow-hidden min-h-0 flex items-center justify-center">
+          <AutoFitText
+            testId="question-text"
+            text={question.text}
+            minFontSizePx={20}
+            maxFontSizePx={84}
+            clampVw={4.5}
+            className={`font-roboto-bold text-center transition-all duration-500 max-h-full ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
+            containerClassName="w-full h-full flex items-center justify-center"
+          />
         </div>
 
         {/* 3. ANSWER AREA */}
-        <div className="w-full flex flex-col items-center gap-4 md:gap-8">
+        <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-0">
+          {!isRevealed && answerOptions.length > 0 && (
+            <div data-testid="answer-options-grid" className={`w-full grid ${optionGridClass} gap-2 md:gap-3`}> 
+              {answerOptions.map((option, idx) => (
+                <div
+                  key={`${option}-${idx}`}
+                  className="min-h-[56px] md:min-h-[74px] rounded-xl border border-zinc-700/70 bg-black/35 px-3 py-2 md:px-4 md:py-3 shadow-lg"
+                >
+                  <AutoFitText
+                    testId={`answer-option-${idx}`}
+                    text={option}
+                    minFontSizePx={14}
+                    maxFontSizePx={30}
+                    clampVw={2.2}
+                    className="font-roboto-bold text-zinc-100 text-left"
+                    containerClassName="w-full h-full flex items-center"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
           {isRevealed ? (
             <div 
               data-testid="answer-text"
-              className="w-full text-center py-6 md:py-10 bg-gold-950/20 border-y border-gold-500/20 animate-in zoom-in slide-in-from-bottom duration-500"
+              className="w-full text-center py-3 md:py-6 bg-gold-950/20 border-y border-gold-500/20 animate-in zoom-in slide-in-from-bottom duration-500 min-h-0"
             >
-              <p 
-                className="text-gold-400 font-roboto-bold leading-tight drop-shadow-2xl"
-                style={{ fontSize: 'clamp(24px, 3.5vw, 64px)' }}
-              >
-                {question.answer}
-              </p>
+              <AutoFitText
+                testId="answer-text-value"
+                text={question.answer}
+                minFontSizePx={18}
+                maxFontSizePx={62}
+                clampVw={3.2}
+                className="text-gold-400 font-roboto-bold text-center drop-shadow-2xl"
+                containerClassName="w-full"
+              />
             </div>
           ) : (
-            <div className="h-2 w-32 bg-zinc-800/50 rounded-full" />
+            <div className="h-2 w-32 bg-zinc-800/50 rounded-full flex-none" />
           )}
         </div>
 
         {/* 4. ACTION ICONS ROW */}
-        <div data-testid="reveal-actions-rail" className="w-full border-t border-zinc-800/60 pt-3 md:pt-5">
+        <div data-testid="reveal-actions-rail" className="w-full border-t border-zinc-800/60 pt-2 md:pt-3 flex-none">
           <div 
             data-testid="reveal-actions"
             className="flex flex-wrap items-center justify-center gap-3 md:gap-8 w-full"
@@ -291,7 +332,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed}
               onClick={(e) => handleAction('void', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && (!questionCountdownActive || countdownStopped) ? 'text-zinc-500 hover:text-red-500' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && !isQuestionCountdownRunning ? 'text-zinc-500 hover:text-red-500' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Void (ESC)"
             >
               <div className="p-3 md:p-5 bg-zinc-900/80 rounded-full border border-zinc-700 shadow-lg group-hover:border-red-900/30 transition-all">
@@ -305,8 +346,9 @@ export const QuestionModal: React.FC<Props> = ({
               {!isRevealed ? (
                 <button 
                   type="button"
+                  disabled={!!isQuestionCountdownRunning}
                   onClick={(e) => handleAction('reveal', e)}
-                  className="bg-gold-600 hover:bg-gold-500 text-black p-4 md:p-8 rounded-full shadow-[0_0_50px_rgba(255,215,0,0.3)] hover:scale-110 transition-all active:scale-95 flex items-center justify-center border-4 border-black/20"
+                  className={`text-black p-4 md:p-8 rounded-full shadow-[0_0_50px_rgba(255,215,0,0.3)] transition-all flex items-center justify-center border-4 border-black/20 ${isQuestionCountdownRunning ? 'bg-zinc-700 cursor-not-allowed opacity-50' : 'bg-gold-600 hover:bg-gold-500 hover:scale-110 active:scale-95'}`}
                   title="Reveal Answer (SPACE)"
                 >
                   <Eye className="w-8 h-8 md:w-14 md:h-14" />
@@ -321,7 +363,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed}
               onClick={(e) => handleAction('steal', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && (!questionCountdownActive || countdownStopped) ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && !isQuestionCountdownRunning ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Steal (S)"
             >
               <div className="p-3 md:p-5 bg-purple-950/20 border-2 border-purple-500/50 rounded-full shadow-xl group-hover:bg-purple-900/40 transition-all">
@@ -335,7 +377,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed || !selectedPlayerId}
               onClick={(e) => handleAction('award', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && selectedPlayerId && (!questionCountdownActive || countdownStopped) ? 'text-green-500 hover:text-green-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && selectedPlayerId && !isQuestionCountdownRunning ? 'text-green-500 hover:text-green-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Award (ENTER)"
             >
               <div className="p-3 md:p-5 bg-green-950/20 border-2 border-green-500/50 rounded-full shadow-xl group-hover:bg-green-900/40 transition-all">

@@ -4,6 +4,7 @@ export interface Question {
   text: string;
   points: number;
   answer: string;
+  options?: string[];
   isRevealed: boolean;
   isAnswered: boolean;
   isVoided?: boolean;
@@ -154,18 +155,72 @@ export interface GameState {
 }
 
 export interface QuestionCountdownTimer {
-  duration: number;
-  isActive: boolean;
+  durationSeconds: number;
+  remainingSeconds: number;
+  isRunning: boolean;
+  isStopped: boolean;
   startedAt: number | null;
-  timeRemaining: number;
+  endsAt: number | null;
+  activeQuestionId: string | null;
 }
 
 export interface SessionGameTimer {
-  preset: '15m' | '30m' | '1h' | '1h30m' | '2h' | null;
-  isActive: boolean;
+  durationSeconds: number;
+  remainingSeconds: number;
+  isRunning: boolean;
+  isStopped: boolean;
   startedAt: number | null;
-  timeRemaining: number;
-  paused: boolean;
+  endsAt: number | null;
+  selectedPreset: '15m' | '30m' | '1h' | '1h30m' | '2h' | null;
+}
+
+export interface TimerAudioSettings {
+  enabled: boolean;
+  muted: boolean;
+  volume: number;
+  tickSoundEnabled: boolean;
+  endSoundEnabled: boolean;
+}
+
+export type SoundCategory = 'TIMERS' | 'GAMEPLAY' | 'UI' | 'SYSTEM';
+
+export type SoundKey =
+  | 'timerTick'
+  | 'timerEnd'
+  | 'sessionCue'
+  | 'steal'
+  | 'award'
+  | 'void'
+  | 'reveal'
+  | 'correct'
+  | 'wrong'
+  | 'buzzer'
+  | 'doubleOrNothing'
+  | 'click'
+  | 'select'
+  | 'tileOpen'
+  | 'modalOpen'
+  | 'toastSuccess'
+  | 'toastError'
+  | 'toastInfo';
+
+export interface SoundControlState {
+  enabled: boolean;
+  muted: boolean;
+  volume: number;
+}
+
+export interface SoundBoardState {
+  masterEnabled: boolean;
+  masterMuted: boolean;
+  masterVolume: number;
+  sounds: Record<SoundKey, SoundControlState>;
+}
+
+export interface SoundDefinition {
+  key: SoundKey;
+  label: string;
+  category: SoundCategory;
 }
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug';

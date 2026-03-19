@@ -56,14 +56,14 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     await waitFor(() => screen.getByText(/Select Production/i));
     
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Test Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Template Library/i));
     
     fireEvent.click(screen.getByText(/Create Template/i));
-    await waitFor(() => screen.getByText(/New Template Configuration/i));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
 
     fireEvent.change(screen.getByPlaceholderText(/Show or Game Topic/i), { target: { value: 'Save Button Test' } });
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     await waitFor(() => screen.getByText(/Live Builder Preview/i));
   };
 
@@ -150,3 +150,6 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     expect(saveBtn).toBeVisible();
   });
 });
+
+
+

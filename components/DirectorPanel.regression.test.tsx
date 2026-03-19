@@ -74,10 +74,28 @@ describe('DirectorPanel: Settings & Category Regen', () => {
         onUpdateState={mockOnUpdateState}
         emitGameEvent={mockEmitGameEvent}
         addToast={mockAddToast}
-        questionCountdown={{ duration: 0, isActive: false, startedAt: null, timeRemaining: 0 }}
-        onQuestionCountdownStart={mockStartQuestionCountdown}
-        onQuestionCountdownStop={mockStopQuestionCountdown}
-        sessionTimer={{ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false }}
+        questionTimer={{
+          durationSeconds: 10,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          activeQuestionId: null,
+        }}
+        questionTimerEnabled={true}
+        questionTimerDurationSeconds={10}
+        onQuestionTimerDurationChange={mockStartQuestionCountdown}
+        onQuestionTimerStop={mockStopQuestionCountdown}
+        sessionTimer={{
+          durationSeconds: 0,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          selectedPreset: null,
+        }}
         onSessionTimerStart={mockStartSessionTimer}
         onSessionTimerPause={mockPauseSessionTimer}
         onSessionTimerReset={mockResetSessionTimer}
@@ -134,7 +152,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
         ts: eventTs + i,
         iso: new Date(eventTs + i).toISOString(),
         type: 'POINTS_AWARDED' as AnalyticsEventType,
-        actor: { role: 'director' },
+        actor: { role: 'director' as const },
         context: { playerName: `Player ${i + 1}`, points: 100, delta: 100, categoryName: 'Art' }
         }))
       ]

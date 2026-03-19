@@ -101,7 +101,7 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
     setupModal();
     const qText = screen.getByTestId('question-text');
     expect(qText).toHaveClass('font-roboto-bold');
-    expect(qText.getAttribute('style')).toContain('clamp(30px, 4.5vw, 86px)');
+    expect(qText.getAttribute('style')).toContain('line-height');
   });
 
   test('D) VISIBILITY: Question viewport and actions rail are separated inside container', () => {
@@ -125,7 +125,7 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
     expect(container).toHaveClass('overflow-hidden');
 
     const qText = screen.getByTestId('question-text');
-    expect(qText.getAttribute('style')).toContain('clamp(24px, 3vw, 48px)');
+    expect(qText).toHaveClass('break-words');
   });
 
   test('F) LOGGING: Logs reveal UI render event', () => {

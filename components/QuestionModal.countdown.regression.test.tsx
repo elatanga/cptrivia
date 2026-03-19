@@ -47,6 +47,22 @@ describe('QuestionModal Countdown Regression', () => {
     isDoubleOrNothing: false,
   };
 
+  const multipleChoiceQuestion: Question = {
+    id: 'q2',
+    text: 'A very long multiple-choice question prompt that must stay fully visible in one viewport without scrolling even on smaller screens.',
+    points: 200,
+    answer: 'Correct answer',
+    options: [
+      'A long option A that could otherwise overflow if sizing is not managed correctly.',
+      'A long option B with additional explanatory wording for stress testing.',
+      'A long option C that contains more than one clause and punctuation.',
+      'A long option D with enough content to require safe wrapping and scaling.'
+    ],
+    isRevealed: false,
+    isAnswered: false,
+    isDoubleOrNothing: false,
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     window.confirm = vi.fn(() => true);
@@ -66,8 +82,11 @@ describe('QuestionModal Countdown Regression', () => {
         players={players}
         selectedPlayerId="p1"
         timer={timer}
-        questionCountdownActive={true}
-        questionCountdownDuration={5}
+        questionCountdownRemainingSeconds={5}
+        questionCountdownDurationSeconds={5}
+        isQuestionCountdownRunning={true}
+        onQuestionCountdownStop={vi.fn()}
+        onQuestionCountdownRestart={vi.fn()}
         onClose={onClose}
         onReveal={vi.fn()}
       />
@@ -82,30 +101,58 @@ describe('QuestionModal Countdown Regression', () => {
 
   it('allows resolving actions after countdown is manually stopped', () => {
     const onClose = vi.fn();
+    const onStop = vi.fn();
 
-    render(
+    const { rerender } = render(
       <QuestionModal
         question={revealedQuestion}
         categoryTitle="General"
         players={players}
         selectedPlayerId="p1"
         timer={timer}
-        questionCountdownActive={true}
-        questionCountdownDuration={5}
+        questionCountdownRemainingSeconds={5}
+        questionCountdownDurationSeconds={5}
+        isQuestionCountdownRunning={true}
+        onQuestionCountdownStop={onStop}
+        onQuestionCountdownRestart={vi.fn()}
         onClose={onClose}
         onReveal={vi.fn()}
       />
     );
 
     fireEvent.click(screen.getByRole('button', { name: /stop/i }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <QuestionModal
+        question={revealedQuestion}
+        categoryTitle="General"
+        players={players}
+        selectedPlayerId="p1"
+        timer={timer}
+        questionCountdownRemainingSeconds={0}
+        questionCountdownDurationSeconds={5}
+        isQuestionCountdownRunning={false}
+        onQuestionCountdownStop={onStop}
+        onQuestionCountdownRestart={vi.fn()}
+        onClose={onClose}
+        onReveal={vi.fn()}
+      />
+    );
+
     fireEvent.click(screen.getByRole('button', { name: /award/i }));
 
     expect(onClose).toHaveBeenCalledWith('award', 'p1');
   });
 
-  it('fires completion callback when countdown finishes', async () => {
+  it('fires completion callback when legacy reveal timer finishes', async () => {
     vi.useFakeTimers();
     const onComplete = vi.fn();
+    const liveTimer: GameTimer = {
+      duration: 3,
+      endTime: Date.now() + 3000,
+      isRunning: true,
+    };
 
     render(
       <QuestionModal
@@ -113,12 +160,10 @@ describe('QuestionModal Countdown Regression', () => {
         categoryTitle="General"
         players={players}
         selectedPlayerId="p1"
-        timer={timer}
-        questionCountdownActive={true}
-        questionCountdownDuration={3}
-        onQuestionCountdownComplete={onComplete}
+        timer={liveTimer}
         onClose={vi.fn()}
         onReveal={vi.fn()}
+        onTimerEnd={onComplete}
       />
     );
 
@@ -127,6 +172,75 @@ describe('QuestionModal Countdown Regression', () => {
     });
 
     expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps viewport locked and renders options in a polished 2x2 grid for four choices', () => {
+    render(
+      <QuestionModal
+        question={multipleChoiceQuestion}
+        categoryTitle="General"
+        players={players}
+        selectedPlayerId="p1"
+        timer={timer}
+        onClose={vi.fn()}
+        onReveal={vi.fn()}
+      />
+    );
+
+    const root = screen.getByTestId('reveal-root');
+    expect(root.getAttribute('style')).toContain('100dvh');
+    expect(root).toHaveClass('overflow-hidden');
+
+    const optionGrid = screen.getByTestId('answer-options-grid');
+    expect(optionGrid).toHaveClass('grid-cols-2');
+    expect(screen.getByTestId('answer-option-0')).toBeInTheDocument();
+    expect(screen.getByTestId('answer-option-1')).toBeInTheDocument();
+    expect(screen.getByTestId('answer-option-2')).toBeInTheDocument();
+    expect(screen.getByTestId('answer-option-3')).toBeInTheDocument();
+  });
+
+  it('handles ultra-long prompt/options on mobile without enabling scroll regions', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 });
+    window.dispatchEvent(new Event('resize'));
+
+    const ultraLongQuestion: Question = {
+      ...multipleChoiceQuestion,
+      text: 'ULTRA LONG QUESTION '.repeat(80),
+      options: [
+        'Option A '.repeat(35),
+        'Option B '.repeat(35),
+        'Option C '.repeat(35),
+        'Option D '.repeat(35)
+      ]
+    };
+
+    render(
+      <QuestionModal
+        question={ultraLongQuestion}
+        categoryTitle="General"
+        players={players}
+        selectedPlayerId="p1"
+        timer={timer}
+        onClose={vi.fn()}
+        onReveal={vi.fn()}
+      />
+    );
+
+    const root = screen.getByTestId('reveal-root');
+    const container = screen.getByTestId('luxury-container');
+    const viewport = screen.getByTestId('question-viewport');
+    const optionsGrid = screen.getByTestId('answer-options-grid');
+    const actionsRail = screen.getByTestId('reveal-actions-rail');
+
+    expect(root).toHaveClass('overflow-hidden');
+    expect(root.getAttribute('style')).toContain('100dvh');
+    expect(container).toHaveClass('overflow-hidden');
+    expect(viewport).toHaveClass('overflow-hidden');
+    expect(optionsGrid).toHaveClass('grid');
+    expect(actionsRail).toBeInTheDocument();
+
+    expect(screen.getByTestId('answer-option-0')).toHaveClass('break-words');
+    expect(screen.getByTestId('answer-option-3')).toHaveClass('break-words');
   });
 });
 

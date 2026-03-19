@@ -59,7 +59,7 @@ describe('CRUZPHAM TRIVIA - Point Scale Tests', () => {
     // Create Show
     await waitFor(() => screen.getByText(/Select Production/i));
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Scale Test Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Template Library/i));
     
     return utils;
@@ -69,8 +69,8 @@ describe('CRUZPHAM TRIVIA - Point Scale Tests', () => {
     await setupAuthenticatedApp();
 
     // Open Template Creator
-    fireEvent.click(screen.getByText(/New Template/i));
-    await waitFor(() => screen.getByText(/New Template Configuration/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     
     // 1a. Test Scale = 10
     fireEvent.click(screen.getByText('10', { selector: 'button' }));
@@ -102,7 +102,7 @@ describe('CRUZPHAM TRIVIA - Point Scale Tests', () => {
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Scale 20 Test' } });
     
     // Create
-    fireEvent.click(screen.getByText('Start Building', { selector: 'button' }));
+    fireEvent.click(screen.getByRole('button', { name: /Start Manual Studio Building/i }));
     
     // Check Board Values: 20, 40, 60, 80, 100, 120, 140, 160, 180, 200 (10 rows)
     await waitFor(() => screen.getByText('20'));
@@ -163,13 +163,13 @@ describe('CRUZPHAM TRIVIA - Point Scale Tests', () => {
   test('3) Integration: Template Creation with Scale 50', async () => {
     await setupAuthenticatedApp();
 
-    fireEvent.click(screen.getByText(/New Template/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
     await waitFor(() => screen.getByText(/Configuration/i));
 
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Fifty Scale' } });
     fireEvent.click(screen.getByText('50', { selector: 'button' }));
     
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     
     // Verify Builder View
     await waitFor(() => screen.getByText('Fifty Scale'));
@@ -228,11 +228,11 @@ describe('CRUZPHAM TRIVIA - Point Scale Tests', () => {
   test('5) Smoke: Gameplay with Scale 50', async () => {
     await setupAuthenticatedApp();
     
-    fireEvent.click(screen.getByText(/New Template/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
     await waitFor(() => screen.getByText(/Configuration/i));
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Game 50' } });
     fireEvent.click(screen.getByText('50', { selector: 'button' }));
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     fireEvent.click(screen.getByText('Save'));
     await waitFor(() => screen.getByText('Play Show'));
     fireEvent.click(screen.getByText('Play Show'));
@@ -253,3 +253,6 @@ describe('CRUZPHAM TRIVIA - Point Scale Tests', () => {
     });
   });
 });
+
+
+

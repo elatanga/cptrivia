@@ -52,11 +52,11 @@ describe('AI Generation Locks & Atomic Updates', () => {
     await waitFor(() => screen.getByText(/Select Production/i));
     
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'AI Lock Test' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Template Library/i));
     
     fireEvent.click(screen.getByText(/Create Template/i));
-    await waitFor(() => screen.getByText(/New Template Configuration/i));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'AI Test Board' } });
   };
@@ -75,7 +75,7 @@ describe('AI Generation Locks & Atomic Updates', () => {
     await waitFor(() => expect(screen.getByText(/AI Studio Working/i)).toBeInTheDocument());
     
     // Fix: Cast HTMLElement to HTMLInputElement to access .value property
-    const titleInput = screen.getByPlaceholderText(/Template Title/i) as HTMLInputElement;
+    const titleInput = screen.getByPlaceholderText(/e.g. Science Night 2024/i) as HTMLInputElement;
     expect(titleInput).toBeDisabled();
     
     fireEvent.change(titleInput, { target: { value: 'User Hack' } });
@@ -144,7 +144,7 @@ describe('AI Generation Locks & Atomic Updates', () => {
   test('Rollback on failure restores snapshot', async () => {
     await setupBuilder();
     
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     await waitFor(() => screen.getByText('Category 1'));
     
     let rejectGen: (error: any) => void;
@@ -165,3 +165,7 @@ describe('AI Generation Locks & Atomic Updates', () => {
     expect(screen.getByText('Category 1')).toBeInTheDocument();
   });
 });
+
+
+
+

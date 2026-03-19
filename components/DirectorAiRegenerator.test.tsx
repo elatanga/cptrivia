@@ -57,7 +57,7 @@ describe('DirectorAiRegenerator: Board-Wide Logic', () => {
 
     render(<DirectorAiRegenerator gameState={baseState} onUpdateState={mockOnUpdateState} addToast={mockAddToast} />);
 
-    fireEvent.change(screen.getByPlaceholderText(/Global Topic/i), { target: { value: 'New Topic' } });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'New Topic' } });
     fireEvent.click(screen.getByText('Regenerate All'));
 
     await waitFor(() => {
@@ -76,7 +76,7 @@ describe('DirectorAiRegenerator: Board-Wide Logic', () => {
 
     render(<DirectorAiRegenerator gameState={baseState} onUpdateState={mockOnUpdateState} addToast={mockAddToast} />);
     
-    fireEvent.change(screen.getByPlaceholderText(/Global Topic/i), { target: { value: 'Broken' } });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Broken' } });
     fireEvent.click(screen.getByText('Regenerate All'));
 
     await waitFor(() => {

@@ -52,15 +52,15 @@ describe('Wildcard Feature Tests', () => {
     // Create Show
     await waitFor(() => screen.getByText(/Select Production/i));
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Wildcard Test' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     
     // Create Template
     await waitFor(() => screen.getByText(/Template Library/i));
-    fireEvent.click(screen.getByText(/New Template/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
     
-    await waitFor(() => screen.getByText(/Template Title/i));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Wild Game' } });
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     
     await waitFor(() => screen.getByText(/Save/i));
     fireEvent.click(screen.getByText(/Save/i));
@@ -85,7 +85,7 @@ describe('Wildcard Feature Tests', () => {
     const useBtn = screen.getAllByTitle(/Increment Wildcard Usage/i)[0];
     
     // Initial State: 0/4 used
-    expect(screen.getByText('0/4')).toBeInTheDocument();
+    expect(screen.getAllByText('0/4').length).toBeGreaterThan(0);
     
     // 1. Click Use (Increment to 1)
     fireEvent.click(useBtn);
@@ -119,7 +119,7 @@ describe('Wildcard Feature Tests', () => {
     await setupAndStartGame();
     
     // 1. Initially normal
-    const pName = screen.getByText('Player 1');
+    const pName = screen.getByText(/Player 1/i);
     expect(pName).not.toHaveClass('text-red-500'); // Ensure no red text on name
     expect(screen.queryByText('★')).not.toBeInTheDocument();
     
@@ -140,7 +140,7 @@ describe('Wildcard Feature Tests', () => {
     expect(star1).toHaveStyle('color: #FF8A00');
     
     // Check name color did NOT change
-    const pNameAfter1 = screen.getByText('Player 1');
+    const pNameAfter1 = screen.getByText(/Player 1/i);
     expect(pNameAfter1).toHaveClass('text-zinc-400'); // Assuming not selected, if selected text-white. Should NOT be red.
 
     // 6. Go back and increment to 4
@@ -159,3 +159,7 @@ describe('Wildcard Feature Tests', () => {
     expect(star4).toHaveStyle('color: #FFD400');
   });
 });
+
+
+
+

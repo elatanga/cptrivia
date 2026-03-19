@@ -1,46 +1,24 @@
-import React, { useEffect, useState } from 'react';
-import { soundService } from '../services/soundService';
+import React from 'react';
 
 interface Props {
-  duration: number;
-  onComplete: () => void;
+  durationSeconds: number;
+  remainingSeconds: number;
+  isRunning: boolean;
+  onRestart: () => void;
   onStop: () => void;
 }
 
-export const CountdownOverlay: React.FC<Props> = ({ duration, onComplete, onStop }) => {
-  const [timeLeft, setTimeLeft] = useState(duration);
-  const [isStopped, setIsStopped] = useState(false);
-  const [completionSent, setCompletionSent] = useState(false);
-
-  useEffect(() => {
-    if (isStopped) return;
-    const interval = window.setInterval(() => {
-      setTimeLeft((prev) => Math.max(0, prev - 1));
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [isStopped]);
-
-  useEffect(() => {
-    if (isStopped) return;
-    if (timeLeft > 0 && timeLeft <= 3) {
-      soundService.playTimerTick();
-      return;
-    }
-    if (timeLeft === 0 && !completionSent) {
-      setCompletionSent(true);
-      soundService.playTimerAlarm();
-      onComplete();
-    }
-  }, [timeLeft, isStopped, completionSent, onComplete]);
-
-  const handleStop = () => {
-    setIsStopped(true);
-    onStop();
-  };
-
-  const percentage = (timeLeft / duration) * 100;
-  const isLowTime = timeLeft <= 3;
+export const CountdownOverlay: React.FC<Props> = ({
+  durationSeconds,
+  remainingSeconds,
+  isRunning,
+  onRestart,
+  onStop
+}) => {
+  const safeDuration = Math.max(1, durationSeconds);
+  const safeRemaining = Math.max(0, remainingSeconds);
+  const percentage = (safeRemaining / safeDuration) * 100;
+  const isLowTime = safeRemaining <= 3 && isRunning;
 
   return (
     <div className="fixed inset-0 flex items-center justify-center z-[10001] pointer-events-none">
@@ -75,23 +53,30 @@ export const CountdownOverlay: React.FC<Props> = ({ duration, onComplete, onStop
               isLowTime ? 'text-red-500 animate-pulse' : 'text-gold-400'
             }`}
           >
-            {timeLeft}
+            {safeRemaining}
           </div>
           <div className="text-xs md:text-sm font-bold uppercase tracking-widest text-zinc-400 mt-2">
-            {isStopped ? 'Stopped' : 'Sec'}
+            {isRunning ? 'Sec' : 'Stopped'}
           </div>
         </div>
 
-        {/* Stop button */}
-        {!isStopped && (
+        {/* Controls */}
+        <div className="absolute -bottom-14 left-1/2 transform -translate-x-1/2 flex items-center gap-2">
           <button
-            onClick={handleStop}
-            className="absolute -bottom-12 left-1/2 transform -translate-x-1/2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-black uppercase rounded-lg transition-colors active:scale-95"
+            onClick={onRestart}
+            className="px-3 py-2 bg-gold-600 hover:bg-gold-500 text-black text-[11px] font-black uppercase rounded-lg transition-colors active:scale-95"
+            title="Restart countdown"
+          >
+            Restart
+          </button>
+          <button
+            onClick={onStop}
+            className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-[11px] font-black uppercase rounded-lg transition-colors active:scale-95"
             title="Stop countdown"
           >
             Stop
           </button>
-        )}
+        </div>
       </div>
     </div>
   );
