@@ -7,6 +7,49 @@ import { logger } from '../services/logger';
 import { CountdownOverlay } from './CountdownOverlay';
 import { AutoFitText } from './AutoFitText';
 
+const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => void }> = React.memo(({ timer, onTimerEnd }) => {
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const prevTimeLeft = useRef<number | null>(null);
+
+  useEffect(() => {
+    let interval: number;
+    const updateTimer = () => {
+      if (timer.endTime && timer.isRunning) {
+        const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
+        setTimeLeft(remaining);
+        if (remaining > 0 && remaining <= 5 && remaining !== prevTimeLeft.current) {
+          soundService.playTimerTick();
+        }
+        if (remaining === 0 && prevTimeLeft.current !== 0 && prevTimeLeft.current !== null) {
+          soundService.playTimerAlarm();
+          if (onTimerEnd) onTimerEnd();
+        }
+        prevTimeLeft.current = remaining;
+      } else if (timer.endTime && !timer.isRunning && timeLeft === null) {
+        const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
+        setTimeLeft(remaining);
+      } else if (!timer.endTime) {
+        setTimeLeft(null);
+        prevTimeLeft.current = null;
+      }
+    };
+
+    updateTimer();
+    interval = window.setInterval(updateTimer, 200);
+    return () => clearInterval(interval);
+  }, [timer, timeLeft, onTimerEnd]);
+
+  if (timeLeft === null) return null;
+
+  return (
+    <div
+      className={`absolute top-6 right-6 md:top-10 md:right-10 p-2 md:p-4 rounded-full border-2 md:border-4 font-mono text-xl md:text-4xl font-black flex items-center justify-center w-12 h-12 md:w-24 md:h-24 transition-colors duration-300 bg-black/60 z-30 shadow-xl ${timeLeft <= 5 ? 'border-red-500 text-red-500 animate-pulse' : 'border-gold-500 text-gold-500'}`}
+    >
+      {timeLeft}
+    </div>
+  );
+});
+
 interface Props {
   question: Question;
   categoryTitle: string;
@@ -39,7 +82,6 @@ export const QuestionModal: React.FC<Props> = ({
   onTimerEnd
 }) => {
   const [showStealSelect, setShowStealSelect] = useState(false);
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
   
   const isRevealed = question.isRevealed;
   const isDouble = question.isDoubleOrNothing || false;
@@ -78,35 +120,6 @@ export const QuestionModal: React.FC<Props> = ({
       document.body.style.overflow = originalStyle.bodyOverflow;
     };
   }, [question.id, isDouble]);
-
-  // Timer Logic (Unchanged)
-  const prevTimeLeft = useRef<number | null>(null);
-  useEffect(() => {
-    let interval: number;
-    const updateTimer = () => {
-       if (timer.endTime && timer.isRunning) {
-         const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
-         setTimeLeft(remaining);
-         if (remaining > 0 && remaining <= 5 && remaining !== prevTimeLeft.current) {
-            soundService.playTimerTick();
-         }
-         if (remaining === 0 && prevTimeLeft.current !== 0 && prevTimeLeft.current !== null) {
-            soundService.playTimerAlarm();
-            if (onTimerEnd) onTimerEnd();
-         }
-         prevTimeLeft.current = remaining;
-       } else if (timer.endTime && !timer.isRunning && timeLeft === null) {
-         const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
-         setTimeLeft(remaining);
-       } else if (!timer.endTime) {
-         setTimeLeft(null);
-         prevTimeLeft.current = null;
-       }
-    };
-    updateTimer();
-    interval = window.setInterval(updateTimer, 200);
-    return () => clearInterval(interval);
-  }, [timer, timeLeft, onTimerEnd]);
 
   useEffect(() => {
     if (isDouble && !isRevealed) soundService.playDoubleOrNothing();
@@ -232,12 +245,8 @@ export const QuestionModal: React.FC<Props> = ({
         data-testid="luxury-container"
         className="relative z-10 w-full max-w-7xl h-[min(94dvh,920px)] max-h-[94dvh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2rem] md:rounded-[2.5rem] p-3 md:p-8 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden grid grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-2 md:gap-4"
       >
-        {/* TIMER OVERLAY (Floating in container corner) */}
-        {timeLeft !== null && (
-           <div className={`absolute top-6 right-6 md:top-10 md:right-10 p-2 md:p-4 rounded-full border-2 md:border-4 font-mono text-xl md:text-4xl font-black flex items-center justify-center w-12 h-12 md:w-24 md:h-24 transition-colors duration-300 bg-black/60 z-30 shadow-xl ${timeLeft <= 5 ? 'border-red-500 text-red-500 animate-pulse' : 'border-gold-500 text-gold-500'}`}>
-             {timeLeft}
-           </div>
-        )}
+        {/* Legacy per-question timer badge isolated from modal rendering flow */}
+        <LegacyQuestionTimerBadge timer={timer} onTimerEnd={onTimerEnd} />
 
         {/* 1. DOUBLE OR NOTHING LABEL */}
         <div className="h-12 flex items-center justify-center">

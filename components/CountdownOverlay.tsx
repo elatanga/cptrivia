@@ -8,7 +8,7 @@ interface Props {
   onStop: () => void;
 }
 
-export const CountdownOverlay: React.FC<Props> = ({
+const CountdownOverlayComponent: React.FC<Props> = ({
   durationSeconds,
   remainingSeconds,
   isRunning,
@@ -21,8 +21,8 @@ export const CountdownOverlay: React.FC<Props> = ({
   const isLowTime = safeRemaining <= 3 && isRunning;
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center z-[10001] pointer-events-none">
-      <div className="relative w-40 h-40 md:w-56 md:h-56 flex items-center justify-center pointer-events-auto">
+    <div className="fixed right-3 top-20 md:top-24 md:right-6 z-[10001] pointer-events-none" data-testid="question-countdown-overlay">
+      <div className="relative w-36 h-36 md:w-48 md:h-48 flex items-center justify-center pointer-events-auto">
         {/* Background circle with gradient */}
         <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100">
           <circle
@@ -42,14 +42,14 @@ export const CountdownOverlay: React.FC<Props> = ({
             strokeWidth="3"
             strokeDasharray={`${(percentage / 100) * 282.7} 282.7`}
             strokeLinecap="round"
-            className={`transition-all duration-100 ${isLowTime ? 'animate-pulse' : ''}`}
+            className={isLowTime ? 'animate-pulse' : ''}
           />
         </svg>
 
         {/* Time display */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <div
-            className={`text-5xl md:text-7xl font-black font-mono tabular-nums transition-all duration-100 drop-shadow-lg ${
+            className={`text-4xl md:text-6xl font-black font-mono tabular-nums drop-shadow-lg ${
               isLowTime ? 'text-red-500 animate-pulse' : 'text-gold-400'
             }`}
           >
@@ -81,4 +81,6 @@ export const CountdownOverlay: React.FC<Props> = ({
     </div>
   );
 };
+
+export const CountdownOverlay = React.memo(CountdownOverlayComponent);
 

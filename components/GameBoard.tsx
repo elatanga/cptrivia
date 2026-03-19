@@ -21,6 +21,13 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
     logger.info("trivia_board_theme_updated", { backgroundTheme: "luxury_light", atIso: new Date().toISOString() });
   }, []);
 
+  useEffect(() => {
+    logger.info('trivia_board_session_timer_render', {
+      active: !!sessionTimerActive,
+      remainingSeconds: sessionTimeRemaining ?? null,
+    });
+  }, [sessionTimerActive, sessionTimeRemaining]);
+
   const safeViewSettings = useMemo(() => sanitizeBoardViewSettings(viewSettings), [viewSettings]);
   const viewportWidth = useViewportWidth();
   const layoutTokens = useMemo(() => getTriviaBoardLayoutTokens(safeViewSettings, viewportWidth), [safeViewSettings, viewportWidth]);

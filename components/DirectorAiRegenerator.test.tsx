@@ -48,7 +48,7 @@ describe('DirectorAiRegenerator: Board-Wide Logic', () => {
     vi.clearAllMocks();
   });
 
-  it('A) ATOMIC ZIP: preserves structure, IDs, and answered status', async () => {
+  it('A) FULL RESET: preserves structure while clearing answered/voided progress', async () => {
     const aiResult = [{
       id: 'ai-gen-id', title: 'New Science',
       questions: [{ id: 'ai-gen-q', text: 'New AI Q', answer: 'New AI A', points: 5000, isRevealed: false, isAnswered: false, isDoubleOrNothing: false }]
@@ -66,7 +66,9 @@ describe('DirectorAiRegenerator: Board-Wide Logic', () => {
 
       expect(q.id).toBe('q-1'); // Preserved
       expect(q.points).toBe(100); // Preserved
-      expect(q.isAnswered).toBe(true); // Preserved status
+      expect(q.isAnswered).toBe(false); // Reset to active
+      expect(q.isVoided).toBe(false);
+      expect(q.isRevealed).toBe(false);
       expect(q.text).toBe('New AI Q'); // Updated content
     });
   });
