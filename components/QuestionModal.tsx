@@ -4,6 +4,7 @@ import { ShieldAlert, ArrowLeft, Trash2, Trophy, Eye } from 'lucide-react';
 import { Question, Player, GameTimer } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
+import { CountdownOverlay } from './CountdownOverlay';
 
 interface Props {
   question: Question;
@@ -11,16 +12,20 @@ interface Props {
   players: Player[];
   selectedPlayerId: string | null;
   timer: GameTimer;
+  questionCountdownActive?: boolean;
+  questionCountdownDuration?: number;
+  onQuestionCountdownComplete?: () => void;
   onClose: (action: 'return' | 'void' | 'award' | 'steal', playerId?: string) => void;
   onReveal: () => void;
   onTimerEnd?: () => void;
 }
 
 export const QuestionModal: React.FC<Props> = ({ 
-  question, categoryTitle, players, selectedPlayerId, timer, onClose, onReveal, onTimerEnd 
+  question, categoryTitle, players, selectedPlayerId, timer, questionCountdownActive, questionCountdownDuration, onQuestionCountdownComplete, onClose, onReveal, onTimerEnd 
 }) => {
   const [showStealSelect, setShowStealSelect] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [countdownStopped, setCountdownStopped] = useState(false);
   
   const isRevealed = question.isRevealed;
   const isDouble = question.isDoubleOrNothing || false;
@@ -95,6 +100,10 @@ export const QuestionModal: React.FC<Props> = ({
       if ('stopPropagation' in event) event.stopPropagation();
     }
 
+    if (questionCountdownActive && !countdownStopped && action !== 'return') {
+      return;
+    }
+
     if (!isRevealed && action !== 'reveal' && action !== 'return') return;
     if (showStealSelect && action !== 'return') return; 
 
@@ -133,7 +142,7 @@ export const QuestionModal: React.FC<Props> = ({
         }
         break;
     }
-  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal]);
+  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, questionCountdownActive, countdownStopped]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -174,6 +183,20 @@ export const QuestionModal: React.FC<Props> = ({
       className="fixed inset-0 z-[9999] bg-black text-white font-roboto overflow-hidden flex flex-col items-center justify-center p-4 md:p-8"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
+      {/* QUESTION COUNTDOWN OVERLAY */}
+      {questionCountdownActive && !countdownStopped && questionCountdownDuration && (
+        <CountdownOverlay
+          duration={questionCountdownDuration}
+          onComplete={() => {
+            setCountdownStopped(true);
+            if (onQuestionCountdownComplete) onQuestionCountdownComplete();
+          }}
+          onStop={() => {
+            setCountdownStopped(true);
+          }}
+        />
+      )}
+
       {/* Dynamic Ambient Background */}
       <div className={`absolute inset-0 opacity-20 transition-colors duration-700 pointer-events-none ${isRevealed ? (isDouble ? 'bg-red-900' : 'bg-gold-900') : 'bg-blue-900'}`} />
 
@@ -268,7 +291,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed}
               onClick={(e) => handleAction('void', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed ? 'text-zinc-500 hover:text-red-500' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && (!questionCountdownActive || countdownStopped) ? 'text-zinc-500 hover:text-red-500' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Void (ESC)"
             >
               <div className="p-3 md:p-5 bg-zinc-900/80 rounded-full border border-zinc-700 shadow-lg group-hover:border-red-900/30 transition-all">
@@ -298,7 +321,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed}
               onClick={(e) => handleAction('steal', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && (!questionCountdownActive || countdownStopped) ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Steal (S)"
             >
               <div className="p-3 md:p-5 bg-purple-950/20 border-2 border-purple-500/50 rounded-full shadow-xl group-hover:bg-purple-900/40 transition-all">
@@ -312,7 +335,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed || !selectedPlayerId}
               onClick={(e) => handleAction('award', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && selectedPlayerId ? 'text-green-500 hover:text-green-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && selectedPlayerId && (!questionCountdownActive || countdownStopped) ? 'text-green-500 hover:text-green-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Award (ENTER)"
             >
               <div className="p-3 md:p-5 bg-green-950/20 border-2 border-green-500/50 rounded-full shadow-xl group-hover:bg-green-900/40 transition-all">
