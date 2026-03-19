@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { QuestionModal } from './QuestionModal';
 import { Question, Player, GameTimer } from '../types';
 
@@ -94,20 +94,25 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
     expect(container).toHaveClass('max-w-7xl');
     expect(container).toHaveClass('backdrop-blur-2xl');
     expect(container).toHaveClass('rounded-[2.5rem]');
+    expect(container).toHaveClass('grid');
   });
 
-  test('C) TYPOGRAPHY: Question text uses Roboto Bold clamp sizing', () => {
+  test('C) TYPOGRAPHY: Question text uses adaptive clamp sizing and remains bold/readable', () => {
     setupModal();
     const qText = screen.getByTestId('question-text');
     expect(qText).toHaveClass('font-roboto-bold');
-    expect(qText).toHaveStyle('font-size: clamp(28px, 4.5vw, 86px)');
+    expect(qText.getAttribute('style')).toContain('clamp(30px, 4.5vw, 86px)');
   });
 
-  test('D) VISIBILITY: Actions row is inside the luxury container', () => {
+  test('D) VISIBILITY: Question viewport and actions rail are separated inside container', () => {
     setupModal();
     const container = screen.getByTestId('luxury-container');
     const actions = screen.getByTestId('reveal-actions');
+    const viewport = screen.getByTestId('question-viewport');
+    const rail = screen.getByTestId('reveal-actions-rail');
     expect(container).toContainElement(actions);
+    expect(container).toContainElement(viewport);
+    expect(container).toContainElement(rail);
   });
 
   test('E) LONG QUESTION STRESS: Container remains centered without scrolling', () => {
@@ -115,9 +120,12 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
     setupModal({ text: longText, isRevealed: true });
 
     const container = screen.getByTestId('luxury-container');
-    expect(container).toHaveClass('flex-col');
+    expect(container).toHaveClass('grid');
     expect(container).not.toHaveClass('overflow-auto');
     expect(container).toHaveClass('overflow-hidden');
+
+    const qText = screen.getByTestId('question-text');
+    expect(qText.getAttribute('style')).toContain('clamp(24px, 3vw, 48px)');
   });
 
   test('F) LOGGING: Logs reveal UI render event', () => {

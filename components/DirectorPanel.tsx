@@ -8,7 +8,7 @@ import { soundService } from '../services/soundService';
 import { normalizePlayerName, applyAiCategoryPreservePoints } from '../services/utils';
 import { DirectorAiRegenerator } from './DirectorAiRegenerator';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
-import { specialMovesClient } from '../modules/specialMoves/client/specialMovesClient';
+import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 
 interface Props {
@@ -27,12 +27,21 @@ interface Props {
 export const DirectorPanel: React.FC<Props> = ({ 
   gameState, onUpdateState, emitGameEvent, gameId, specialMovesOverlay, onPopout, isPoppedOut, onBringBack, addToast, onClose 
 }) => {
-  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'STATS' | 'SETTINGS'>('BOARD');
+  type LogChannel = 'ALL' | 'BOARD' | 'SCOREBOARD' | 'AI' | 'SPECIAL_MOVES' | 'SYSTEM';
+  type SortOrder = 'NEWEST' | 'OLDEST';
+
+  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
   const [editingQuestion, setEditingQuestion] = useState<{cIdx: number, qIdx: number} | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [selectedMoveType, setSelectedMoveType] = useState<SpecialMoveType>('DOUBLE_TROUBLE');
   const [armingTileId, setArmingTileId] = useState<string | null>(null);
   const [isClearingArmory, setIsClearingArmory] = useState(false);
+  const [backendMode, setBackendMode] = useState<SMSBackendMode>(specialMovesClient.getBackendMode());
+  const [logQuery, setLogQuery] = useState('');
+  const [eventTypeFilter, setEventTypeFilter] = useState<'ALL' | AnalyticsEventType>('ALL');
+  const [channelFilter, setChannelFilter] = useState<LogChannel>('ALL');
+  const [keyOnlyFilter, setKeyOnlyFilter] = useState(false);
+  const [sortOrder, setSortOrder] = useState<SortOrder>('NEWEST');
   
   // Per-tile AI state
   const [tileAiDifficulty, setTileAiDifficulty] = useState<Difficulty>("mixed");
@@ -50,6 +59,198 @@ export const DirectorPanel: React.FC<Props> = ({
     TRIPLE_THREAT: 'TRIPLE THREAT',
     SABOTAGE: 'SABOTAGE',
     MEGA_STEAL: 'MEGA STEAL'
+  };
+
+  const backendModeLabels: Record<SMSBackendMode, string> = {
+    FUNCTIONS: 'Functions',
+    FIRESTORE_FALLBACK: 'Firestore Fallback',
+    MEMORY_FALLBACK: 'In-Memory Fallback'
+  };
+
+  const refreshBackendMode = () => setBackendMode(specialMovesClient.getBackendMode());
+
+  const sentenceCase = (value: string) => value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase());
+
+  const isKeyActivityEvent = (event: GameAnalyticsEvent) => {
+    if (event.type === 'POINTS_AWARDED' || event.type === 'POINTS_STOLEN' || event.type === 'TILE_VOIDED' || event.type === 'SPECIAL_MOVE_ARMED' || event.type === 'PLAYER_ADDED') {
+      return true;
+    }
+    return event.type === 'PLAYER_EDITED' && event.context?.note === 'name-changed';
+  };
+
+  const getEventChannel = (event: GameAnalyticsEvent): LogChannel => {
+    if (event.type.startsWith('AI_')) return 'AI';
+    if (event.type.startsWith('SPECIAL_MOVE')) return 'SPECIAL_MOVES';
+    if (event.type === 'POINTS_AWARDED' || event.type === 'POINTS_STOLEN' || event.type === 'SCORE_ADJUSTED' || event.type === 'PLAYER_ADDED' || event.type === 'PLAYER_REMOVED' || event.type === 'PLAYER_EDITED' || event.type === 'PLAYER_SELECTED' || event.type === 'WILDCARD_USED' || event.type === 'WILDCARD_RESET') {
+      return 'SCOREBOARD';
+    }
+    if (event.type === 'TILE_OPENED' || event.type === 'ANSWER_REVEALED' || event.type === 'TILE_VOIDED' || event.type === 'QUESTION_RETURNED' || event.type === 'QUESTION_EDITED' || event.type === 'CATEGORY_RENAMED' || event.type === 'VIEW_SETTINGS_CHANGED') {
+      return 'BOARD';
+    }
+    return 'SYSTEM';
+  };
+
+  const formatEventSentence = (event: GameAnalyticsEvent): string => {
+    const c = event.context || {};
+    const points = typeof c.points === 'number' ? c.points : undefined;
+    const delta = typeof c.delta === 'number' ? c.delta : undefined;
+    const playerName = c.playerName || event.actor?.playerName || 'A player';
+    const categoryName = c.categoryName || 'the board';
+
+    switch (event.type) {
+      case 'SESSION_STARTED':
+        return `The game session started for ${c.note || 'the selected template'}.`;
+      case 'SESSION_ENDED':
+        return 'The game session ended.';
+      case 'TILE_OPENED':
+        return `A ${points || 0}-point tile was opened in ${categoryName}.`;
+      case 'ANSWER_REVEALED':
+        return `The answer was revealed for the ${points || 0}-point tile in ${categoryName}.`;
+      case 'POINTS_AWARDED':
+        return `${playerName} was awarded ${delta || points || 0} points in ${categoryName}.`;
+      case 'POINTS_STOLEN':
+        return `${playerName} stole ${delta || points || 0} points${c.note ? ` (${c.note})` : ''}.`;
+      case 'TILE_VOIDED':
+        return `The ${points || 0}-point tile in ${categoryName} was voided.`;
+      case 'QUESTION_RETURNED':
+        return `The ${points || 0}-point tile in ${categoryName} was returned to the board.`;
+      case 'QUESTION_EDITED':
+        return `A board tile was edited in ${categoryName}.`;
+      case 'AI_TILE_REPLACE_START':
+        return 'AI question regeneration started for a tile.';
+      case 'AI_TILE_REPLACE_APPLIED':
+        return 'AI question regeneration completed and the tile was updated.';
+      case 'AI_TILE_REPLACE_FAILED':
+        return `AI question regeneration failed${c.message ? `: ${c.message}` : ''}.`;
+      case 'AI_CATEGORY_REPLACE_START':
+        return `AI category regeneration started for ${categoryName}.`;
+      case 'AI_CATEGORY_REPLACE_APPLIED':
+        return `AI category regeneration completed for ${categoryName}.`;
+      case 'AI_CATEGORY_REPLACE_FAILED':
+        return `AI category regeneration failed for ${categoryName}${c.message ? `: ${c.message}` : ''}.`;
+      case 'AI_BOARD_REGEN_START':
+        return 'AI board regeneration started.';
+      case 'AI_BOARD_REGEN_APPLIED':
+        return 'AI board regeneration completed.';
+      case 'AI_BOARD_REGEN_FAILED':
+        return `AI board regeneration failed${c.message ? `: ${c.message}` : ''}.`;
+      case 'PLAYER_ADDED':
+        return `${playerName} was added to the scoreboard.`;
+      case 'PLAYER_REMOVED':
+        return `${playerName} was removed from the scoreboard.`;
+      case 'PLAYER_EDITED':
+        if (c.note === 'name-changed') {
+          return `${c.before || 'A player'} changed name to ${c.after || playerName}.`;
+        }
+        return `${playerName}'s profile was updated.`;
+      case 'PLAYER_SELECTED':
+        return `${playerName} was selected as the active player.`;
+      case 'SCORE_ADJUSTED':
+        return `${playerName}'s score was ${delta && delta >= 0 ? 'increased' : 'decreased'} by ${Math.abs(delta || 0)} points${c.note ? ` (${c.note})` : ''}.`;
+      case 'WILDCARD_USED':
+        return `${playerName} used a wildcard.`;
+      case 'WILDCARD_RESET':
+        return `${playerName} had wildcards reset${c.note ? ` (${c.note})` : ''}.`;
+      case 'TIMER_CONFIG_CHANGED':
+        return 'The question timer configuration was changed.';
+      case 'TIMER_STARTED':
+        return 'The question timer started.';
+      case 'TIMER_STOPPED':
+        return 'The question timer was paused.';
+      case 'TIMER_RESET':
+        return 'The question timer was reset.';
+      case 'TIMER_FINISHED':
+        return 'The question timer finished.';
+      case 'VIEW_SETTINGS_CHANGED':
+        return 'Board view settings were updated.';
+      case 'CATEGORY_RENAMED':
+        return `A category was renamed to ${c.after || categoryName}.`;
+      case 'SPECIAL_MOVE_ARMED':
+        return `${playerName} armed ${sentenceCase(c.note || 'special move')} on a ${points || 0}-point tile in ${categoryName}.`;
+      case 'SPECIAL_MOVE_ARMORY_CLEARED':
+        return 'All armed special moves were cleared from the board.';
+      default:
+        return `${sentenceCase(event.type)} occurred.`;
+    }
+  };
+
+  const fullHistoryLogs = useMemo(() => {
+    const events = [...(gameState.events || [])].sort((a, b) => a.ts - b.ts);
+    return events.map((event) => ({
+      id: event.id,
+      iso: event.iso,
+      type: event.type,
+      channel: getEventChannel(event),
+      event,
+      sentence: formatEventSentence(event)
+    }));
+  }, [gameState.events]);
+
+  const auditEvents = useMemo(() => {
+    const selected = [...(gameState.events || [])].filter((event) => isKeyActivityEvent(event));
+
+    const latestTwelve = selected.slice(-12).reverse();
+    return latestTwelve.map((event) => ({
+      id: event.id,
+      iso: event.iso,
+      type: event.type,
+      channel: getEventChannel(event),
+      event,
+      sentence: formatEventSentence(event)
+    }));
+  }, [gameState.events]);
+
+  const filterLogEntries = <T extends { sentence: string; type: AnalyticsEventType; channel: LogChannel; event: GameAnalyticsEvent }>(entries: T[]) => {
+    const normalizedQuery = logQuery.trim().toLowerCase();
+    const filtered = entries.filter((entry) => {
+      if (eventTypeFilter !== 'ALL' && entry.type !== eventTypeFilter) return false;
+      if (channelFilter !== 'ALL' && entry.channel !== channelFilter) return false;
+      if (keyOnlyFilter && !isKeyActivityEvent(entry.event)) return false;
+      if (!normalizedQuery) return true;
+
+      const haystack = [
+        entry.sentence,
+        sentenceCase(entry.type),
+        entry.event.context?.playerName || '',
+        entry.event.context?.categoryName || '',
+        entry.event.context?.note || ''
+      ].join(' ').toLowerCase();
+
+      return haystack.includes(normalizedQuery);
+    });
+
+    return sortOrder === 'NEWEST' ? [...filtered].reverse() : filtered;
+  };
+
+  const filteredHistoryLogs = useMemo(() => filterLogEntries(fullHistoryLogs), [fullHistoryLogs, logQuery, eventTypeFilter, channelFilter, keyOnlyFilter, sortOrder]);
+  const filteredAuditEvents = useMemo(() => filterLogEntries(auditEvents), [auditEvents, logQuery, eventTypeFilter, channelFilter, keyOnlyFilter, sortOrder]);
+
+  const clearLogFilters = () => {
+    setLogQuery('');
+    setEventTypeFilter('ALL');
+    setChannelFilter('ALL');
+    setKeyOnlyFilter(false);
+    setSortOrder('NEWEST');
+  };
+
+  const downloadLogs = (entries: Array<{ iso: string; sentence: string }>, filenamePrefix: string) => {
+    try {
+      const lines = entries.map((entry) => `[${entry.iso}] ${entry.sentence}`);
+      const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${filenamePrefix}-${stamp}.txt`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.URL.revokeObjectURL(url);
+      addToast('success', 'Logs downloaded.');
+    } catch (e: any) {
+      logger.error('director_log_download_failed', { error: e.message });
+      addToast('error', 'Failed to download logs.');
+    }
   };
 
   const currentOverlay = specialMovesOverlay || {
@@ -79,14 +280,39 @@ export const DirectorPanel: React.FC<Props> = ({
     }
   }, [activeTab, gameState.players?.length]);
 
+  useEffect(() => {
+    if (activeTab === 'MOVES') refreshBackendMode();
+  }, [activeTab]);
+
   // --- ACTIONS ---
 
   const handleUpdatePlayer = (id: string, field: keyof Player, value: any) => {
     try {
       logger.info('director_player_update', { playerId: id, field });
-      const nextPlayers = gameState.players.map(p => 
-        p.id === id ? { ...p, [field]: value } : p
-      );
+      const currentPlayer = gameState.players.find(p => p.id === id);
+      const nextPlayers = gameState.players.map(p => p.id === id ? { ...p, [field]: value } : p);
+
+      if (currentPlayer && field === 'name') {
+        const beforeName = normalizePlayerName(String(currentPlayer.name || ''));
+        const afterName = normalizePlayerName(String(value || ''));
+        if (beforeName && afterName && beforeName !== afterName) {
+          emitGameEvent('PLAYER_EDITED', {
+            actor: { role: 'director' },
+            context: { playerId: id, playerName: afterName, before: beforeName, after: afterName, note: 'name-changed' }
+          });
+        }
+      }
+
+      if (currentPlayer && field === 'score') {
+        const delta = Number(value) - Number(currentPlayer.score || 0);
+        if (delta !== 0) {
+          emitGameEvent('SCORE_ADJUSTED', {
+            actor: { role: 'director' },
+            context: { playerId: id, playerName: currentPlayer.name, delta, note: 'Manual score adjustment from Director panel' }
+          });
+        }
+      }
+
       onUpdateState({ ...gameState, players: nextPlayers });
     } catch (e: any) {
       logger.error('director_player_update_failed', { error: e.message, playerId: id });
@@ -184,6 +410,11 @@ export const DirectorPanel: React.FC<Props> = ({
       players: [...gameState.players, newP],
       selectedPlayerId: gameState.selectedPlayerId || newP.id
     });
+
+    emitGameEvent('PLAYER_ADDED', {
+      actor: { role: 'director' },
+      context: { playerId: newP.id, playerName: newP.name, note: 'Contestant added from Director panel' }
+    });
     
     setNewPlayerName('');
     setIsAddingPlayer(false);
@@ -232,11 +463,23 @@ export const DirectorPanel: React.FC<Props> = ({
       });
 
       logger.info('director_special_move_armed', { gameId, tileId, moveType: selectedMoveType });
+      const tile = gameState.categories.flatMap((category) => category.questions.map((question) => ({ category, question }))).find((entry) => entry.question.id === tileId);
+      emitGameEvent('SPECIAL_MOVE_ARMED', {
+        actor: { role: 'director' },
+        context: {
+          tileId,
+          categoryName: tile?.category.title,
+          points: tile?.question.points,
+          note: selectedMoveType,
+          message: `Armed ${selectedMoveType}`
+        }
+      });
       addToast('success', 'MOVE DEPLOYED');
     } catch (e: any) {
       logger.error('director_special_move_arm_failed', { gameId, tileId, moveType: selectedMoveType, error: e.message });
       addToast('error', e.message || 'Failed to deploy move.');
     } finally {
+      refreshBackendMode();
       setArmingTileId(null);
     }
   };
@@ -259,11 +502,16 @@ export const DirectorPanel: React.FC<Props> = ({
       });
 
       logger.info('director_special_move_armory_cleared', { gameId });
+      emitGameEvent('SPECIAL_MOVE_ARMORY_CLEARED', {
+        actor: { role: 'director' },
+        context: { note: 'All active special move deployments cleared' }
+      });
       addToast('info', 'ARMORY CLEARED');
     } catch (e: any) {
       logger.error('director_special_move_clear_failed', { gameId, error: e.message });
       addToast('error', e.message || 'Failed to clear armory.');
     } finally {
+      refreshBackendMode();
       setIsClearingArmory(false);
     }
   };
@@ -327,6 +575,16 @@ export const DirectorPanel: React.FC<Props> = ({
 
       onUpdateState({ ...gameState, categories: nextCategories });
 
+      emitGameEvent('AI_TILE_REPLACE_APPLIED', {
+        actor: { role: 'director' },
+        context: {
+          tileId: q.id,
+          categoryName: cat.title,
+          points: q.points,
+          note: 'AI tile regeneration applied'
+        }
+      });
+
       logger.info('director_tile_ai_regen_success', { 
         ts: new Date().toISOString(), 
         genId, 
@@ -335,6 +593,16 @@ export const DirectorPanel: React.FC<Props> = ({
       addToast('success', 'Question generated.');
     } catch (e: any) {
       // Rollback: No updateState call preserves existing board
+      emitGameEvent('AI_TILE_REPLACE_FAILED', {
+        actor: { role: 'director' },
+        context: {
+          tileId: q.id,
+          categoryName: cat.title,
+          points: q.points,
+          message: e.message,
+          note: 'AI tile regeneration failed'
+        }
+      });
       logger.error('director_tile_ai_regen_failed', {
         ts: new Date().toISOString(),
         genId,
@@ -366,6 +634,16 @@ export const DirectorPanel: React.FC<Props> = ({
     setAiLoading(true);
     soundService.playClick();
 
+    emitGameEvent('AI_TILE_REPLACE_START', {
+      actor: { role: 'director' },
+      context: {
+        tileId: q.id,
+        categoryName: cat.title,
+        points: q.points,
+        note: 'Quick AI tile regeneration requested'
+      }
+    });
+
     try {
       const result = await generateSingleQuestion(
         gameState.showTitle || "General Trivia",
@@ -388,10 +666,30 @@ export const DirectorPanel: React.FC<Props> = ({
       nextCategories[cIdx] = { ...nextCategories[cIdx], questions: nextQs };
 
       onUpdateState({ ...gameState, categories: nextCategories });
+
+      emitGameEvent('AI_TILE_REPLACE_APPLIED', {
+        actor: { role: 'director' },
+        context: {
+          tileId: q.id,
+          categoryName: cat.title,
+          points: q.points,
+          note: 'Quick AI tile regeneration applied'
+        }
+      });
       
       logger.info('director_tile_ai_regen_success', { tileId: q.id, genId });
       addToast('success', 'Tile updated via AI.');
     } catch (e: any) {
+      emitGameEvent('AI_TILE_REPLACE_FAILED', {
+        actor: { role: 'director' },
+        context: {
+          tileId: q.id,
+          categoryName: cat.title,
+          points: q.points,
+          message: e.message,
+          note: 'Quick AI tile regeneration failed'
+        }
+      });
       logger.error('director_tile_ai_regen_failed', { tileId: q.id, error: e.message, genId });
       addToast('error', `AI Failed: ${e.message}`);
     } finally {
@@ -434,6 +732,10 @@ export const DirectorPanel: React.FC<Props> = ({
       nextCategories[cIdx] = applyAiCategoryPreservePoints(cat, newQs);
 
       onUpdateState({ ...gameState, categories: nextCategories });
+      emitGameEvent('AI_CATEGORY_REPLACE_APPLIED', {
+        actor: { role: 'director' },
+        context: { categoryIndex: cIdx, categoryName: cat.title, note: 'AI category regeneration applied' }
+      });
       
       logger.info('ai_category_regen_success', { 
         genId, 
@@ -443,6 +745,10 @@ export const DirectorPanel: React.FC<Props> = ({
       addToast('success', `${cat.title} updated.`);
     } catch (e: any) {
       // ROLLBACK ON FAILURE
+      emitGameEvent('AI_CATEGORY_REPLACE_FAILED', {
+        actor: { role: 'director' },
+        context: { categoryIndex: cIdx, categoryName: cat.title, message: e.message, note: 'AI category regeneration failed' }
+      });
       logger.error('ai_category_regen_failed', { 
         genId, 
         categoryId: cat.id, 
@@ -469,6 +775,12 @@ export const DirectorPanel: React.FC<Props> = ({
           </button>
           <button aria-label="Moves Tab" onClick={() => setActiveTab('MOVES')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <ShieldAlert className="w-4 h-4" /> Moves
+          </button>
+          <button onClick={() => setActiveTab('MOVES_HELP')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES_HELP' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
+            <Info className="w-4 h-4" /> Moves Help
+          </button>
+          <button onClick={() => setActiveTab('LOGS_AUDIT')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'LOGS_AUDIT' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
+            <History className="w-4 h-4" /> Logs & Audit
           </button>
           <button onClick={() => setActiveTab('SETTINGS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'SETTINGS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <Sliders className="w-4 h-4" /> Settings
@@ -635,6 +947,14 @@ export const DirectorPanel: React.FC<Props> = ({
                   <ShieldAlert className="w-4 h-4" /> MOVES
                 </h3>
                 <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Select a move, then arm any live tile on the board.</p>
+                <div className="mt-2">
+                  <span
+                    aria-label="Special Moves Backend Mode"
+                    className="inline-flex items-center rounded-full border border-cyan-700/40 bg-cyan-900/20 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-cyan-300"
+                  >
+                    Backend: {backendModeLabels[backendMode]}
+                  </span>
+                </div>
               </div>
               <button
                 aria-label="Wipe All Armed Tiles"
@@ -690,6 +1010,173 @@ export const DirectorPanel: React.FC<Props> = ({
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'MOVES_HELP' && (
+          <div className="space-y-6 animate-in fade-in duration-300 max-w-4xl mx-auto">
+            <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg">
+              <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                <Info className="w-4 h-4" /> How To Play Special Moves
+              </h3>
+              <p className="text-[11px] text-zinc-300 mt-3 leading-relaxed">
+                Use this flow every round to arm tactical modifiers on question tiles before contestants answer.
+              </p>
+            </div>
+
+            <div className="bg-black/40 border border-zinc-800 rounded-2xl p-5 space-y-3">
+              <h4 className="text-[11px] uppercase tracking-widest font-black text-zinc-400">Step-by-step</h4>
+              <ol className="list-decimal ml-5 space-y-2 text-[12px] text-zinc-200 leading-relaxed">
+                <li>Open the <span className="font-black text-gold-500">Moves</span> tab.</li>
+                <li>Select one move type (Double Trouble, Triple Threat, Sabotage, or Mega Steal).</li>
+                <li>Click a live tile (not answered/voided) to arm it.</li>
+                <li>On the public board, armed tiles show a Zap icon and pulse.</li>
+                <li>Run the question normally; score effects apply automatically on award/steal.</li>
+                <li>Use <span className="font-black text-red-400">Wipe All Armed Tiles</span> to reset at any time.</li>
+              </ol>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-cyan-300 font-black">Double Trouble</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Award/steal resolves at 2x value; fail applies standard penalty path.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-gold-300 font-black">Triple Threat</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Award/steal resolves at 3x value; fail carries stronger downside.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-red-300 font-black">Sabotage</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Normal upside on success; reduced-value penalty on failure.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-purple-300 font-black">Mega Steal</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Steal resolves at 2x; direct award is blocked.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'LOGS_AUDIT' && (
+          <div className="space-y-6 animate-in fade-in duration-300 max-w-7xl mx-auto">
+            <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                  <History className="w-4 h-4" /> Logs & Audit
+                </h3>
+                <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Live board and scoreboard activity in complete sentences.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => downloadLogs(filteredHistoryLogs, 'cruzpham-trivia-logs-filtered')}
+                  title="Download filtered logs"
+                  className="bg-cyan-600 hover:bg-cyan-500 text-black font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase shadow-lg shadow-cyan-900/20"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download Filtered Logs
+                </button>
+                <button
+                  onClick={() => downloadLogs(fullHistoryLogs, 'cruzpham-trivia-logs')}
+                  title="Download full session script"
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase border border-zinc-700"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download Full Logs
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-black/40 border border-zinc-800 rounded-2xl p-4">
+              <div className="text-[10px] uppercase tracking-widest font-black text-zinc-400 mb-3">Filter Box</div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                <input
+                  aria-label="Log search"
+                  value={logQuery}
+                  onChange={(e) => setLogQuery(e.target.value)}
+                  placeholder="Search player, category, note..."
+                  className="xl:col-span-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-gold-500"
+                />
+                <select
+                  aria-label="Event type filter"
+                  value={eventTypeFilter}
+                  onChange={(e) => setEventTypeFilter(e.target.value as 'ALL' | AnalyticsEventType)}
+                  className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-gold-500"
+                >
+                  <option value="ALL">All event types</option>
+                  {Array.from(new Set((gameState.events || []).map((event) => event.type))).sort().map((type) => (
+                    <option key={type} value={type}>{sentenceCase(type)}</option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Channel filter"
+                  value={channelFilter}
+                  onChange={(e) => setChannelFilter(e.target.value as LogChannel)}
+                  className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-gold-500"
+                >
+                  <option value="ALL">All channels</option>
+                  <option value="BOARD">Board</option>
+                  <option value="SCOREBOARD">Scoreboard</option>
+                  <option value="AI">AI</option>
+                  <option value="SPECIAL_MOVES">Special Moves</option>
+                  <option value="SYSTEM">System</option>
+                </select>
+                <select
+                  aria-label="Sort order filter"
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value as SortOrder)}
+                  className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-gold-500"
+                >
+                  <option value="NEWEST">Newest first</option>
+                  <option value="OLDEST">Oldest first</option>
+                </select>
+                <div className="flex items-center justify-between gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2">
+                  <label htmlFor="keyOnlyFilter" className="text-[11px] text-zinc-300 font-bold uppercase tracking-wide">Key only</label>
+                  <input
+                    id="keyOnlyFilter"
+                    aria-label="Key activities only"
+                    type="checkbox"
+                    checked={keyOnlyFilter}
+                    onChange={(e) => setKeyOnlyFilter(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-3 text-[11px] text-zinc-500">
+                <button
+                  onClick={clearLogFilters}
+                  className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 hover:text-zinc-300 uppercase font-bold tracking-wide"
+                >
+                  Clear Filters
+                </button>
+                <span data-testid="log-filter-count">{filteredHistoryLogs.length} matching history logs</span>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-4">
+                <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-3">Audit (Last 12 Key Activities)</div>
+                <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-2 custom-scrollbar" data-testid="audit-log-list">
+                  {filteredAuditEvents.length === 0 && <div className="text-[11px] text-zinc-500">No key activity logged yet.</div>}
+                  {filteredAuditEvents.map((entry) => (
+                    <div key={entry.id} className="rounded-lg border border-zinc-800 bg-black/30 p-3">
+                      <div className="text-[10px] text-zinc-500 font-mono">{new Date(entry.iso).toLocaleTimeString()}</div>
+                      <div className="text-[12px] text-zinc-200 mt-1 leading-relaxed">{entry.sentence}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-4">
+                <div className="text-[10px] uppercase tracking-widest font-black text-gold-400 mb-3">Logs (Complete History)</div>
+                <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-2 custom-scrollbar" data-testid="full-history-log-list">
+                  {filteredHistoryLogs.length === 0 && <div className="text-[11px] text-zinc-500">No events captured yet.</div>}
+                  {filteredHistoryLogs.map((entry) => (
+                    <div key={entry.id} className="rounded-lg border border-zinc-800 bg-black/30 p-3">
+                      <div className="text-[10px] text-zinc-500 font-mono">{entry.iso} • {sentenceCase(entry.type)}</div>
+                      <div className="text-[12px] text-zinc-100 mt-1 leading-relaxed">{entry.sentence}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -807,6 +1294,17 @@ export const DirectorPanel: React.FC<Props> = ({
                    nextCategories[cIdx] = { ...nCat, questions: nQs };
                    
                    onUpdateState({ ...gameState, categories: nextCategories });
+                   emitGameEvent('QUESTION_EDITED', {
+                     actor: { role: 'director' },
+                     context: {
+                       tileId: q.id,
+                       categoryIndex: cIdx,
+                       rowIndex: qIdx,
+                       categoryName: cat.title,
+                       points: q.points,
+                       note: 'Manual tile edit from Director panel'
+                     }
+                   });
                    setEditingQuestion(null);
                    addToast('success', 'Tile updated.');
                 }} className="bg-gold-600 hover:bg-gold-500 text-black font-bold px-6 py-2 rounded flex items-center gap-2"><Save className="w-4 h-4" />Save Changes</button>

@@ -42,6 +42,7 @@ vi.mock('./modules/specialMoves/client/specialMovesClient', () => {
   return {
     specialMovesClient: {
       getHealth: vi.fn(() => 'HEALTHY'),
+      getBackendMode: vi.fn(() => 'FUNCTIONS'),
       requestArmTile: vi.fn(async () => ({ success: true, id: 'req_1' })),
       clearArmory: vi.fn(async () => ({ success: true, clearedCount: 1 })),
       subscribeOverlay: vi.fn(({ onOverlay }) => {
@@ -89,6 +90,7 @@ describe('Special Moves Feature Suite', () => {
     // 1. Open Director -> Moves Tab
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
     fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+    expect(await screen.findByLabelText(/special moves backend mode/i)).toHaveTextContent(/backend:\s*functions/i);
 
     // 2. Select DOUBLE TROUBLE
     const moveBtn = await screen.findByText('DOUBLE TROUBLE');
@@ -112,6 +114,19 @@ describe('Special Moves Feature Suite', () => {
 
     // 5. Verify success toast
     expect(await screen.findByText(/MOVE DEPLOYED/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['FIRESTORE_FALLBACK', /backend:\s*firestore fallback/i],
+    ['MEMORY_FALLBACK', /backend:\s*in-memory fallback/i]
+  ] as const)('A1) MODE INDICATOR: Shows %s mode in Moves tab', async (mode, expectedLabel) => {
+    (specialMovesClient.getBackendMode as any).mockReturnValue(mode);
+    await setupAndPlay();
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+
+    expect(await screen.findByLabelText(/special moves backend mode/i)).toHaveTextContent(expectedLabel);
   });
 
   it('B) BOARD SYNC: GameBoard renders Zap icon when a tile is ARMED via overlay', async () => {

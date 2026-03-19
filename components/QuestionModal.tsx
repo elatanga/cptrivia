@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Check, ShieldAlert, Monitor, ArrowLeft, Trash2, Trophy, Clock, Eye } from 'lucide-react';
+import { ShieldAlert, ArrowLeft, Trash2, Trophy, Eye } from 'lucide-react';
 import { Question, Player, GameTimer } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
@@ -24,7 +24,16 @@ export const QuestionModal: React.FC<Props> = ({
   
   const isRevealed = question.isRevealed;
   const isDouble = question.isDoubleOrNothing || false;
-  const activePlayer = players.find(p => p.id === selectedPlayerId);
+
+  const getQuestionFontSize = useCallback((text: string) => {
+    const length = (text || '').trim().length;
+    if (length > 320) return 'clamp(24px, 3vw, 48px)';
+    if (length > 220) return 'clamp(26px, 3.4vw, 56px)';
+    if (length > 140) return 'clamp(28px, 3.8vw, 64px)';
+    return 'clamp(30px, 4.5vw, 86px)';
+  }, []);
+
+  const questionFontSize = getQuestionFontSize(question.text);
 
   // LOGGING & SCROLL LOCK
   useEffect(() => {
@@ -183,7 +192,7 @@ export const QuestionModal: React.FC<Props> = ({
       {/* SINGLE LUXURY CENTERED CONTAINER */}
       <div 
         data-testid="luxury-container"
-        className="relative z-10 w-full max-w-7xl max-h-[85vh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-6 md:p-12 shadow-[0_0_100px_rgba(0,0,0,0.8)] flex flex-col items-center justify-between overflow-hidden"
+        className="relative z-10 w-full max-w-7xl max-h-[85vh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-4 md:p-10 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden grid grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-3 md:gap-6"
       >
         {/* TIMER OVERLAY (Floating in container corner) */}
         {timeLeft !== null && (
@@ -193,7 +202,7 @@ export const QuestionModal: React.FC<Props> = ({
         )}
 
         {/* 1. DOUBLE OR NOTHING LABEL */}
-        <div className="flex-none h-12 flex items-center justify-center">
+        <div className="h-12 flex items-center justify-center">
           {isDouble && (
             <span 
               data-testid="double-label"
@@ -206,18 +215,18 @@ export const QuestionModal: React.FC<Props> = ({
         </div>
 
         {/* 2. QUESTION AREA */}
-        <div className="flex-1 flex items-center justify-center w-full px-4 overflow-hidden min-h-0">
+        <div data-testid="question-viewport" className="w-full px-2 md:px-6 overflow-hidden min-h-0 flex items-center justify-center">
           <h2 
             data-testid="question-text"
-            className={`font-roboto-bold text-center leading-[1.1] transition-all duration-700 max-h-full overflow-hidden ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
-            style={{ fontSize: 'clamp(28px, 4.5vw, 86px)' }}
+            className={`font-roboto-bold text-center leading-[1.08] transition-all duration-700 max-h-full overflow-hidden break-words px-1 ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
+            style={{ fontSize: questionFontSize, overflowWrap: 'anywhere' }}
           >
             {question.text}
           </h2>
         </div>
 
         {/* 3. ANSWER AREA */}
-        <div className="flex-none w-full flex flex-col items-center gap-8 md:gap-12 mt-4">
+        <div className="w-full flex flex-col items-center gap-4 md:gap-8">
           {isRevealed ? (
             <div 
               data-testid="answer-text"
@@ -233,11 +242,13 @@ export const QuestionModal: React.FC<Props> = ({
           ) : (
             <div className="h-2 w-32 bg-zinc-800/50 rounded-full" />
           )}
+        </div>
 
-          {/* 4. ACTION ICONS ROW */}
+        {/* 4. ACTION ICONS ROW */}
+        <div data-testid="reveal-actions-rail" className="w-full border-t border-zinc-800/60 pt-3 md:pt-5">
           <div 
             data-testid="reveal-actions"
-            className="flex flex-wrap items-center justify-center gap-4 md:gap-10 w-full"
+            className="flex flex-wrap items-center justify-center gap-3 md:gap-8 w-full"
           >
             {/* RETURN */}
             <button 
