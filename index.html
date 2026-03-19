@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>CRUZPHAM TRIVIA STUDIOS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              gold: {
+                100: '#FFF9C4',
+                300: '#FFF176',
+                400: '#FFEE58',
+                500: '#FFD700', // Classic Gold
+                600: '#FDB813',
+                700: '#C5A000',
+                800: '#8F7400',
+                900: '#5F4D00',
+              },
+              navy: {
+                900: '#06142F',
+                950: '#030A17',
+              },
+              richBlack: '#050505',
+              matteBlack: '#121212',
+            },
+            fontFamily: {
+              serif: ['Playfair Display', 'serif'],
+              sans: ['Inter', 'sans-serif'],
+              roboto: ['Roboto', 'system-ui', 'sans-serif'],
+            }
+          }
+        }
+      }
+    </script>
+    <!-- Fonts for Luxury Feel and Legibility -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Playfair+Display:wght@700;900&family=Roboto:wght@700&display=swap" rel="stylesheet">
+    <style>
+      body {
+        background-color: #000000;
+        color: #FFD700;
+        margin: 0;
+        padding: 0;
+      }
+      /* Reusable Roboto Bold class as requested */
+      .font-roboto-bold {
+        font-family: "Roboto", system-ui, sans-serif;
+        font-weight: 700;
+      }
+      /* Custom Scrollbar for internal content */
+      ::-webkit-scrollbar {
+        width: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #121212;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #555;
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #FFD700;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
+    "@testing-library/react": "https://esm.sh/@testing-library/react@^16.3.2",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "path": "https://esm.sh/path@^0.12.7",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "firebase/": "https://esm.sh/firebase@^12.8.0/",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "url": "https://esm.sh/url@^0.11.4",
+    "vitest": "https://esm.sh/vitest@^4.0.18",
+    "vitest/": "https://esm.sh/vitest@^4.0.18/",
+    "@testing-library/jest-dom": "https://esm.sh/@testing-library/jest-dom@^6.9.1"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
