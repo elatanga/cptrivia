@@ -573,20 +573,26 @@ const App: React.FC = () => {
   // Admin Polling
   useEffect(() => {
     let interval: number;
-    if (session?.role === 'ADMIN' || session?.role === 'MASTER_ADMIN') {
+    if (session?.role === 'MASTER_ADMIN') {
         const check = () => {
-            const reqs = authService.getRequests();
-            const pending = reqs.filter(r => r.status === 'PENDING').length;
-            setPendingRequests(prev => {
-                if (pending > prev) {
-                    soundService.playToast('info');
-                    addToast('info', `New Request: ${pending} Pending`);
-                }
-                return pending;
-            });
+            try {
+              const reqs = authService.getRequests(session.username);
+              const pending = reqs.filter(r => r.status === 'PENDING').length;
+              setPendingRequests(prev => {
+                  if (pending > prev) {
+                      soundService.playToast('info');
+                      addToast('info', `New Request: ${pending} Pending`);
+                  }
+                  return pending;
+              });
+            } catch {
+              setPendingRequests(0);
+            }
         };
         check(); 
         interval = window.setInterval(check, 30000); 
+    } else {
+      setPendingRequests(0);
     }
     return () => clearInterval(interval);
   }, [session]);
@@ -1161,6 +1167,17 @@ const App: React.FC = () => {
     saveGameState({ ...gameState, selectedPlayerId: id });
   };
 
+  const activeCategory = gameState.categories.find(c => c.id === gameState.activeCategoryId);
+  const activeQuestion = activeCategory?.questions.find(q => q.id === gameState.activeQuestionId);
+  const isMasterAdmin = session?.role === 'MASTER_ADMIN';
+  const showShortcuts = viewMode === 'BOARD' && gameState.isGameStarted;
+
+  useEffect(() => {
+    if (viewMode === 'ADMIN' && !isMasterAdmin) {
+      setViewMode('BOARD');
+    }
+  }, [viewMode, isMasterAdmin]);
+
   if (!authChecked) return (
     <div className="h-screen w-screen flex items-center justify-center bg-black text-white">
       <div className="flex flex-col items-center gap-4">
@@ -1232,10 +1249,6 @@ const App: React.FC = () => {
     );
   }
 
-  const activeCategory = gameState.categories.find(c => c.id === gameState.activeCategoryId);
-  const activeQuestion = activeCategory?.questions.find(q => q.id === gameState.activeQuestionId);
-  const isAdmin = session?.role === 'ADMIN' || session?.role === 'MASTER_ADMIN';
-  const showShortcuts = viewMode === 'BOARD' && gameState.isGameStarted;
 
   return (
     <AppShell activeShowTitle={gameState.showTitle || (activeShow ? activeShow.title : undefined)} username={session?.username} onLogout={handleLogout} shortcuts={showShortcuts ? <ShortcutsPanel /> : null}>
@@ -1276,7 +1289,7 @@ const App: React.FC = () => {
           {!activeShow ? (
             <>
                <ShowSelection username={session.username} onSelectShow={setActiveShow} />
-               {isAdmin && (
+               {isMasterAdmin && (
                  <div className="absolute bottom-4 right-4">
                    <button onClick={() => setViewMode('ADMIN')} className="flex items-center gap-2 text-xs font-bold uppercase text-zinc-500 hover:text-gold-500 bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-full relative group">
                      <Shield className="w-3 h-3" /> Admin Console
@@ -1284,7 +1297,7 @@ const App: React.FC = () => {
                    </button>
                  </div>
                )}
-               {viewMode === 'ADMIN' && <div className="fixed inset-0 z-50"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
+               {viewMode === 'ADMIN' && isMasterAdmin && <div className="fixed inset-0 z-50"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
             </>
           ) : (
             <>
@@ -1293,7 +1306,7 @@ const App: React.FC = () => {
                    <div className="bg-zinc-900 border border-zinc-800 p-1 rounded-full flex gap-1">
                      <button onClick={() => setViewMode('BOARD')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'BOARD' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:text-white'}`}><Monitor className="w-3 h-3" /> Board</button>
                      <button onClick={() => setViewMode('DIRECTOR')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'DIRECTOR' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}><Grid className="w-3 h-3" /> Director</button>
-                     {isAdmin && <button onClick={() => setViewMode('ADMIN')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'ADMIN' ? 'bg-purple-600 text-white' : 'text-zinc-500 hover:text-white'}`}><Shield className="w-3 h-3" /> Admin</button>}
+                      {isMasterAdmin && <button onClick={() => setViewMode('ADMIN')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'ADMIN' ? 'bg-purple-600 text-white' : 'text-zinc-500 hover:text-white'}`}><Shield className="w-3 h-3" /> Admin</button>}
                    </div>
                  </div>
                )}
@@ -1391,7 +1404,7 @@ const App: React.FC = () => {
                      onDecreaseTimerVolume={decreaseTimerVolume}
                    />
                  </div>
-                 {viewMode === 'ADMIN' && <div className="absolute inset-0 z-50 bg-zinc-950"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
+                 {viewMode === 'ADMIN' && isMasterAdmin && <div className="absolute inset-0 z-50 bg-zinc-950"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
                </div>
             </>
           )}

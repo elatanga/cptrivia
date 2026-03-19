@@ -150,7 +150,7 @@ describe('CRUZPHAM TRIVIA - Network Integration Tests', () => {
     });
 
     // 5. Assert Backend State
-    const storedRequests = authService.getRequests();
+    const storedRequests = authService.getRequests('admin');
     expect(storedRequests).toHaveLength(1);
     expect(storedRequests[0].preferredUsername).toBe('requester_1');
     expect(storedRequests[0].status).toBe('PENDING');
