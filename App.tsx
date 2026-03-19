@@ -37,6 +37,23 @@ const resolveQuestionCountdownDuration = (raw: unknown) => {
   return DEFAULT_QUESTION_TIMER_DURATION_SECONDS;
 };
 
+const resolveTemplatePlayerCount = (template: GameTemplate) => {
+  const quickMode = template.config?.quickGameMode;
+  if (quickMode === 'single_player') return 1;
+  if (quickMode === 'two_player') return 2;
+  return Math.max(0, Number(template.config.playerCount || 0));
+};
+
+const resolveTemplateTimerEnabled = (
+  template: GameTemplate,
+  currentEnabled: boolean,
+) => {
+  const quickTimerMode = template.config?.quickTimerMode;
+  if (quickTimerMode === 'timed') return true;
+  if (quickTimerMode === 'untimed') return false;
+  return currentEnabled;
+};
+
 const App: React.FC = () => {
   // App Boot State
   const [isConfigured, setIsConfigured] = useState(false);
@@ -843,15 +860,28 @@ const App: React.FC = () => {
       };
     });
 
-    const initPlayers: Player[] = (template.config.playerNames || []).map(name => ({
+    const targetPlayerCount = resolveTemplatePlayerCount(template);
+    const timerEnabledFromTemplate = resolveTemplateTimerEnabled(template, questionTimerEnabled);
+
+    const initPlayers: Player[] = (template.config.playerNames || []).slice(0, Math.max(0, targetPlayerCount)).map(name => ({
       id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0
     }));
 
-    if (initPlayers.length === 0 && template.config.playerCount > 0) {
-      for (let i = 0; i < template.config.playerCount; i++) {
+    if (initPlayers.length === 0 && targetPlayerCount > 0) {
+      for (let i = 0; i < targetPlayerCount; i++) {
         initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0 });
       }
     }
+
+    logger.info('template_quick_setup_applied', {
+      templateId: template.id,
+      quickGameMode: template.config?.quickGameMode || null,
+      quickTimerMode: template.config?.quickTimerMode || null,
+      playerCount: initPlayers.length,
+      timerEnabled: timerEnabledFromTemplate,
+    });
+
+    setQuestionTimerEnabled(timerEnabledFromTemplate);
 
     const newState: GameState = {
       ...gameState,

@@ -119,6 +119,16 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(screen.getAllByPlaceholderText('ENTER NAME')).toHaveLength(1);
       expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringContaining('At least 1'));
     });
+
+    it('quick setup mode applies 1-player and 2-player roster presets', () => {
+      render(<TemplateBuilder {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: '1 Player' }));
+      expect(screen.getAllByPlaceholderText('ENTER NAME')).toHaveLength(1);
+
+      fireEvent.click(screen.getByRole('button', { name: '2 Players' }));
+      expect(screen.getAllByPlaceholderText('ENTER NAME')).toHaveLength(2);
+    });
   });
 
   describe('PHASE 2: Manual Building & Point Reflow', () => {
@@ -155,6 +165,8 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
   describe('PHASE 3: Persistence Logic', () => {
     it('calls createTemplate on new save', async () => {
       render(<TemplateBuilder {...defaultProps} />);
+      fireEvent.click(screen.getByRole('button', { name: '2 Players' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Timed' }));
       fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'New Template Test' } });
       fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
 
@@ -165,7 +177,7 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
         expect(dataService.createTemplate).toHaveBeenCalledWith(
           'show-123',
           'New Template Test',
-          expect.objectContaining({ rowCount: 5, categoryCount: 4 }),
+          expect.objectContaining({ rowCount: 5, categoryCount: 4, quickGameMode: 'two_player', quickTimerMode: 'timed' }),
           expect.any(Array)
         );
         expect(mockAddToast).toHaveBeenCalledWith('success', 'Template saved successfully.');

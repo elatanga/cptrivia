@@ -383,6 +383,8 @@ export interface TemplateConfig {
   categoryCount: number;
   rowCount: number;
   pointScale?: number;
+  quickGameMode?: 'single_player' | 'two_player' | null;
+  quickTimerMode?: 'timed' | 'untimed' | null;
 }
 
 export interface GameTemplate {

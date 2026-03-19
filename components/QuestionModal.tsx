@@ -82,7 +82,10 @@ export const QuestionModal: React.FC<Props> = ({
   onTimerEnd
 }) => {
   const [showStealSelect, setShowStealSelect] = useState(false);
-  
+  const loggedQuestionIdRef = useRef<string | null>(null);
+  const loggedDoubleQuestionIdRef = useRef<string | null>(null);
+  const playedDoubleQuestionIdRef = useRef<string | null>(null);
+
   const isRevealed = question.isRevealed;
   const isDouble = question.isDoubleOrNothing || false;
 
@@ -102,10 +105,14 @@ export const QuestionModal: React.FC<Props> = ({
 
   // LOGGING & SCROLL LOCK
   useEffect(() => {
-    const ts = new Date().toISOString();
-    logger.info("reveal_ui_rendered", { tileId: question.id, isDoubleOrNothing: isDouble, ts });
-    if (isDouble) {
-      logger.info("double_or_nothing_displayed", { tileId: question.id, ts });
+    if (loggedQuestionIdRef.current !== question.id) {
+      logger.info("reveal_ui_rendered", { tileId: question.id, isDoubleOrNothing: isDouble, ts: new Date().toISOString() });
+      loggedQuestionIdRef.current = question.id;
+    }
+
+    if (isDouble && loggedDoubleQuestionIdRef.current !== question.id) {
+      logger.info("double_or_nothing_displayed", { tileId: question.id, ts: new Date().toISOString() });
+      loggedDoubleQuestionIdRef.current = question.id;
     }
 
     const originalStyle = {
@@ -122,8 +129,69 @@ export const QuestionModal: React.FC<Props> = ({
   }, [question.id, isDouble]);
 
   useEffect(() => {
-    if (isDouble && !isRevealed) soundService.playDoubleOrNothing();
+    if (isDouble && !isRevealed && playedDoubleQuestionIdRef.current !== question.id) {
+      soundService.playDoubleOrNothing();
+      playedDoubleQuestionIdRef.current = question.id;
+    }
   }, [isDouble, isRevealed]);
+
+  const questionContent = useMemo(() => (
+    <div data-testid="question-viewport" className="w-full px-1 md:px-4 overflow-hidden min-h-0 flex items-center justify-center">
+      <AutoFitText
+        testId="question-text"
+        text={question.text}
+        minFontSizePx={20}
+        maxFontSizePx={84}
+        clampVw={4.5}
+        className={`font-roboto-bold text-center transition-all duration-500 max-h-full ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
+        containerClassName="w-full h-full flex items-center justify-center"
+      />
+    </div>
+  ), [question.text, isRevealed]);
+
+  const answerContent = useMemo(() => (
+    <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-0">
+      {!isRevealed && answerOptions.length > 0 && (
+        <div data-testid="answer-options-grid" className={`w-full grid ${optionGridClass} gap-2 md:gap-3`}>
+          {answerOptions.map((option, idx) => (
+            <div
+              key={`${option}-${idx}`}
+              className="min-h-[56px] md:min-h-[74px] rounded-xl border border-zinc-700/70 bg-black/35 px-3 py-2 md:px-4 md:py-3 shadow-lg"
+            >
+              <AutoFitText
+                testId={`answer-option-${idx}`}
+                text={option}
+                minFontSizePx={14}
+                maxFontSizePx={30}
+                clampVw={2.2}
+                className="font-roboto-bold text-zinc-100 text-left"
+                containerClassName="w-full h-full flex items-center"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isRevealed ? (
+        <div 
+          data-testid="answer-text"
+          className="w-full text-center py-3 md:py-6 bg-gold-950/20 border-y border-gold-500/20 animate-in zoom-in slide-in-from-bottom duration-500 min-h-0"
+        >
+          <AutoFitText
+            testId="answer-text-value"
+            text={question.answer}
+            minFontSizePx={18}
+            maxFontSizePx={62}
+            clampVw={3.2}
+            className="text-gold-400 font-roboto-bold text-center drop-shadow-2xl"
+            containerClassName="w-full"
+          />
+        </div>
+      ) : (
+        <div className="h-2 w-32 bg-zinc-800/50 rounded-full flex-none" />
+      )}
+    </div>
+  ), [isRevealed, answerOptions, optionGridClass, question.answer]);
 
   const handleAction = useCallback((action: 'reveal' | 'award' | 'steal' | 'void' | 'return', event?: React.MouseEvent | React.KeyboardEvent) => {
     if (event) {
@@ -262,60 +330,10 @@ export const QuestionModal: React.FC<Props> = ({
         </div>
 
         {/* 2. QUESTION AREA */}
-        <div data-testid="question-viewport" className="w-full px-1 md:px-4 overflow-hidden min-h-0 flex items-center justify-center">
-          <AutoFitText
-            testId="question-text"
-            text={question.text}
-            minFontSizePx={20}
-            maxFontSizePx={84}
-            clampVw={4.5}
-            className={`font-roboto-bold text-center transition-all duration-500 max-h-full ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
-            containerClassName="w-full h-full flex items-center justify-center"
-          />
-        </div>
+        {questionContent}
 
         {/* 3. ANSWER AREA */}
-        <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-0">
-          {!isRevealed && answerOptions.length > 0 && (
-            <div data-testid="answer-options-grid" className={`w-full grid ${optionGridClass} gap-2 md:gap-3`}> 
-              {answerOptions.map((option, idx) => (
-                <div
-                  key={`${option}-${idx}`}
-                  className="min-h-[56px] md:min-h-[74px] rounded-xl border border-zinc-700/70 bg-black/35 px-3 py-2 md:px-4 md:py-3 shadow-lg"
-                >
-                  <AutoFitText
-                    testId={`answer-option-${idx}`}
-                    text={option}
-                    minFontSizePx={14}
-                    maxFontSizePx={30}
-                    clampVw={2.2}
-                    className="font-roboto-bold text-zinc-100 text-left"
-                    containerClassName="w-full h-full flex items-center"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {isRevealed ? (
-            <div 
-              data-testid="answer-text"
-              className="w-full text-center py-3 md:py-6 bg-gold-950/20 border-y border-gold-500/20 animate-in zoom-in slide-in-from-bottom duration-500 min-h-0"
-            >
-              <AutoFitText
-                testId="answer-text-value"
-                text={question.answer}
-                minFontSizePx={18}
-                maxFontSizePx={62}
-                clampVw={3.2}
-                className="text-gold-400 font-roboto-bold text-center drop-shadow-2xl"
-                containerClassName="w-full"
-              />
-            </div>
-          ) : (
-            <div className="h-2 w-32 bg-zinc-800/50 rounded-full flex-none" />
-          )}
-        </div>
+        {answerContent}
 
         {/* 4. ACTION ICONS ROW */}
         <div data-testid="reveal-actions-rail" className="w-full border-t border-zinc-800/60 pt-2 md:pt-3 flex-none">

@@ -175,7 +175,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /logs & audit/i }));
 
-    expect(screen.getAllByText(/Player 13 was awarded 100 points in Art\./i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Player 13 played Art for 100 points -> points awarded to Player 13\./i).length).toBeGreaterThan(0);
 
     const auditList = screen.getByTestId('audit-log-list');
     expect(auditList.children.length).toBe(12);
