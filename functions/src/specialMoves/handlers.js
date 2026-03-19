@@ -32,6 +32,7 @@ exports.requestArm = async (data, context) => {
 
   const requestRef = db.collection(`games/${gameId}/specialMoves_requests`).doc(idempotencyKey);
   const activeCol = db.collection(`games/${gameId}/specialMoves_active`);
+  const activeRef = activeCol.doc(idempotencyKey);
 
   return db.runTransaction(async (transaction) => {
     const existingReq = await transaction.get(requestRef);
@@ -47,18 +48,31 @@ exports.requestArm = async (data, context) => {
     }
 
     const requestDoc = {
-      state: "REQUESTED",
+      state: "APPROVED",
       moveType,
       scope: "TILE",
       tileId,
       actorId,
       actorRole: "director",
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       idempotencyKey,
       correlationId
     };
 
+    const activeDoc = {
+      moveType,
+      scope: "TILE",
+      targetId: null,
+      tileId,
+      appliedAt: Date.now(),
+      expiresAt: Date.now() + 3600000,
+      requestId: idempotencyKey,
+      correlationId
+    };
+
     transaction.set(requestRef, requestDoc);
+    transaction.set(activeRef, activeDoc);
     logSMS("ARM_REQUEST_COMMITTED", { gameId, correlationId, idempotencyKey });
     return { success: true, id: idempotencyKey };
   });

@@ -1,18 +1,22 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, Edit, Save, X, RefreshCw, Wand2, MonitorOff, ExternalLink, RotateCcw, Play, Pause, Timer, Type, Layout, Star, Trash2, AlertTriangle, UserPlus, Check, BarChart3, Info, Hash, Clock, History, Copy, Trash, Download, ChevronDown, ChevronUp, Sparkles, Sliders, Loader2, Minus, Plus, ShieldAlert } from 'lucide-react';
-import { GameState, Question, Difficulty, Category, BoardViewSettings, Player, PlayEvent, AnalyticsEventType, GameAnalyticsEvent } from '../types';
+import { GameState, Question, Difficulty, Category, BoardViewSettings, Player, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType } from '../types';
 import { generateSingleQuestion, generateCategoryQuestions } from '../services/geminiService';
 import { logger } from '../services/logger';
 import { soundService } from '../services/soundService';
 import { normalizePlayerName, applyAiCategoryPreservePoints } from '../services/utils';
 import { DirectorAiRegenerator } from './DirectorAiRegenerator';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
+import { specialMovesClient } from '../modules/specialMoves/client/specialMovesClient';
+import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 
 interface Props {
   gameState: GameState;
   onUpdateState: (newState: GameState) => void;
   emitGameEvent: (type: AnalyticsEventType, payload: Partial<GameAnalyticsEvent>) => void;
+  gameId?: string;
+  specialMovesOverlay?: SMSOverlayDoc | null;
   onPopout?: () => void;
   isPoppedOut?: boolean;
   onBringBack?: () => void;
@@ -21,11 +25,14 @@ interface Props {
 }
 
 export const DirectorPanel: React.FC<Props> = ({ 
-  gameState, onUpdateState, emitGameEvent, onPopout, isPoppedOut, onBringBack, addToast, onClose 
+  gameState, onUpdateState, emitGameEvent, gameId, specialMovesOverlay, onPopout, isPoppedOut, onBringBack, addToast, onClose 
 }) => {
-  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'STATS' | 'SETTINGS'>('BOARD');
+  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'STATS' | 'SETTINGS'>('BOARD');
   const [editingQuestion, setEditingQuestion] = useState<{cIdx: number, qIdx: number} | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [selectedMoveType, setSelectedMoveType] = useState<SpecialMoveType>('DOUBLE_TROUBLE');
+  const [armingTileId, setArmingTileId] = useState<string | null>(null);
+  const [isClearingArmory, setIsClearingArmory] = useState(false);
   
   // Per-tile AI state
   const [tileAiDifficulty, setTileAiDifficulty] = useState<Difficulty>("mixed");
@@ -37,6 +44,20 @@ export const DirectorPanel: React.FC<Props> = ({
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState('');
   const [confirmResetAll, setConfirmResetAll] = useState(false);
+
+  const moveLabels: Record<SpecialMoveType, string> = {
+    DOUBLE_TROUBLE: 'DOUBLE TROUBLE',
+    TRIPLE_THREAT: 'TRIPLE THREAT',
+    SABOTAGE: 'SABOTAGE',
+    MEGA_STEAL: 'MEGA STEAL'
+  };
+
+  const currentOverlay = specialMovesOverlay || {
+    deploymentsByTileId: {},
+    activeByTargetId: {},
+    updatedAt: Date.now(),
+    version: 1
+  };
 
   // --- CLEANUP ON MODAL CLOSE ---
   useEffect(() => {
@@ -189,6 +210,62 @@ export const DirectorPanel: React.FC<Props> = ({
       actor: { role: 'director' }, 
       context: { after: updates } 
     });
+  };
+
+  const handleArmMove = async (tileId: string) => {
+    if (!gameId || armingTileId) {
+      if (!gameId) addToast('error', 'Special moves unavailable until a show is active.');
+      return;
+    }
+
+    setArmingTileId(tileId);
+    soundService.playClick();
+
+    try {
+      await specialMovesClient.requestArmTile({
+        gameId,
+        tileId,
+        moveType: selectedMoveType,
+        actorId: 'director',
+        idempotencyKey: crypto.randomUUID(),
+        correlationId: crypto.randomUUID()
+      });
+
+      logger.info('director_special_move_armed', { gameId, tileId, moveType: selectedMoveType });
+      addToast('success', 'MOVE DEPLOYED');
+    } catch (e: any) {
+      logger.error('director_special_move_arm_failed', { gameId, tileId, moveType: selectedMoveType, error: e.message });
+      addToast('error', e.message || 'Failed to deploy move.');
+    } finally {
+      setArmingTileId(null);
+    }
+  };
+
+  const handleClearArmory = async () => {
+    if (!gameId || isClearingArmory) {
+      if (!gameId) addToast('error', 'Special moves unavailable until a show is active.');
+      return;
+    }
+
+    setIsClearingArmory(true);
+    soundService.playClick();
+
+    try {
+      await specialMovesClient.clearArmory({
+        gameId,
+        actorId: 'director',
+        idempotencyKey: crypto.randomUUID(),
+        correlationId: crypto.randomUUID()
+      });
+
+      logger.info('director_special_move_armory_cleared', { gameId });
+      addToast('info', 'ARMORY CLEARED');
+    } catch (e: any) {
+      logger.error('director_special_move_clear_failed', { gameId, error: e.message });
+      addToast('error', e.message || 'Failed to clear armory.');
+    } finally {
+      setIsClearingArmory(false);
+    }
   };
 
   /**
@@ -390,6 +467,9 @@ export const DirectorPanel: React.FC<Props> = ({
           <button onClick={() => setActiveTab('PLAYERS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'PLAYERS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <Users className="w-4 h-4" /> Players
           </button>
+          <button aria-label="Moves Tab" onClick={() => setActiveTab('MOVES')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
+            <ShieldAlert className="w-4 h-4" /> Moves
+          </button>
           <button onClick={() => setActiveTab('SETTINGS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'SETTINGS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <Sliders className="w-4 h-4" /> Settings
           </button>
@@ -543,6 +623,73 @@ export const DirectorPanel: React.FC<Props> = ({
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'MOVES' && (
+          <div className="space-y-6 animate-in fade-in duration-300 max-w-7xl mx-auto">
+            <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4" /> MOVES
+                </h3>
+                <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Select a move, then arm any live tile on the board.</p>
+              </div>
+              <button
+                aria-label="Wipe All Armed Tiles"
+                onClick={handleClearArmory}
+                disabled={isClearingArmory}
+                className="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase shadow-lg shadow-red-900/20"
+              >
+                {isClearingArmory ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Wipe All Armed Tiles
+              </button>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {(Object.keys(moveLabels) as SpecialMoveType[]).map((moveType) => (
+                <button
+                  key={moveType}
+                  onClick={() => setSelectedMoveType(moveType)}
+                  className={`rounded-2xl border p-4 text-left transition-all ${selectedMoveType === moveType ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-800 bg-zinc-900/40 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900/70'}`}
+                >
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Special Move</div>
+                  <div className="mt-2 text-sm font-black uppercase tracking-wide">{moveLabels[moveType]}</div>
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-4">
+              {gameState.categories.map((cat) => (
+                <div key={cat.id} className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4">
+                  <div className="mb-3 text-xs font-black uppercase tracking-[0.2em] text-gold-500">{cat.title}</div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                    {cat.questions.map((q) => {
+                      const deployment = currentOverlay.deploymentsByTileId[q.id];
+                      const isArmed = deployment?.status === 'ARMED';
+                      const isPlayable = !q.isAnswered && !q.isVoided;
+
+                      return (
+                        <button
+                          key={q.id}
+                          aria-label={`Arm ${moveLabels[selectedMoveType]} on ${cat.title} for ${q.points}`}
+                          disabled={!isPlayable || armingTileId === q.id}
+                          onClick={() => handleArmMove(q.id)}
+                          className={`rounded-xl border p-4 text-left transition-all ${!isPlayable ? 'cursor-not-allowed border-zinc-800 bg-black/30 text-zinc-600 opacity-50' : isArmed ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-700 bg-zinc-900 text-white hover:border-gold-500 hover:bg-zinc-800'}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-lg font-black">{q.points}</span>
+                            {armingTileId === q.id && <Loader2 className="w-4 h-4 animate-spin text-gold-500" />}
+                          </div>
+                          <div className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
+                            {isArmed ? moveLabels[deployment.moveType!] : 'Ready to Arm'}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}

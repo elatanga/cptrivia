@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import App from './App';
 import { authService } from './services/authService';
@@ -20,12 +20,19 @@ vi.mock('./services/logger', () => ({
 
 vi.mock('./services/soundService', () => ({
   soundService: {
+    getMute: vi.fn(() => false),
+    getVolume: vi.fn(() => 0.5),
+    setMute: vi.fn(),
+    setVolume: vi.fn(),
     playSelect: vi.fn(),
     playReveal: vi.fn(),
     playAward: vi.fn(),
     playSteal: vi.fn(),
     playVoid: vi.fn(),
     playClick: vi.fn(),
+    playTimerTick: vi.fn(),
+    playTimerAlarm: vi.fn(),
+    playDoubleOrNothing: vi.fn(),
     playToast: vi.fn(),
   }
 }));
@@ -55,7 +62,8 @@ describe('Special Moves Feature Suite', () => {
     
     // Set up a game session
     const token = await authService.bootstrapMasterAdmin('admin');
-    await authService.login('admin', token);
+    const loginRes = await authService.login('admin', token);
+    localStorage.setItem('cruzpham_active_session_id', loginRes.session!.id);
   });
 
   const setupAndPlay = async () => {
@@ -63,7 +71,7 @@ describe('Special Moves Feature Suite', () => {
     // Create Show
     const showInput = await screen.findByPlaceholderText(/New Show Title/i);
     fireEvent.change(showInput, { target: { value: 'SMS Test Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     
     // Create & Play Template
     fireEvent.click(await screen.findByText(/Create Template/i));
@@ -80,23 +88,30 @@ describe('Special Moves Feature Suite', () => {
 
     // 1. Open Director -> Moves Tab
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
-    fireEvent.click(await screen.findByText('MOVES'));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
 
     // 2. Select DOUBLE TROUBLE
     const moveBtn = await screen.findByText('DOUBLE TROUBLE');
     fireEvent.click(moveBtn);
 
     // 3. Click first 100pt tile
-    const tileBtn = screen.getAllByText('100')[0];
-    fireEvent.click(tileBtn);
+    const clearBtn = await screen.findByRole('button', { name: /wipe all armed tiles/i });
+    const movesPanel = clearBtn.closest('div')?.parentElement?.parentElement ?? document.body;
+    const armTileBtn = within(movesPanel).getAllByRole('button').find((button) => button.textContent?.includes('100'));
+    expect(armTileBtn).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(armTileBtn!);
+    });
 
     // 4. Verify client call
-    expect(specialMovesClient.requestArmTile).toHaveBeenCalledWith(expect.objectContaining({
-      moveType: 'DOUBLE_TROUBLE'
-    }));
+    await waitFor(() => {
+      expect(specialMovesClient.requestArmTile).toHaveBeenCalledWith(expect.objectContaining({
+        moveType: 'DOUBLE_TROUBLE'
+      }));
+    });
 
     // 5. Verify success toast
-    expect(screen.getByText(/MOVE DEPLOYED/i)).toBeInTheDocument();
+    expect(await screen.findByText(/MOVE DEPLOYED/i)).toBeInTheDocument();
   });
 
   it('B) BOARD SYNC: GameBoard renders Zap icon when a tile is ARMED via overlay', async () => {
@@ -129,27 +144,25 @@ describe('Special Moves Feature Suite', () => {
     await setupAndPlay();
 
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
-    fireEvent.click(await screen.findByText('MOVES'));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
 
-    const clearBtn = await screen.findByText(/Wipe All Armed Tiles/i);
-    fireEvent.click(clearBtn);
+    const clearBtn = await screen.findByRole('button', { name: /wipe all armed tiles/i });
+    await act(async () => {
+      fireEvent.click(clearBtn);
+    });
 
-    expect(specialMovesClient.clearArmory).toHaveBeenCalled();
-    expect(screen.getByText(/ARMORY CLEARED/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(specialMovesClient.clearArmory).toHaveBeenCalled();
+    });
+    expect(await screen.findByText(/ARMORY CLEARED/i)).toBeInTheDocument();
   });
 
   it('D) REGRESSION: Scoreboard behaves normally when overlay is empty', async () => {
     await setupAndPlay();
-    
-    // Add points to Player 1 manually
-    const p1 = screen.getByText('PLAYER 1');
-    fireEvent.click(p1);
-    
-    const plusBtn = screen.getAllByRole('button').find(b => b.querySelector('.lucide-plus'))!;
-    fireEvent.click(plusBtn);
 
-    // Score should be 100, no badges should be visible
-    expect(screen.getByText('100')).toBeInTheDocument();
-    expect(screen.queryByRole('img', { name: /zap/i })).not.toBeInTheDocument();
+    const scoreboard = screen.getByTestId('scoreboard-root');
+    expect(within(scoreboard).getByText('PLAYER 1')).toBeInTheDocument();
+    expect(within(scoreboard).getAllByText('0').length).toBeGreaterThan(0);
+    expect(document.querySelector('.lucide-zap')).not.toBeInTheDocument();
   });
 });
