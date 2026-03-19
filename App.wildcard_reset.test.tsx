@@ -51,15 +51,15 @@ describe('Wildcard Reset Feature Tests', () => {
     // Create Show
     await waitFor(() => screen.getByText(/Select Production/i));
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Wildcard Reset Test' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     
     // Create Template
     await waitFor(() => screen.getByText(/Template Library/i));
-    fireEvent.click(screen.getByText(/New Template/i));
-    await waitFor(() => screen.getByText(/New Template Configuration/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Reset Game' } });
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     
     await waitFor(() => screen.getByText(/Save/i));
     fireEvent.click(screen.getByText(/Save/i));
@@ -90,7 +90,7 @@ describe('Wildcard Reset Feature Tests', () => {
     fireEvent.click(resetBtn);
 
     // 4. Verify usage resets to 0/4
-    await waitFor(() => expect(screen.getByText('0/4')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('0/4').length).toBeGreaterThan(0));
     
     // 5. Verify reset button becomes disabled
     expect(resetBtn).toBeDisabled();
@@ -152,3 +152,7 @@ describe('Wildcard Reset Feature Tests', () => {
     await waitFor(() => expect(screen.queryByText('★')).not.toBeInTheDocument());
   });
 });
+
+
+
+

@@ -57,11 +57,11 @@ describe('CARD 3: "Last 4 Plays" Real-Time Logs', () => {
     render(<App />);
     await waitFor(() => screen.getByPlaceholderText(/New Show Title/i));
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Logs Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Create Template/i));
     fireEvent.click(screen.getByText(/Create Template/i));
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Logs Game' } });
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     
     // Wait for builder grid
     await waitFor(() => screen.getByText(/Save Template/i));
@@ -208,3 +208,5 @@ describe('CARD 3: "Last 4 Plays" Real-Time Logs', () => {
     spy.mockRestore();
   });
 });
+
+

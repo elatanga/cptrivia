@@ -58,16 +58,16 @@ describe('Director Panel: Delete Player (Fix Verification)', () => {
     await waitFor(() => screen.getByText(/Select Production/i));
     
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Delete Test Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Template Library/i));
     
     // Create Template with 2 players
     fireEvent.click(screen.getByText(/Create Template/i));
-    await waitFor(() => screen.getByText(/New Template Configuration/i));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     fireEvent.change(screen.getByPlaceholderText(/Show or Game Topic/i), { target: { value: 'Delete Game' } });
     
     // Use Start Building to initialize with default players
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     await waitFor(() => screen.getByText(/Save Template/i));
     fireEvent.click(screen.getByText(/Save Template/i));
     await waitFor(() => screen.getByText(/Play Show/i));
@@ -143,3 +143,6 @@ describe('Director Panel: Delete Player (Fix Verification)', () => {
     expect(state.selectedPlayerId).not.toBe(state.players.find((p: any) => p.name === 'PLAYER 1')?.id);
   });
 });
+
+
+

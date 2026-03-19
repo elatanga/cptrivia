@@ -4,9 +4,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
 import { GameState, Player } from '../types';
-
-// Fix: Declare require to avoid TypeScript error when dynamically loading modules in tests.
-declare const require: any;
+import { logger } from '../services/logger';
 
 /**
  * MOCKS
@@ -148,8 +146,6 @@ describe('DirectorPanel: Players Tab Regression Lock', () => {
   });
 
   it('4) DEFENSIVE: Handles missing players gracefully and logs warning', () => {
-    // Fix: Using the declared require to access logger from the mock context
-    const { logger } = require('../services/logger');
     const emptyState = { ...baseState, players: [] };
     
     render(
@@ -171,7 +167,7 @@ describe('DirectorPanel: Players Tab Regression Lock', () => {
   });
 
   it('5) LOCK: Snapshot verification of the Players Tab structure', () => {
-    const { asFragment } = render(
+    render(
       <DirectorPanel 
         gameState={baseState} 
         onUpdateState={mockOnUpdateState} 

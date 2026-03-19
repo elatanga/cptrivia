@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AppShell } from './components/AppShell';
 import { ToastContainer } from './components/Toast';
@@ -15,12 +14,13 @@ import { ConfirmationModal } from './components/ConfirmationModal';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
 import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent } from './types';
-import { QuestionCountdownTimer, SessionGameTimer } from './types';
+import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from './types';
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
 import { normalizePlayerName } from './services/utils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
+import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -63,31 +63,40 @@ const App: React.FC = () => {
       isRunning: false
     },
     // Fix: Updated initial viewSettings to align with the BoardViewSettings interface and use SizeScale strings ('M') instead of numbers.
-    viewSettings: {
-      categoryTitleScale: 'M',
-      playerNameScale: 'M',
-      tileScale: 'M',
-      scoreboardScale: 1.0,
-      tilePaddingScale: 1.0,
-      updatedAt: new Date().toISOString()
-    },
+    viewSettings: getDefaultBoardViewSettings(),
     lastPlays: [],
     events: []
   });
 
-  const [questionCountdown, setQuestionCountdown] = useState<QuestionCountdownTimer>({
-    duration: 0,
-    isActive: false,
+  const [questionTimerEnabled, setQuestionTimerEnabled] = useState(true);
+  const [questionTimerDurationSeconds, setQuestionTimerDurationSeconds] = useState(10);
+
+  const [questionTimer, setQuestionTimer] = useState<QuestionCountdownTimer>({
+    durationSeconds: 10,
+    remainingSeconds: 0,
+    isRunning: false,
+    isStopped: true,
     startedAt: null,
-    timeRemaining: 0
+    endsAt: null,
+    activeQuestionId: null,
   });
 
   const [sessionTimer, setSessionTimer] = useState<SessionGameTimer>({
-    preset: null,
-    isActive: false,
+    durationSeconds: 0,
+    remainingSeconds: 0,
+    isRunning: false,
+    isStopped: true,
     startedAt: null,
-    timeRemaining: 0,
-    paused: false
+    endsAt: null,
+    selectedPreset: null,
+  });
+
+  const [timerAudio, setTimerAudio] = useState<TimerAudioSettings>({
+    enabled: true,
+    muted: soundService.getMute?.() ?? false,
+    volume: soundService.getVolume?.() ?? 0.5,
+    tickSoundEnabled: true,
+    endSoundEnabled: true,
   });
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -106,8 +115,12 @@ const App: React.FC = () => {
 
   // --- PERSISTENCE & SYNC ---
   const saveGameState = (state: GameState) => {
-    localStorage.setItem('cruzpham_gamestate', JSON.stringify(state));
-    setGameState(state);
+    const safeState: GameState = {
+      ...state,
+      viewSettings: sanitizeBoardViewSettings(state.viewSettings)
+    };
+    localStorage.setItem('cruzpham_gamestate', JSON.stringify(safeState));
+    setGameState(safeState);
   };
 
   const getPresetDuration = (preset: string): number => {
@@ -140,7 +153,15 @@ const App: React.FC = () => {
 
   const handleContinueAfterTimerExpired = () => {
     setShowTimerExpiredPrompt(false);
-    setSessionTimer({ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false });
+    setSessionTimer({
+      durationSeconds: 0,
+      remainingSeconds: 0,
+      isRunning: false,
+      isStopped: true,
+      startedAt: null,
+      endsAt: null,
+      selectedPreset: null,
+    });
   };
 
   const handleEndGameAfterTimerExpired = () => {
@@ -167,9 +188,143 @@ const App: React.FC = () => {
     });
 
     setShowTimerExpiredPrompt(false);
-    setSessionTimer({ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false });
+    setQuestionTimer({
+      durationSeconds: questionTimerDurationSeconds,
+      remainingSeconds: 0,
+      isRunning: false,
+      isStopped: true,
+      startedAt: null,
+      endsAt: null,
+      activeQuestionId: null,
+    });
+    setSessionTimer({
+      durationSeconds: 0,
+      remainingSeconds: 0,
+      isRunning: false,
+      isStopped: true,
+      startedAt: null,
+      endsAt: null,
+      selectedPreset: null,
+    });
     setViewMode('BOARD');
   };
+
+  const getSoundSnapshot = useCallback(() => {
+    const svc = soundService as any;
+    const fallbackMuted = typeof svc.getMute === 'function' ? !!svc.getMute() : false;
+    const fallbackVolume = typeof svc.getVolume === 'function' ? Number(svc.getVolume()) : 0.5;
+    if (typeof svc.getSoundBoardState === 'function') {
+      return svc.getSoundBoardState();
+    }
+    return {
+      masterEnabled: true,
+      masterMuted: fallbackMuted,
+      masterVolume: fallbackVolume,
+      sounds: {
+        timerTick: { enabled: true, muted: false, volume: 1 },
+        timerEnd: { enabled: true, muted: false, volume: 1 }
+      }
+    };
+  }, []);
+
+  const deriveTimerAudio = useCallback((): TimerAudioSettings => {
+    const snapshot = getSoundSnapshot();
+    const tick = snapshot.sounds?.timerTick;
+    const end = snapshot.sounds?.timerEnd;
+    return {
+      enabled: snapshot.masterEnabled,
+      muted: snapshot.masterMuted,
+      volume: snapshot.masterVolume,
+      tickSoundEnabled: (tick?.enabled ?? true) && !(tick?.muted ?? false),
+      endSoundEnabled: (end?.enabled ?? true) && !(end?.muted ?? false)
+    };
+  }, [getSoundSnapshot]);
+
+  const canPlayTimerAudio = useCallback(() => {
+    const snapshot = getSoundSnapshot();
+    return snapshot.masterEnabled && !snapshot.masterMuted && snapshot.masterVolume > 0;
+  }, [getSoundSnapshot]);
+
+  useEffect(() => {
+    const svc = soundService as any;
+    if (typeof svc.subscribe !== 'function') {
+      setTimerAudio(deriveTimerAudio());
+      return;
+    }
+    const unsubscribe = svc.subscribe(() => {
+      setTimerAudio(deriveTimerAudio());
+    });
+    setTimerAudio(deriveTimerAudio());
+    return unsubscribe;
+  }, [deriveTimerAudio]);
+
+  const startQuestionTimer = useCallback((questionId: string, durationSeconds = questionTimerDurationSeconds) => {
+    const now = Date.now();
+    setQuestionTimer({
+      durationSeconds,
+      remainingSeconds: durationSeconds,
+      isRunning: true,
+      isStopped: false,
+      startedAt: now,
+      endsAt: now + durationSeconds * 1000,
+      activeQuestionId: questionId,
+    });
+  }, [questionTimerDurationSeconds]);
+
+  const restartQuestionTimer = useCallback(() => {
+    const questionId = gameStateRef.current.activeQuestionId;
+    if (!questionId) return;
+    startQuestionTimer(questionId, questionTimerDurationSeconds);
+  }, [questionTimerDurationSeconds, startQuestionTimer]);
+
+  const stopQuestionTimer = useCallback(() => {
+    setQuestionTimer((prev) => ({
+      ...prev,
+      isRunning: false,
+      isStopped: true,
+      endsAt: null,
+    }));
+  }, []);
+
+  const setTimerSoundEnabled = useCallback((enabled: boolean) => {
+    const svc = soundService as any;
+    if (typeof svc.setMasterSoundEnabled === 'function') {
+      svc.setMasterSoundEnabled(enabled);
+    }
+    setTimerAudio((prev) => ({ ...prev, enabled }));
+  }, []);
+
+  const setTimerMuted = useCallback((muted: boolean) => {
+    const svc = soundService as any;
+    if (typeof svc.setMasterMuted === 'function') {
+      svc.setMasterMuted(muted);
+    } else {
+      soundService.setMute(muted);
+    }
+    setTimerAudio((prev) => ({ ...prev, muted }));
+  }, []);
+
+  const increaseTimerVolume = useCallback(() => {
+    const svc = soundService as any;
+    if (typeof svc.increaseMasterVolume === 'function') {
+      svc.increaseMasterVolume();
+    } else {
+      const nextVol = Math.min(1, Number(((soundService.getVolume?.() || 0) + 0.1).toFixed(2)));
+      soundService.setVolume(nextVol);
+    }
+    setTimerAudio(deriveTimerAudio());
+  }, [deriveTimerAudio]);
+
+  const decreaseTimerVolume = useCallback(() => {
+    const svc = soundService as any;
+    if (typeof svc.decreaseMasterVolume === 'function') {
+      svc.decreaseMasterVolume();
+    } else {
+      const nextVol = Math.max(0, Number(((soundService.getVolume?.() || 0) - 0.1).toFixed(2)));
+      soundService.setVolume(nextVol);
+    }
+    setTimerAudio(deriveTimerAudio());
+  }, [deriveTimerAudio]);
 
   // --- ANALYTICS EVENT EMITTER (CANONICAL LOG BUS) ---
   const emitGameEvent = useCallback((type: AnalyticsEventType, payload: Partial<GameAnalyticsEvent>) => {
@@ -306,35 +461,71 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [session]);
 
-  // SESSION TIMER COUNTDOWN
+  // AUTHORITATIVE TIMER ENGINE
   useEffect(() => {
-    if (!sessionTimer.isActive || sessionTimer.paused || !gameState.isGameStarted) return;
-
     const interval = window.setInterval(() => {
-      setSessionTimer((prev) => {
-        const next = Math.max(0, prev.timeRemaining - 1);
+      const now = Date.now();
+      let questionCompleted = false;
+      let sessionExpired = false;
 
-        if (next > 0 && next <= 10) soundService.playTimerTick();
-        if (next === 0 && prev.timeRemaining !== 0) {
-          soundService.playTimerAlarm();
-          handleSessionTimerExpired();
+      setQuestionTimer((prev) => {
+        if (!prev.isRunning || !prev.endsAt) return prev;
+        const nextRemaining = Math.max(0, Math.ceil((prev.endsAt - now) / 1000));
+        if (nextRemaining === prev.remainingSeconds) return prev;
+
+        if (nextRemaining > 0 && nextRemaining <= 5 && canPlayTimerAudio() && timerAudio.tickSoundEnabled) {
+          soundService.playSound?.('timerTick');
         }
 
-        return { ...prev, timeRemaining: next };
+        if (nextRemaining === 0) {
+          if (canPlayTimerAudio() && timerAudio.endSoundEnabled) {
+            soundService.playSound?.('timerEnd');
+          }
+          questionCompleted = true;
+          return { ...prev, remainingSeconds: 0, isRunning: false, isStopped: true, endsAt: null };
+        }
+
+        return { ...prev, remainingSeconds: nextRemaining };
       });
-    }, 1000);
+
+      setSessionTimer((prev) => {
+        if (!prev.isRunning || prev.isStopped || !prev.endsAt || !gameStateRef.current.isGameStarted) return prev;
+        const nextRemaining = Math.max(0, Math.ceil((prev.endsAt - now) / 1000));
+        if (nextRemaining === prev.remainingSeconds) return prev;
+
+        if (nextRemaining > 0 && nextRemaining <= 10 && canPlayTimerAudio() && timerAudio.tickSoundEnabled) {
+          soundService.playSound?.('sessionCue');
+        }
+
+        if (nextRemaining === 0) {
+          if (canPlayTimerAudio() && timerAudio.endSoundEnabled) {
+            soundService.playSound?.('timerEnd');
+          }
+          sessionExpired = true;
+          return { ...prev, remainingSeconds: 0, isRunning: false, isStopped: true, endsAt: null };
+        }
+
+        return { ...prev, remainingSeconds: nextRemaining };
+      });
+
+      if (questionCompleted) handleQuestionCountdownComplete();
+      if (sessionExpired) handleSessionTimerExpired();
+    }, 250);
 
     return () => clearInterval(interval);
-  }, [sessionTimer.isActive, sessionTimer.paused, gameState.isGameStarted]);
+  }, [canPlayTimerAudio, timerAudio.tickSoundEnabled, timerAudio.endSoundEnabled]);
 
   const handleStartSessionTimer = (preset: '15m' | '30m' | '1h' | '1h30m' | '2h') => {
     const duration = getPresetDuration(preset);
+    const now = Date.now();
     const newTimer: SessionGameTimer = {
-      preset,
-      isActive: true,
-      startedAt: Date.now(),
-      timeRemaining: duration,
-      paused: false
+      durationSeconds: duration,
+      remainingSeconds: duration,
+      isRunning: true,
+      isStopped: false,
+      startedAt: now,
+      endsAt: now + duration * 1000,
+      selectedPreset: preset
     };
     setSessionTimer(newTimer);
 
@@ -346,17 +537,34 @@ const App: React.FC = () => {
 
   const handlePauseSessionTimer = () => {
     setSessionTimer((prev) => {
-      const paused = !prev.paused;
-      emitGameEvent(paused ? 'SESSION_TIMER_PAUSED' : 'SESSION_TIMER_RESUMED', {
-        actor: { role: 'director' },
-        context: {}
-      });
-      return { ...prev, paused };
+      if (!prev.remainingSeconds) return prev;
+      if (prev.isRunning) {
+        emitGameEvent('SESSION_TIMER_PAUSED', { actor: { role: 'director' }, context: {} });
+        return { ...prev, isRunning: false, isStopped: true, endsAt: null };
+      }
+
+      const now = Date.now();
+      emitGameEvent('SESSION_TIMER_RESUMED', { actor: { role: 'director' }, context: {} });
+      return {
+        ...prev,
+        isRunning: true,
+        isStopped: false,
+        startedAt: now,
+        endsAt: now + prev.remainingSeconds * 1000,
+      };
     });
   };
 
   const handleResetSessionTimer = () => {
-    setSessionTimer({ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false });
+    setSessionTimer({
+      durationSeconds: 0,
+      remainingSeconds: 0,
+      isRunning: false,
+      isStopped: true,
+      startedAt: null,
+      endsAt: null,
+      selectedPreset: null,
+    });
   };
 
   useEffect(() => {
@@ -401,23 +609,7 @@ const App: React.FC = () => {
          const savedState = localStorage.getItem('cruzpham_gamestate');
          if (savedState) {
            const parsed = JSON.parse(savedState);
-           // Fix: Updated hydration logic to align with the current BoardViewSettings interface properties and SizeScale strings.
-           if (!parsed.viewSettings) {
-             parsed.viewSettings = { 
-               categoryTitleScale: 'M',
-               playerNameScale: 'M',
-               tileScale: 'M',
-               scoreboardScale: 1.0,
-               tilePaddingScale: 1.0,
-               updatedAt: new Date().toISOString() 
-             };
-           } else {
-             if (parsed.viewSettings.categoryTitleScale === undefined) parsed.viewSettings.categoryTitleScale = 'M';
-             if (parsed.viewSettings.playerNameScale === undefined) parsed.viewSettings.playerNameScale = 'M';
-             if (parsed.viewSettings.tileScale === undefined || typeof parsed.viewSettings.tileScale === 'number') parsed.viewSettings.tileScale = 'M';
-             if (parsed.viewSettings.scoreboardScale === undefined) parsed.viewSettings.scoreboardScale = 1.0;
-             if (parsed.viewSettings.tilePaddingScale === undefined) parsed.viewSettings.tilePaddingScale = 1.0;
-           }
+           parsed.viewSettings = sanitizeBoardViewSettings(parsed.viewSettings);
            
            if (!parsed.lastPlays) parsed.lastPlays = [];
            if (!parsed.events) parsed.events = [];
@@ -536,14 +728,7 @@ const App: React.FC = () => {
       history: [`Started: ${template.topic}`],
       timer: { duration: 30, endTime: null, isRunning: false },
       // Fix: Ensured fallback viewSettings matches the interface and uses SizeScale strings ('M').
-      viewSettings: gameState.viewSettings || { 
-        categoryTitleScale: 'M',
-        playerNameScale: 'M',
-        tileScale: 'M',
-        scoreboardScale: 1.0,
-        tilePaddingScale: 1.0,
-        updatedAt: new Date().toISOString() 
-      },
+      viewSettings: sanitizeBoardViewSettings(gameState.viewSettings),
       lastPlays: [],
       events: [] // Reset events for new session
     };
@@ -575,6 +760,24 @@ const App: React.FC = () => {
       lastPlays: []
     };
     saveGameState(newState);
+    setQuestionTimer({
+      durationSeconds: questionTimerDurationSeconds,
+      remainingSeconds: 0,
+      isRunning: false,
+      isStopped: true,
+      startedAt: null,
+      endsAt: null,
+      activeQuestionId: null,
+    });
+    setSessionTimer({
+      durationSeconds: 0,
+      remainingSeconds: 0,
+      isRunning: false,
+      isStopped: true,
+      startedAt: null,
+      endsAt: null,
+      selectedPreset: null,
+    });
     setViewMode('BOARD');
     setShowEndGameConfirm(false);
     addToast('info', 'Game Session Ended');
@@ -583,12 +786,22 @@ const App: React.FC = () => {
   const handleSelectQuestion = (catId: string, qId: string) => {
     const cat = gameState.categories.find(c => c.id === catId);
     const q = cat?.questions.find(qu => qu.id === qId);
-    
+
+    soundService.playSound?.('tileOpen');
+
     emitGameEvent('TILE_OPENED', {
        actor: { role: 'director' },
        context: { tileId: qId, categoryName: cat?.title, points: q?.points }
     });
-    
+
+    if (questionTimerEnabled) {
+      startQuestionTimer(qId);
+      emitGameEvent('QUESTION_COUNTDOWN_START', {
+        actor: { role: 'director' },
+        context: { tileId: qId, note: `Question countdown auto-started (${questionTimerDurationSeconds}s)` }
+      });
+    }
+
     saveGameState({ ...gameState, activeCategoryId: catId, activeQuestionId: qId });
   };
 
@@ -718,6 +931,7 @@ const App: React.FC = () => {
       timer: { ...current.timer, endTime: null, isRunning: false },
       lastPlays: updatedPlays
     };
+    stopQuestionTimer();
     saveGameState(newState);
 
     if ((action === 'award' || action === 'steal') && targetPlayerId) {
@@ -820,19 +1034,28 @@ const App: React.FC = () => {
           addToast={addToast}
           gameId={activeShow?.id}
           specialMovesOverlay={specialMovesOverlay}
-          questionCountdown={questionCountdown}
-          onQuestionCountdownStart={(duration) => {
-            setQuestionCountdown({ duration, isActive: true, startedAt: Date.now(), timeRemaining: duration });
-            emitGameEvent('QUESTION_COUNTDOWN_START', { actor: { role: 'director' }, context: { note: `Question countdown started: ${duration}s` } });
+          questionTimer={questionTimer}
+          questionTimerEnabled={questionTimerEnabled}
+          questionTimerDurationSeconds={questionTimerDurationSeconds}
+          onQuestionTimerToggle={setQuestionTimerEnabled}
+          onQuestionTimerDurationChange={setQuestionTimerDurationSeconds}
+          onQuestionTimerRestart={() => {
+            restartQuestionTimer();
+            emitGameEvent('QUESTION_COUNTDOWN_START', { actor: { role: 'director' }, context: { note: `Question countdown restarted (${questionTimerDurationSeconds}s)` } });
           }}
-          onQuestionCountdownStop={() => {
-            setQuestionCountdown((prev) => ({ ...prev, isActive: false }));
+          onQuestionTimerStop={() => {
+            stopQuestionTimer();
             emitGameEvent('QUESTION_COUNTDOWN_STOPPED', { actor: { role: 'director' }, context: { note: 'Question countdown stopped' } });
           }}
           sessionTimer={sessionTimer}
           onSessionTimerStart={handleStartSessionTimer}
           onSessionTimerPause={handlePauseSessionTimer}
           onSessionTimerReset={handleResetSessionTimer}
+          timerAudio={timerAudio}
+          onSetTimerSoundEnabled={setTimerSoundEnabled}
+          onSetTimerMuted={setTimerMuted}
+          onIncreaseTimerVolume={increaseTimerVolume}
+          onDecreaseTimerVolume={decreaseTimerVolume}
         />
         <ToastContainer toasts={toasts} removeToast={removeToast} />
       </div>
@@ -917,7 +1140,7 @@ const App: React.FC = () => {
                             <button onClick={() => { soundService.playClick(); setShowEndGameConfirm(true); }} type="button" className="text-[10px] md:text-xs uppercase text-red-500 hover:text-red-600 font-bold tracking-wider flex items-center gap-2"><Power className="w-3 h-3" /> End Show</button>
                             <button onClick={() => setViewMode('DIRECTOR')} className="text-[10px] md:text-xs uppercase font-bold text-zinc-500 hover:text-zinc-800 flex items-center gap-2 px-3 py-1.5 rounded transition-colors"><Grid className="w-3 h-3" /> Director</button>
                           </div>
-                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} sessionTimerActive={sessionTimer.isActive} sessionTimeRemaining={sessionTimer.timeRemaining} /></div>
+                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
                         </div>
                         <div className="order-1 md:order-2 flex-none h-auto lg:h-full w-full md:w-auto relative z-30">
                           <Scoreboard players={gameState.players} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
@@ -929,9 +1152,17 @@ const App: React.FC = () => {
                             players={gameState.players} 
                             selectedPlayerId={gameState.selectedPlayerId} 
                             timer={gameState.timer}
-                            questionCountdownActive={questionCountdown.isActive}
-                            questionCountdownDuration={questionCountdown.duration}
-                            onQuestionCountdownComplete={handleQuestionCountdownComplete}
+                            questionCountdownRemainingSeconds={questionTimer.remainingSeconds}
+                            questionCountdownDurationSeconds={questionTimer.durationSeconds}
+                            isQuestionCountdownRunning={questionTimer.isRunning && questionTimer.activeQuestionId === activeQuestion.id}
+                            onQuestionCountdownRestart={() => {
+                              restartQuestionTimer();
+                              emitGameEvent('QUESTION_COUNTDOWN_START', { actor: { role: 'director' }, context: { tileId: activeQuestion.id, note: `Question countdown restarted (${questionTimerDurationSeconds}s)` } });
+                            }}
+                            onQuestionCountdownStop={() => {
+                              stopQuestionTimer();
+                              emitGameEvent('QUESTION_COUNTDOWN_STOPPED', { actor: { role: 'director' }, context: { tileId: activeQuestion.id, note: 'Question countdown stopped from question screen' } });
+                            }}
                             onClose={handleQuestionClose}
                             onReveal={() => {
                               emitGameEvent('ANSWER_REVEALED', {
@@ -961,19 +1192,28 @@ const App: React.FC = () => {
                      onClose={() => setViewMode('BOARD')}
                      gameId={activeShow?.id}
                      specialMovesOverlay={specialMovesOverlay}
-                     questionCountdown={questionCountdown}
-                     onQuestionCountdownStart={(duration) => {
-                       setQuestionCountdown({ duration, isActive: true, startedAt: Date.now(), timeRemaining: duration });
-                       emitGameEvent('QUESTION_COUNTDOWN_START', { actor: { role: 'director' }, context: { note: `Question countdown started: ${duration}s` } });
+                     questionTimer={questionTimer}
+                     questionTimerEnabled={questionTimerEnabled}
+                     questionTimerDurationSeconds={questionTimerDurationSeconds}
+                     onQuestionTimerToggle={setQuestionTimerEnabled}
+                     onQuestionTimerDurationChange={setQuestionTimerDurationSeconds}
+                     onQuestionTimerRestart={() => {
+                       restartQuestionTimer();
+                       emitGameEvent('QUESTION_COUNTDOWN_START', { actor: { role: 'director' }, context: { note: `Question countdown restarted (${questionTimerDurationSeconds}s)` } });
                      }}
-                     onQuestionCountdownStop={() => {
-                       setQuestionCountdown((prev) => ({ ...prev, isActive: false }));
+                     onQuestionTimerStop={() => {
+                       stopQuestionTimer();
                        emitGameEvent('QUESTION_COUNTDOWN_STOPPED', { actor: { role: 'director' }, context: { note: 'Question countdown stopped' } });
                      }}
                      sessionTimer={sessionTimer}
                      onSessionTimerStart={handleStartSessionTimer}
                      onSessionTimerPause={handlePauseSessionTimer}
                      onSessionTimerReset={handleResetSessionTimer}
+                     timerAudio={timerAudio}
+                     onSetTimerSoundEnabled={setTimerSoundEnabled}
+                     onSetTimerMuted={setTimerMuted}
+                     onIncreaseTimerVolume={increaseTimerVolume}
+                     onDecreaseTimerVolume={decreaseTimerVolume}
                    />
                  </div>
                  {viewMode === 'ADMIN' && <div className="absolute inset-0 z-50 bg-zinc-950"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}

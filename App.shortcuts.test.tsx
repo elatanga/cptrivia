@@ -73,18 +73,18 @@ describe('CRUZPHAM TRIVIA - Shortcuts & Styling Tests', () => {
     // Create Show
     const titleInput = screen.getByPlaceholderText(/New Show Title/i);
     fireEvent.change(titleInput, { target: { value: 'Test Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     
     await waitFor(() => screen.getByText(/Template Library/i));
     
     // Create Template
     fireEvent.click(screen.getByText(/Create Template/i));
-    await waitFor(() => screen.getByText(/New Template Configuration/i));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     
     const templateTitle = screen.getByPlaceholderText(/e.g. Science Night 2024/i);
     fireEvent.change(templateTitle, { target: { value: 'Test Template' } });
     
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     
     // Save
     await waitFor(() => screen.getByText(/Save/i));
@@ -164,3 +164,5 @@ describe('CRUZPHAM TRIVIA - Shortcuts & Styling Tests', () => {
     expect(soundService.playSelect).toHaveBeenCalled();
   });
 });
+
+

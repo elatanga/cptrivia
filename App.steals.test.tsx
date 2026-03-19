@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import App from './App';
 import { authService } from './services/authService';
 
@@ -52,15 +52,15 @@ describe('Steals Counter Feature', () => {
     // Create Show
     await waitFor(() => screen.getByText(/Select Production/i));
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Steals Test' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     
     // Create Template
     await waitFor(() => screen.getByText(/Template Library/i));
-    fireEvent.click(screen.getByText(/New Template/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
     
-    await waitFor(() => screen.getByText(/Template Title/i));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Game 1' } });
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     
     await waitFor(() => screen.getByText(/Save/i));
     fireEvent.click(screen.getByText(/Save/i));
@@ -87,14 +87,18 @@ describe('Steals Counter Feature', () => {
     await waitFor(() => screen.getByText(/Steal/i));
 
     // 4. Click Steal
-    const stealBtn = screen.getByText(/Steal/i).closest('button');
-    fireEvent.click(stealBtn!);
+    const stealBtn = screen.getByRole('button', { name: /^Steal$/i });
+    fireEvent.click(stealBtn);
 
     // 5. Select Player 2 to steal (Assuming 4 default players, selecting one that isn't selected or just any)
     // We need to select a player to steal. The modal shows buttons for other players.
     // Let's assume 'Player 2' is available to steal.
-    const p2StealBtn = screen.getByText('Player 2').closest('button');
-    fireEvent.click(p2StealBtn!);
+    const stealOverlay = screen.getByText(/Who is stealing\?/i).closest('div') as HTMLElement;
+    const stealTargetBtn = within(stealOverlay)
+      .getAllByRole('button')
+      .find((btn) => !/cancel steal/i.test(btn.textContent || ''));
+    expect(stealTargetBtn).toBeTruthy();
+    fireEvent.click(stealTargetBtn!);
 
     // 6. Verify Scoreboard Update
     await waitFor(() => {
@@ -137,10 +141,14 @@ describe('Steals Counter Feature', () => {
     const qBtn = screen.getAllByText('100')[0];
     fireEvent.click(qBtn);
     fireEvent.keyDown(window, { code: 'Space' });
-    const stealBtn = screen.getByText(/Steal/i).closest('button');
-    fireEvent.click(stealBtn!);
-    const p2StealBtn = screen.getByText('Player 2').closest('button');
-    fireEvent.click(p2StealBtn!);
+    const stealBtn = screen.getByRole('button', { name: /^Steal$/i });
+    fireEvent.click(stealBtn);
+    const stealOverlay = screen.getByText(/Who is stealing\?/i).closest('div') as HTMLElement;
+    const stealTargetBtn = within(stealOverlay)
+      .getAllByRole('button')
+      .find((btn) => !/cancel steal/i.test(btn.textContent || ''));
+    expect(stealTargetBtn).toBeTruthy();
+    fireEvent.click(stealTargetBtn!);
 
     // Open Director
     await waitFor(() => screen.getByText('STEALS: 1'));
@@ -158,3 +166,7 @@ describe('Steals Counter Feature', () => {
     // Let's rely on the fact that we added the column.
   });
 });
+
+
+
+

@@ -71,7 +71,7 @@ export const ShowSelection: React.FC<Props> = ({ username, onSelectShow }) => {
             <div className="col-span-full text-center py-12 border border-dashed border-zinc-800 rounded bg-zinc-900/30">
               <Film className="w-12 h-12 text-zinc-700 mx-auto mb-3" />
               <p className="text-zinc-500 font-bold">No active productions found.</p>
-              <p className="text-zinc-600 text-xs mt-1">Create a new show above to get started.</p>
+              <p className="text-zinc-600 text-xs mt-1">Add a new show above to get started.</p>
             </div>
           )}
           

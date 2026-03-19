@@ -294,6 +294,9 @@ class AuthService {
     allSessions[sessionId] = newSession;
     this.saveSessions(allSessions);
 
+    // Keep auth persistence consistent for callers that use the service directly.
+    localStorage.setItem('cruzpham_active_session_id', sessionId);
+
     await this.logAction(targetUser, 'LOGIN', 'User logged in', { userAgent: navigator.userAgent });
     return { success: true, session: newSession };
   }
@@ -303,6 +306,10 @@ class AuthService {
     if (sessions[sessionId]) {
       delete sessions[sessionId];
       this.saveSessions(sessions);
+    }
+
+    if (localStorage.getItem('cruzpham_active_session_id') === sessionId) {
+      localStorage.removeItem('cruzpham_active_session_id');
     }
   }
 

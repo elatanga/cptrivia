@@ -1,9 +1,7 @@
-
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { DirectorPanel } from './DirectorPanel';
 import { GameBoard } from './GameBoard';
-import { QuestionModal } from './QuestionModal';
 import { GameState } from '../types';
 
 // --- MOCKS ---
@@ -87,5 +85,15 @@ describe('Card 1: Director Live Board Control - Answer Visibility', () => {
     };
     render(<DirectorPanel {...mockProps} gameState={buggyState} />);
     expect(screen.getByText('(MISSING)')).toBeInTheDocument();
+  });
+
+  test('D) SOUND BOARD TAB TEST: Sound Board tab opens and renders master controls', () => {
+    render(<DirectorPanel {...mockProps} />);
+    const soundBoardTab = screen.getByRole('button', { name: /Sound Board/i });
+    expect(soundBoardTab).toBeInTheDocument();
+
+    fireEvent.click(soundBoardTab);
+    expect(screen.getByRole('heading', { name: /Sound Board/i })).toBeInTheDocument();
+    expect(screen.getByText(/Master Sound/i)).toBeInTheDocument();
   });
 });

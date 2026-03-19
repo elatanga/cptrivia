@@ -51,7 +51,7 @@ describe('Template Builder UX & Scoping', () => {
     // Create Show
     await waitFor(() => screen.getByPlaceholderText(/New Show Title/i));
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'UX Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     
     // Open Template Creator
     await waitFor(() => screen.getByText(/Create Template/i));
@@ -60,7 +60,7 @@ describe('Template Builder UX & Scoping', () => {
     // Fill config and start building
     await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'UX Game' } });
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
   };
 
   test('Style Scope: Builder root has "template-builder" and uses Roboto Bold', async () => {
@@ -123,3 +123,4 @@ describe('Template Builder UX & Scoping', () => {
     });
   });
 });
+

@@ -93,11 +93,15 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
     fireEvent.click(tile!);
   };
 
+  const getEditTileModal = () => {
+    const heading = screen.getByRole('heading', { name: /Science \/\/ 500/i });
+    return heading.closest('.max-w-lg') as HTMLElement;
+  };
+
   it('1) VISIBILITY: Modal renders the "AI Regen Tile" section with all difficulty options', () => {
     openTileModal();
 
-    // Verify modal is open and contains section
-    const modal = screen.getByRole('heading', { name: /Science \/\/ 500/i }).closest('div')?.parentElement;
+    const modal = getEditTileModal();
     expect(within(modal!).getByText(/AI Regen Tile/i)).toBeInTheDocument();
 
     // Verify difficulty buttons
@@ -119,12 +123,15 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
     openTileModal();
 
     // Select 'hard'
-    const hardBtn = screen.getByText('hard');
+    const modal = getEditTileModal();
+    const hardBtn = within(modal).getByRole('button', { name: 'hard' });
     fireEvent.click(hardBtn);
 
     // Click Regen
-    const regenBtn = screen.getByRole('button', { name: /regen/i });
-    fireEvent.click(regenBtn);
+    const regenBtn = within(modal).getByRole('button', { name: /^Regen$/i });
+    await act(async () => {
+      fireEvent.click(regenBtn);
+    });
 
     expect(geminiService.generateSingleQuestion).toHaveBeenCalledWith(
       'Studio Regression', // Topic
@@ -142,7 +149,8 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
     });
 
     openTileModal();
-    fireEvent.click(screen.getByRole('button', { name: /regen/i }));
+    const modal = getEditTileModal();
+    fireEvent.click(within(modal).getByRole('button', { name: /^Regen$/i }));
 
     await waitFor(() => {
       expect(mockOnUpdateState).toHaveBeenCalledTimes(1);
@@ -167,7 +175,8 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
     vi.mocked(geminiService.generateSingleQuestion).mockRejectedValue(new Error('AI_TIMEOUT'));
 
     openTileModal();
-    fireEvent.click(screen.getByRole('button', { name: /regen/i }));
+    const modal = getEditTileModal();
+    fireEvent.click(within(modal).getByRole('button', { name: /^Regen$/i }));
 
     await waitFor(() => {
       expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringContaining('Failed to generate'));
@@ -182,7 +191,8 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
     vi.mocked(geminiService.generateSingleQuestion).mockReturnValue(aiPromise as any);
 
     openTileModal();
-    const regenBtn = screen.getByRole('button', { name: /regen/i });
+    const modal = getEditTileModal();
+    const regenBtn = within(modal).getByRole('button', { name: /^Regen$/i });
     
     fireEvent.click(regenBtn);
 
@@ -218,7 +228,8 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
     fireEvent.click(screen.getByText('500').closest('div')!);
     
     // Trigger AI
-    fireEvent.click(screen.getByRole('button', { name: /regen/i }));
+    const modal = getEditTileModal();
+    fireEvent.click(within(modal).getByRole('button', { name: /^Regen$/i }));
 
     await waitFor(() => expect(mockOnUpdateState).toHaveBeenCalled());
 

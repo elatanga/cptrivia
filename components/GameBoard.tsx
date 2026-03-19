@@ -1,11 +1,11 @@
-
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Zap, Clock } from 'lucide-react';
 import { Category, BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
-import { getCategoryTitleFontSize, getTileScaleFactor } from '../services/utils';
+import { getTriviaBoardLayoutTokens, sanitizeBoardViewSettings } from '../services/boardViewSettings';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
+import { useViewportWidth } from '../hooks/useViewportWidth';
 
 interface Props {
   categories: Category[];
@@ -21,13 +21,25 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
     logger.info("trivia_board_theme_updated", { backgroundTheme: "luxury_light", atIso: new Date().toISOString() });
   }, []);
 
+  const safeViewSettings = useMemo(() => sanitizeBoardViewSettings(viewSettings), [viewSettings]);
+  const viewportWidth = useViewportWidth();
+  const layoutTokens = useMemo(() => getTriviaBoardLayoutTokens(safeViewSettings, viewportWidth), [safeViewSettings, viewportWidth]);
+
   const colCount = categories.length;
-  const rowCount = categories[0]?.questions.length || 5; 
+  const rowCount = categories[0]?.questions.length || 5;
 
   const boardStyles = {
-    '--cat-font-px': `${getCategoryTitleFontSize(viewSettings?.categoryTitleScale || 'M')}px`,
-    '--tile-scale-factor': getTileScaleFactor(viewSettings?.tileScale || 'M'),
-    '--tile-padding-scale': viewSettings?.tilePaddingScale || 1.0,
+    '--cat-font-px': `${layoutTokens.categoryTitleFontPx}px`,
+    '--tile-scale-factor': layoutTokens.tileScaleFactor,
+    '--tile-padding-scale': layoutTokens.tilePaddingScale,
+    '--board-gap-px': `${layoutTokens.boardGapPx}px`,
+    '--tile-min-w-px': `${layoutTokens.tileMinWidthPx}px`,
+    '--tile-min-h-px': `${layoutTokens.tileMinHeightPx}px`,
+    '--tile-point-font-px': `${layoutTokens.tilePointFontPx}px`,
+    '--cat-min-h-px': `${layoutTokens.categoryMinHeightPx}px`,
+    '--cat-line-height': layoutTokens.categoryTitleLineHeight,
+    '--cat-padding-px': `${layoutTokens.categoryPaddingPx}px`,
+    '--tile-inner-padding-px': `${layoutTokens.tileInnerPaddingPx}px`,
   } as React.CSSProperties;
 
   return (
@@ -51,20 +63,30 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
         </div>
       )}
       <div 
-        className="flex-1 grid gap-1.5 md:gap-3 w-full h-full min-h-0 min-w-0"
+        className="flex-1 grid w-full h-full min-h-0 min-w-0"
         style={{ 
-          gridTemplateColumns: `repeat(${colCount}, minmax(72px, 1fr))`,
-          gridTemplateRows: `auto repeat(${rowCount}, minmax(60px, 1fr))` 
+          gap: 'var(--board-gap-px)',
+          gridTemplateColumns: `repeat(${colCount}, minmax(var(--tile-min-w-px), 1fr))`,
+          gridTemplateRows: `auto repeat(${rowCount}, minmax(var(--tile-min-h-px), 1fr))`
         }}
       >
         {categories.map((cat) => (
           <div 
             key={cat.id} 
-            className="bg-navy-900 flex items-center justify-center p-2 md:p-3 rounded shadow-xl border-b-4 border-black/20 text-center relative overflow-hidden group min-h-[44px]"
+            className="bg-navy-900 flex items-center justify-center rounded shadow-xl border-b-4 border-black/20 text-center relative overflow-hidden group"
+            style={{ minHeight: 'var(--cat-min-h-px)' }}
           >
              <h3 
-                className="text-white uppercase leading-tight break-words line-clamp-2 w-full tracking-wide font-black" 
-                style={{ fontSize: `var(--cat-font-px)` }} 
+                className="text-white uppercase break-words w-full tracking-wide font-black"
+                style={{
+                  fontSize: 'var(--cat-font-px)',
+                  lineHeight: 'var(--cat-line-height)',
+                  padding: 'var(--cat-padding-px)',
+                  display: '-webkit-box',
+                  WebkitBoxOrient: 'vertical',
+                  WebkitLineClamp: layoutTokens.categoryLineClamp,
+                  overflow: 'hidden',
+                }}
              >
                {cat.title}
              </h3>
@@ -88,7 +110,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                      onSelectQuestion(cat.id, q.id);
                    }} 
                    className={`
-                      w-full h-full flex items-center justify-center rounded border transition-all duration-200 relative overflow-hidden group min-h-[60px] min-w-0 ${isArmed && isPlayable ? 'animate-pulse' : ''}
+                      w-full h-full flex items-center justify-center rounded border transition-all duration-200 relative overflow-hidden group min-w-0 ${isArmed && isPlayable ? 'animate-pulse' : ''}
                      ${q.isVoided 
                         ? 'bg-black/80 border-black opacity-50 cursor-not-allowed grayscale' 
                         : q.isAnswered 
@@ -97,8 +119,8 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                      }
                    `}
                    style={{
-                     padding: `calc(4px * var(--tile-padding-scale))`,
-                     transform: `scale(var(--tile-scale-factor))`
+                     minHeight: 'var(--tile-min-h-px)',
+                     padding: 'var(--tile-inner-padding-px)'
                    }}
                  >
                     {isArmed && isPlayable && (
@@ -111,7 +133,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                    ) : q.isAnswered ? (
                      <span className="font-mono font-bold text-zinc-400">---</span> 
                    ) : (
-                     <span className="group-hover:scale-110 transition-transform shadow-black drop-shadow-xl font-black" style={{ fontSize: 'clamp(16px, 2.8vw, 96px)' }}>
+                     <span className="group-hover:scale-110 transition-transform shadow-black drop-shadow-xl font-black" style={{ fontSize: 'clamp(16px, var(--tile-point-font-px), 82px)' }}>
                        {q.points}
                      </span>
                    )}

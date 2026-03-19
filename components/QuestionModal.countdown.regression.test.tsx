@@ -82,8 +82,11 @@ describe('QuestionModal Countdown Regression', () => {
         players={players}
         selectedPlayerId="p1"
         timer={timer}
-        questionCountdownActive={true}
-        questionCountdownDuration={5}
+        questionCountdownRemainingSeconds={5}
+        questionCountdownDurationSeconds={5}
+        isQuestionCountdownRunning={true}
+        onQuestionCountdownStop={vi.fn()}
+        onQuestionCountdownRestart={vi.fn()}
         onClose={onClose}
         onReveal={vi.fn()}
       />
@@ -98,30 +101,58 @@ describe('QuestionModal Countdown Regression', () => {
 
   it('allows resolving actions after countdown is manually stopped', () => {
     const onClose = vi.fn();
+    const onStop = vi.fn();
 
-    render(
+    const { rerender } = render(
       <QuestionModal
         question={revealedQuestion}
         categoryTitle="General"
         players={players}
         selectedPlayerId="p1"
         timer={timer}
-        questionCountdownActive={true}
-        questionCountdownDuration={5}
+        questionCountdownRemainingSeconds={5}
+        questionCountdownDurationSeconds={5}
+        isQuestionCountdownRunning={true}
+        onQuestionCountdownStop={onStop}
+        onQuestionCountdownRestart={vi.fn()}
         onClose={onClose}
         onReveal={vi.fn()}
       />
     );
 
     fireEvent.click(screen.getByRole('button', { name: /stop/i }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <QuestionModal
+        question={revealedQuestion}
+        categoryTitle="General"
+        players={players}
+        selectedPlayerId="p1"
+        timer={timer}
+        questionCountdownRemainingSeconds={0}
+        questionCountdownDurationSeconds={5}
+        isQuestionCountdownRunning={false}
+        onQuestionCountdownStop={onStop}
+        onQuestionCountdownRestart={vi.fn()}
+        onClose={onClose}
+        onReveal={vi.fn()}
+      />
+    );
+
     fireEvent.click(screen.getByRole('button', { name: /award/i }));
 
     expect(onClose).toHaveBeenCalledWith('award', 'p1');
   });
 
-  it('fires completion callback when countdown finishes', async () => {
+  it('fires completion callback when legacy reveal timer finishes', async () => {
     vi.useFakeTimers();
     const onComplete = vi.fn();
+    const liveTimer: GameTimer = {
+      duration: 3,
+      endTime: Date.now() + 3000,
+      isRunning: true,
+    };
 
     render(
       <QuestionModal
@@ -129,12 +160,10 @@ describe('QuestionModal Countdown Regression', () => {
         categoryTitle="General"
         players={players}
         selectedPlayerId="p1"
-        timer={timer}
-        questionCountdownActive={true}
-        questionCountdownDuration={3}
-        onQuestionCountdownComplete={onComplete}
+        timer={liveTimer}
         onClose={vi.fn()}
         onReveal={vi.fn()}
+        onTimerEnd={onComplete}
       />
     );
 
