@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
 import { GameState } from '../types';
+import { AnalyticsEventType } from '../types';
 import * as geminiService from '../services/geminiService';
 
 vi.mock('../services/geminiService', () => ({
@@ -23,6 +24,11 @@ describe('DirectorPanel: Settings & Category Regen', () => {
   const mockOnUpdateState = vi.fn();
   const mockEmitGameEvent = vi.fn();
   const mockAddToast = vi.fn();
+  const mockStartQuestionCountdown = vi.fn();
+  const mockStopQuestionCountdown = vi.fn();
+  const mockStartSessionTimer = vi.fn();
+  const mockPauseSessionTimer = vi.fn();
+  const mockResetSessionTimer = vi.fn();
 
   const baseGameState: GameState = {
     showTitle: 'Studio Show',
@@ -61,12 +67,29 @@ describe('DirectorPanel: Settings & Category Regen', () => {
     });
   });
 
+  const renderPanel = (state: GameState = baseGameState) =>
+    render(
+      <DirectorPanel
+        gameState={state}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+        questionCountdown={{ duration: 0, isActive: false, startedAt: null, timeRemaining: 0 }}
+        onQuestionCountdownStart={mockStartQuestionCountdown}
+        onQuestionCountdownStop={mockStopQuestionCountdown}
+        sessionTimer={{ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false }}
+        onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerPause={mockPauseSessionTimer}
+        onSessionTimerReset={mockResetSessionTimer}
+      />
+    );
+
   it('A) CATEGORY REGEN: preserves manual point adjustments', async () => {
     vi.mocked(geminiService.generateCategoryQuestions).mockResolvedValue([
       { id: 'new', text: 'New AI Q', answer: 'New AI A', points: 500, isRevealed: false, isAnswered: false }
     ]);
 
-    render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
+    renderPanel();
     
     // Trigger rewrite on first category
     const regenBtn = screen.getByTitle(/Regenerate this category/i);
@@ -80,7 +103,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
   });
 
   it('B) SETTINGS: emits event on scale change', () => {
-    render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
+    renderPanel();
     
     fireEvent.click(screen.getByText('Settings'));
     
@@ -102,7 +125,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
           id: 'evt-ai-1',
           ts: eventTs - 1,
           iso: new Date(eventTs - 1).toISOString(),
-          type: 'AI_TILE_REPLACE_APPLIED',
+          type: 'AI_TILE_REPLACE_APPLIED' as AnalyticsEventType,
           actor: { role: 'director' },
           context: { categoryName: 'Art', points: 100, note: 'AI tile regeneration applied' }
         },
@@ -110,7 +133,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
         id: `evt-${i + 1}`,
         ts: eventTs + i,
         iso: new Date(eventTs + i).toISOString(),
-        type: 'POINTS_AWARDED',
+        type: 'POINTS_AWARDED' as AnalyticsEventType,
         actor: { role: 'director' },
         context: { playerName: `Player ${i + 1}`, points: 100, delta: 100, categoryName: 'Art' }
         }))
@@ -126,7 +149,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
       return element;
     }) as any);
 
-    render(<DirectorPanel gameState={extendedState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
+    renderPanel(extendedState);
 
     fireEvent.click(screen.getByRole('button', { name: /logs & audit/i }));
 
@@ -162,5 +185,17 @@ describe('DirectorPanel: Settings & Category Regen', () => {
     expect(clickSpy).toHaveBeenCalled();
 
     createElementSpy.mockRestore();
+  });
+
+  it('D) COUNTER STUDIO: triggers question countdown and session timer controls', () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: /counter studio/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: '10s' }));
+    expect(mockStartQuestionCountdown).toHaveBeenCalledWith(10);
+
+    fireEvent.click(screen.getByRole('button', { name: '30m' }));
+    expect(mockStartSessionTimer).toHaveBeenCalledWith('30m');
   });
 });

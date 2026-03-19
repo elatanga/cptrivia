@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, Edit, Save, X, RefreshCw, Wand2, MonitorOff, ExternalLink, RotateCcw, Play, Pause, Timer, Type, Layout, Star, Trash2, AlertTriangle, UserPlus, Check, BarChart3, Info, Hash, Clock, History, Copy, Trash, Download, ChevronDown, ChevronUp, Sparkles, Sliders, Loader2, Minus, Plus, ShieldAlert } from 'lucide-react';
 import { GameState, Question, Difficulty, Category, BoardViewSettings, Player, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType } from '../types';
+import { QuestionCountdownTimer, SessionGameTimer } from '../types';
 import { generateSingleQuestion, generateCategoryQuestions } from '../services/geminiService';
 import { logger } from '../services/logger';
 import { soundService } from '../services/soundService';
@@ -22,15 +23,38 @@ interface Props {
   onBringBack?: () => void;
   addToast: (type: any, msg: string) => void;
   onClose?: () => void;
+  questionCountdown?: QuestionCountdownTimer;
+  onQuestionCountdownStart?: (duration: number) => void;
+  onQuestionCountdownStop?: () => void;
+  sessionTimer?: SessionGameTimer;
+  onSessionTimerStart?: (preset: '15m' | '30m' | '1h' | '1h30m' | '2h') => void;
+  onSessionTimerPause?: () => void;
+  onSessionTimerReset?: () => void;
 }
 
 export const DirectorPanel: React.FC<Props> = ({ 
-  gameState, onUpdateState, emitGameEvent, gameId, specialMovesOverlay, onPopout, isPoppedOut, onBringBack, addToast, onClose 
+  gameState,
+  onUpdateState,
+  emitGameEvent,
+  gameId,
+  specialMovesOverlay,
+  onPopout,
+  isPoppedOut,
+  onBringBack,
+  addToast,
+  onClose,
+  questionCountdown,
+  onQuestionCountdownStart,
+  onQuestionCountdownStop,
+  sessionTimer,
+  onSessionTimerStart,
+  onSessionTimerPause,
+  onSessionTimerReset
 }) => {
   type LogChannel = 'ALL' | 'BOARD' | 'SCOREBOARD' | 'AI' | 'SPECIAL_MOVES' | 'SYSTEM';
   type SortOrder = 'NEWEST' | 'OLDEST';
 
-  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
+  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
   const [editingQuestion, setEditingQuestion] = useState<{cIdx: number, qIdx: number} | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [selectedMoveType, setSelectedMoveType] = useState<SpecialMoveType>('DOUBLE_TROUBLE');
@@ -782,6 +806,9 @@ export const DirectorPanel: React.FC<Props> = ({
           <button onClick={() => setActiveTab('LOGS_AUDIT')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'LOGS_AUDIT' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <History className="w-4 h-4" /> Logs & Audit
           </button>
+              <button onClick={() => setActiveTab('COUNTER_STUDIO')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'COUNTER_STUDIO' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
+                <Timer className="w-4 h-4" /> Counter Studio
+              </button>
           <button onClick={() => setActiveTab('SETTINGS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'SETTINGS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <Sliders className="w-4 h-4" /> Settings
           </button>
@@ -935,6 +962,122 @@ export const DirectorPanel: React.FC<Props> = ({
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'COUNTER_STUDIO' && (
+          <div className="space-y-6 animate-in fade-in duration-300 max-w-7xl mx-auto">
+            <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg">
+              <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                <Timer className="w-4 h-4" /> Counter Studio & Game Timer
+              </h3>
+              <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Per-question countdown and session-level game timer controls.</p>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              {/* QUESTION COUNTDOWN TIMER */}
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5">
+                <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-4">Question Countdown Timer</div>
+                <div className="space-y-4">
+                  <div className="flex gap-2 flex-wrap">
+                    {[5, 7, 8, 10, 15].map((duration) => (
+                      <button
+                        key={duration}
+                        onClick={() => {
+                          if (onQuestionCountdownStart) onQuestionCountdownStart(duration);
+                          addToast('info', `Question countdown: ${duration}s`);
+                        }}
+                        className={`px-4 py-2 rounded-lg font-black text-[11px] uppercase tracking-widest transition-all ${
+                          questionCountdown?.duration === duration && questionCountdown?.isActive
+                            ? 'bg-cyan-600 text-black border-cyan-400 border-2'
+                            : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700'
+                        }`}
+                      >
+                        {duration}s
+                      </button>
+                    ))}
+                  </div>
+                  {questionCountdown?.isActive && (
+                    <div className="bg-black/40 border border-cyan-500/30 rounded-lg p-3">
+                      <div className="text-[12px] text-cyan-300 font-bold mb-2">
+                        Question Timer: {questionCountdown.duration}s
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (onQuestionCountdownStop) onQuestionCountdownStop();
+                          addToast('info', 'Question countdown stopped.');
+                        }}
+                        className="w-full px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-[11px] font-black rounded-lg uppercase transition-colors"
+                      >
+                        Disable Question Timer
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* SESSION GAME TIMER */}
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5">
+                <div className="text-[10px] uppercase tracking-widest font-black text-purple-300 mb-4">Session Game Timer</div>
+                <div className="space-y-4">
+                  {!sessionTimer?.isActive ? (
+                    <div className="flex gap-2 flex-wrap">
+                      {(['15m', '30m', '1h', '1h30m', '2h'] as const).map((preset) => (
+                        <button
+                          key={preset}
+                          onClick={() => {
+                            if (onSessionTimerStart) onSessionTimerStart(preset);
+                            addToast('success', `Game timer started: ${preset}`);
+                          }}
+                          className="px-4 py-2 rounded-lg font-black text-[11px] uppercase tracking-widest transition-all bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="bg-black/40 border border-purple-500/30 rounded-lg p-4">
+                      <div className="text-[12px] text-purple-300 font-bold mb-3 flex items-center justify-between">
+                        <span>Game Timer: {sessionTimer.preset}</span>
+                        <span className="text-lg font-mono tabular-nums">
+                          {Math.floor(sessionTimer.timeRemaining / 60)}:{String(sessionTimer.timeRemaining % 60).padStart(2, '0')}
+                        </span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            if (onSessionTimerPause) onSessionTimerPause();
+                            addToast('info', `Game timer ${sessionTimer.paused ? 'resumed' : 'paused'}.`);
+                          }}
+                          className="flex-1 px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-black rounded-lg uppercase transition-colors flex items-center justify-center gap-2"
+                        >
+                          {sessionTimer.paused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                          {sessionTimer.paused ? 'Resume' : 'Pause'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (onSessionTimerReset) onSessionTimerReset();
+                            addToast('info', 'Game timer reset.');
+                          }}
+                          className="flex-1 px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-[11px] font-black rounded-lg uppercase transition-colors flex items-center justify-center gap-2"
+                        >
+                          <RotateCcw className="w-3 h-3" /> Reset
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-black/40 border border-zinc-800 rounded-2xl p-5">
+              <h4 className="text-[10px] uppercase tracking-widest font-black text-zinc-400 mb-3">Usage Notes</h4>
+              <ul className="text-[11px] text-zinc-300 space-y-2 list-disc list-inside">
+                <li><span className="font-bold">Question Countdown:</span> Triggered when a tile is opened. Director can stop it anytime. Blocks award/steal/void until countdown finishes or is stopped.</li>
+                <li><span className="font-bold">Game Timer:</span> Counts down for the entire game session. Can be paused/resumed. When it expires, director is prompted to continue or end the game.</li>
+                <li><span className="font-bold">Sound Cues:</span> Both timers emit tick sounds for final 3-10 seconds and an alarm when finished.</li>
+              </ul>
             </div>
           </div>
         )}
@@ -1102,8 +1245,8 @@ export const DirectorPanel: React.FC<Props> = ({
                   className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-gold-500"
                 >
                   <option value="ALL">All event types</option>
-                  {Array.from(new Set((gameState.events || []).map((event) => event.type))).sort().map((type) => (
-                    <option key={type} value={type}>{sentenceCase(type)}</option>
+                  {Array.from(new Set((gameState.events || []).map((event) => event.type as string))).sort().map((type) => (
+                    <option key={type} value={type}>{sentenceCase(String(type))}</option>
                   ))}
                 </select>
                 <select
