@@ -1,17 +1,20 @@
 
 import React, { useEffect } from 'react';
+import { Zap } from 'lucide-react';
 import { Category, BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { getCategoryTitleFontSize, getTileScaleFactor } from '../services/utils';
+import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 
 interface Props {
   categories: Category[];
   onSelectQuestion: (catId: string, qId: string) => void;
   viewSettings: BoardViewSettings;
+  overlay?: SMSOverlayDoc | null;
 }
 
-export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings }) => {
+export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay }) => {
   useEffect(() => {
     logger.info("trivia_board_theme_updated", { backgroundTheme: "luxury_light", atIso: new Date().toISOString() });
   }, []);
@@ -57,6 +60,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                const q = cat.questions[rowIdx];
                if (!q) return <div key={`empty-${cat.id}-${rowIdx}`} className="bg-transparent" />;
                const isPlayable = !q.isAnswered && !q.isVoided;
+               const isArmed = overlay?.deploymentsByTileId?.[q.id]?.status === 'ARMED';
                
                return (
                  <button 
@@ -67,7 +71,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                      onSelectQuestion(cat.id, q.id);
                    }} 
                    className={`
-                     w-full h-full flex items-center justify-center rounded border transition-all duration-200 relative overflow-hidden group min-h-[60px] min-w-0
+                      w-full h-full flex items-center justify-center rounded border transition-all duration-200 relative overflow-hidden group min-h-[60px] min-w-0 ${isArmed && isPlayable ? 'animate-pulse' : ''}
                      ${q.isVoided 
                         ? 'bg-black/80 border-black opacity-50 cursor-not-allowed grayscale' 
                         : q.isAnswered 
@@ -80,6 +84,11 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                      transform: `scale(var(--tile-scale-factor))`
                    }}
                  >
+                    {isArmed && isPlayable && (
+                      <span className="absolute top-2 right-2 text-gold-300 drop-shadow-md pointer-events-none">
+                        <Zap className="w-4 h-4 md:w-5 md:h-5" />
+                      </span>
+                    )}
                    {q.isVoided ? (
                      <span className="font-mono text-red-600 font-black tracking-widest rotate-[-15deg]">VOID</span>
                    ) : q.isAnswered ? (

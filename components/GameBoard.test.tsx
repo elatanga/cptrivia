@@ -1,27 +1,20 @@
 
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import { describe, test, expect, vi } from 'vitest';
 import { GameBoard } from './GameBoard';
 import { Category, BoardViewSettings } from '../types';
 
-// Global declarations for Jest
-declare const jest: any;
-declare const describe: any;
-declare const test: any;
-declare const expect: any;
-// Fix: Declare require for dynamic module loading in tests to fix "Cannot find name 'require'"
-declare const require: any;
-
 // Mock sound service
-jest.mock('../services/soundService', () => ({
+vi.mock('../services/soundService', () => ({
   soundService: {
-    playSelect: jest.fn(),
+    playSelect: vi.fn(),
   },
 }));
 
 // Mock logger to avoid side-effects in tests
-jest.mock('../services/logger', () => ({
-  logger: { info: jest.fn() }
+vi.mock('../services/logger', () => ({
+  logger: { info: vi.fn() }
 }));
 
 const mockCategories: Category[] = [
@@ -52,7 +45,7 @@ describe('GameBoard Component Visibility & Theme', () => {
     render(
       <GameBoard 
         categories={mockCategories} 
-        onSelectQuestion={jest.fn()} 
+          onSelectQuestion={vi.fn()} 
         viewSettings={mockViewSettings} 
       />
     );
@@ -72,7 +65,7 @@ describe('GameBoard Component Visibility & Theme', () => {
     render(
       <GameBoard 
         categories={mockCategories} 
-        onSelectQuestion={jest.fn()} 
+          onSelectQuestion={vi.fn()} 
         viewSettings={mockViewSettings} 
       />
     );
@@ -88,7 +81,7 @@ describe('GameBoard Component Visibility & Theme', () => {
     render(
       <GameBoard 
         categories={mockCategories} 
-        onSelectQuestion={jest.fn()} 
+          onSelectQuestion={vi.fn()} 
         viewSettings={mockViewSettings} 
       />
     );
@@ -106,7 +99,7 @@ describe('GameBoard Component Visibility & Theme', () => {
     render(
       <GameBoard 
         categories={mockCategories} 
-        onSelectQuestion={jest.fn()} 
+          onSelectQuestion={vi.fn()} 
         viewSettings={mockViewSettings} 
       />
     );
@@ -120,12 +113,12 @@ describe('GameBoard Component Visibility & Theme', () => {
     expect(answeredTile).toHaveClass('bg-zinc-800/10');
   });
 
-  test('E) LOGGING TEST: Theme update is logged on mount', () => {
-    const { logger } = require('../services/logger');
+  test('E) LOGGING TEST: Theme update is logged on mount', async () => {
+    const { logger } = await import('../services/logger');
     render(
       <GameBoard 
         categories={mockCategories} 
-        onSelectQuestion={jest.fn()} 
+        onSelectQuestion={vi.fn()} 
         viewSettings={mockViewSettings} 
       />
     );

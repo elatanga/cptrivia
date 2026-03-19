@@ -4,6 +4,8 @@ const admin = require("firebase-admin");
 const sgMail = require("@sendgrid/mail");
 const twilio = require("twilio");
 const crypto = require("crypto");
+const specialMoveHandlers = require("./src/specialMoves/handlers");
+const { syncSMSOverlay } = require("./specialMoves/overlayProcessor");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -302,3 +304,9 @@ exports.bootstrapSystem = functions.https.onCall(async (data, context) => {
     return { token: rawToken };
   });
 });
+
+exports.sms_requestArm = functions.https.onCall(specialMoveHandlers.requestArm);
+exports.sms_approveMove = functions.https.onCall(specialMoveHandlers.approveMove);
+exports.sms_clearArmory = functions.https.onCall(specialMoveHandlers.clearArmory);
+exports.syncSMSOverlay = syncSMSOverlay;
+

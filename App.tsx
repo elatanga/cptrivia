@@ -18,6 +18,8 @@ import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
 import { normalizePlayerName } from './services/utils';
+import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
+import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -72,6 +74,7 @@ const App: React.FC = () => {
   });
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const specialMovesOverlay = useSpecialMovesOverlay(gameState.isGameStarted ? activeShow?.id : undefined);
 
   // Layout Logging
   useEffect(() => {
@@ -470,7 +473,15 @@ const App: React.FC = () => {
        return;
     }
 
-    const points = (activeQ.isDoubleOrNothing ? activeQ.points * 2 : activeQ.points);
+    const basePoints = (activeQ.isDoubleOrNothing ? activeQ.points * 2 : activeQ.points);
+    const tileMoveType = specialMovesOverlay?.deploymentsByTileId?.[activeQ.id]?.moveType;
+    const points = (action === 'award' || action === 'steal')
+      ? applySpecialMovesDecorator(basePoints, {
+          tileId: activeQ.id,
+          moveType: tileMoveType,
+          outcome: action === 'award' ? 'AWARD' : 'STEAL'
+        })
+      : basePoints;
 
     // LOG ANALYTICS (CANONICAL BUS)
     const tileCtx = { tileId: activeQ.id, categoryName: activeCat.title, points: activeQ.points, categoryIndex: catIdx, rowIndex: qIdx };
@@ -671,7 +682,7 @@ const App: React.FC = () => {
     if (!session) return <div className="p-8 text-center text-white">Authentication required.</div>;
     return (
       <div className="h-screen w-screen bg-zinc-950 text-white overflow-hidden">
-        <DirectorPanel gameState={gameState} onUpdateState={saveGameState} emitGameEvent={emitGameEvent} addToast={addToast} />
+        <DirectorPanel gameState={gameState} onUpdateState={saveGameState} emitGameEvent={emitGameEvent} addToast={addToast} gameId={activeShow?.id} specialMovesOverlay={specialMovesOverlay} />
         <ToastContainer toasts={toasts} removeToast={removeToast} />
       </div>
     );
@@ -732,7 +743,7 @@ const App: React.FC = () => {
                             <button onClick={() => { soundService.playClick(); setShowEndGameConfirm(true); }} type="button" className="text-[10px] md:text-xs uppercase text-red-500 hover:text-red-600 font-bold tracking-wider flex items-center gap-2"><Power className="w-3 h-3" /> End Show</button>
                             <button onClick={() => setViewMode('DIRECTOR')} className="text-[10px] md:text-xs uppercase font-bold text-zinc-500 hover:text-zinc-800 flex items-center gap-2 px-3 py-1.5 rounded transition-colors"><Grid className="w-3 h-3" /> Director</button>
                           </div>
-                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} /></div>
+                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} /></div>
                         </div>
                         <div className="order-1 md:order-2 flex-none h-auto lg:h-full w-full md:w-auto relative z-30">
                           <Scoreboard players={gameState.players} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
@@ -753,7 +764,7 @@ const App: React.FC = () => {
                     )}
                  </div>
                  <div className={`absolute inset-0 transition-opacity duration-300 bg-zinc-950 ${viewMode === 'DIRECTOR' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-                   <DirectorPanel gameState={gameState} onUpdateState={saveGameState} emitGameEvent={emitGameEvent} onPopout={handlePopout} isPoppedOut={isDirectorPoppedOut} onBringBack={handleBringBack} addToast={addToast} onClose={() => setViewMode('BOARD')} />
+                   <DirectorPanel gameState={gameState} onUpdateState={saveGameState} emitGameEvent={emitGameEvent} onPopout={handlePopout} isPoppedOut={isDirectorPoppedOut} onBringBack={handleBringBack} addToast={addToast} onClose={() => setViewMode('BOARD')} gameId={activeShow?.id} specialMovesOverlay={specialMovesOverlay} />
                  </div>
                  {viewMode === 'ADMIN' && <div className="absolute inset-0 z-50 bg-zinc-950"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
                </div>

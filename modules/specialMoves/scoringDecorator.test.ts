@@ -35,7 +35,7 @@ describe('Special Moves Scoring Decorator (Phase 2)', () => {
     // Base loss for a 200pt question is -200. 
     // Triple Threat resolution for FAIL is -Math.round(base * 1.3) = -260
     const result = applySpecialMovesDecorator(200, ctx);
-    expect(result).toBe(260); 
+    expect(result).toBe(-260); 
   });
 
   it('E) RESOLUTION: applies MEGA_STEAL block on AWARD (returns 0)', () => {
@@ -44,10 +44,10 @@ describe('Special Moves Scoring Decorator (Phase 2)', () => {
     expect(result).toBe(0);
   });
 
-  it('F) ERROR RECOVERY: returns baseDelta if logic throws an exception', () => {
+  it('F) FAIL-OPEN: returns baseDelta for unknown move types', () => {
     const ctx: ScoringContext = { tileId: 'q1', moveType: 'UNKNOWN' as any, outcome: 'AWARD' };
     const result = applySpecialMovesDecorator(100, ctx);
     expect(result).toBe(100);
-    expect(logger.error).toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

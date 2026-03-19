@@ -6,6 +6,69 @@ import { logger } from "./logger";
 // Helper to generate IDs
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
+const INVALID_API_KEY_VALUES = new Set([
+  '',
+  'PLACEHOLDER_API_KEY',
+  '...',
+  'undefined',
+  'null'
+]);
+
+const isUsableApiKey = (raw?: string) => {
+  const value = (raw || '').trim();
+  if (!value) return false;
+  if (INVALID_API_KEY_VALUES.has(value)) return false;
+  if (value.includes('INSERT_KEY')) return false;
+  return true;
+};
+
+const getRuntimeConfig = (): Record<string, string> => {
+  if (typeof window === 'undefined') return {};
+  return (window as any).__RUNTIME_CONFIG__ || {};
+};
+
+export const resolveGeminiApiKey = (): string => {
+  const runtimeConfig = getRuntimeConfig();
+  const processEnv = (typeof process !== 'undefined' && (process as any).env) ? (process as any).env : {};
+  const viteEnv = (typeof import.meta !== 'undefined' && (import.meta as any).env) ? (import.meta as any).env : {};
+
+  const candidates = [
+    runtimeConfig.API_KEY,
+    runtimeConfig.GEMINI_API_KEY,
+    viteEnv.VITE_GEMINI_API_KEY,
+    processEnv.GEMINI_API_KEY,
+    processEnv.API_KEY
+  ];
+
+  const resolved = candidates.find(isUsableApiKey);
+  if (resolved) return resolved;
+
+  logger.error('aiGen_missing_api_key', {
+    runtimeConfigKeys: Object.keys(runtimeConfig || {}),
+    hasViteKey: isUsableApiKey(viteEnv.VITE_GEMINI_API_KEY),
+    hasProcessGeminiKey: isUsableApiKey(processEnv.GEMINI_API_KEY),
+    hasProcessApiKey: isUsableApiKey(processEnv.API_KEY)
+  });
+
+  throw new AppError(
+    'ERR_FORBIDDEN',
+    'AI is not configured. Set GEMINI_API_KEY (or API_KEY) and reload the app.',
+    logger.getCorrelationId()
+  );
+};
+
+export const getGeminiConfigHealth = (): { ready: boolean; message: string } => {
+  try {
+    resolveGeminiApiKey();
+    return { ready: true, message: 'AI ready' };
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      return { ready: false, message: error.message };
+    }
+    return { ready: false, message: 'AI configuration unavailable.' };
+  }
+};
+
 /**
  * Robustly extracts JSON from potentially messy AI responses.
  * Handles markdown blocks and leading/trailing text.
@@ -100,8 +163,7 @@ export const generateTriviaGame = async (
 ): Promise<Category[]> => {
   logger.info("aiGen_start", { generationId, mode: 'full_board', topic, rows: numQuestions, cols: numCategories, difficulty });
 
-  if (!process.env.API_KEY) throw new AppError('ERR_FORBIDDEN', "Missing API Key", logger.getCorrelationId());
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({ apiKey: resolveGeminiApiKey() });
 
   return withRetry(async (attempt) => {
     const prompt = `Generate a trivia game board about "${topic}". 
@@ -184,8 +246,7 @@ export const generateSingleQuestion = async (
   generationId: string = "unknown"
 ): Promise<{text: string, answer: string}> => {
   logger.info("aiGen_start", { generationId, mode: 'single_q', topic, categoryContext, points });
-  if (!process.env.API_KEY) throw new AppError('ERR_FORBIDDEN', "Missing API Key", logger.getCorrelationId());
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({ apiKey: resolveGeminiApiKey() });
   
   return withRetry(async (attempt) => {
     const prompt = `Write a single trivia question and answer.
@@ -225,8 +286,7 @@ export const generateCategoryQuestions = async (
   generationId: string = "unknown"
 ): Promise<Question[]> => {
   logger.info("aiGen_start", { generationId, mode: 'category_rewrite', topic, categoryTitle, count });
-  if (!process.env.API_KEY) throw new AppError('ERR_FORBIDDEN', "Missing API Key", logger.getCorrelationId());
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({ apiKey: resolveGeminiApiKey() });
 
   return withRetry(async (attempt) => {
     const prompt = `Generate ${count} trivia questions for the category "${categoryTitle}" within the topic "${topic}".

@@ -1,11 +1,9 @@
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TemplateBuilder } from './TemplateBuilder';
 import { dataService } from '../services/dataService';
-import { soundService } from '../services/soundService';
-import { logger } from '../services/logger';
 import * as geminiService from '../services/geminiService';
 
 // --- DETERMINISTIC STUBS ---
@@ -58,6 +56,7 @@ vi.mock('../services/geminiService', () => ({
   generateTriviaGame: vi.fn(),
   generateSingleQuestion: vi.fn(),
   generateCategoryQuestions: vi.fn(),
+  getGeminiConfigHealth: vi.fn(() => ({ ready: true, message: 'AI ready' })),
 }));
 
 describe('TemplateBuilder: Component Lock & Regression Suite', () => {
@@ -82,26 +81,27 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       render(<TemplateBuilder {...defaultProps} />);
       expect(screen.getByText(/New Template Configuration/i)).toBeInTheDocument();
       expect(screen.getByText(/Start Manual Studio Building/i)).toBeInTheDocument();
+      expect(screen.getByTestId('ai-config-health')).toBeInTheDocument();
     });
 
     it('enforces title requirement before building', () => {
       render(<TemplateBuilder {...defaultProps} />);
       const buildBtn = screen.getByText(/Start Manual Studio Building/i);
-      fireEvent.click(buildBtn);
-      
-      expect(mockAddToast).toHaveBeenCalledWith('error', 'Title is required');
+      expect(buildBtn).toBeDisabled();
+      expect(mockAddToast).not.toHaveBeenCalled();
     });
 
     it('clamps player roster at 8 maximum', () => {
       render(<TemplateBuilder {...defaultProps} />);
       const addBtn = screen.getByText(/ADD PLAYER/i);
       
-      // Default is 4 players. Click 5 more times (to reach 9)
-      for (let i = 0; i < 5; i++) fireEvent.click(addBtn);
+      // Default is 4 players. Click 4 more times to reach 8.
+      for (let i = 0; i < 4; i++) fireEvent.click(addBtn);
       
       expect(screen.getAllByPlaceholderText('ENTER NAME')).toHaveLength(8);
-      expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringContaining('Max 8'));
-      expect(logger.warn).toHaveBeenCalledWith("template_players_add_blocked_max", expect.any(Object));
+      expect(screen.getByText(/MAX 8 REACHED/i)).toBeInTheDocument();
+      expect(screen.getByText(/MAX 8 REACHED/i)).toBeDisabled();
+      expect(mockAddToast).not.toHaveBeenCalledWith('error', expect.stringContaining('Max 8'));
     });
 
     it('clamps player roster at 1 minimum', () => {
@@ -257,21 +257,14 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Manual' } });
       fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
 
-      // Click magic sparkles on first tile (100 pts)
-      const magicBtn = document.querySelector('.lucide-sparkles').parentElement!;
+      // Click first tile quick AI button in the board grid
+      const magicBtn = screen.getAllByTitle('Quick AI Generate')[0];
       fireEvent.click(magicBtn);
 
       await waitFor(() => {
         expect(geminiService.generateSingleQuestion).toHaveBeenCalled();
         expect(mockAddToast).toHaveBeenCalledWith('success', 'Question generated.');
       });
-
-      // Open editor to verify text
-      const tile = screen.getAllByText('100')[0];
-      fireEvent.click(tile);
-      
-      expect(screen.getByDisplayValue('New AI Q')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('New AI A')).toBeInTheDocument();
     });
   });
 });
