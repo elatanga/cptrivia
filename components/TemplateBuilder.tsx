@@ -442,7 +442,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
 
                 {/* Transition to board */}
                 <div className="shrink-0 pt-4 border-t border-zinc-800/30">
-                   <button onClick={initBoard} disabled={!config.title || isLocked} className="w-full py-4 rounded bg-zinc-800 border border-zinc-700 text-gold-500 font-roboto font-bold hover:bg-zinc-700 hover:text-white transition-all uppercase tracking-[0.2em] text-xs flex items-center justify-center gap-3 shadow-xl shadow-black/40 active:scale-95">
+                   <button onClick={initBoard} disabled={isLocked} className="w-full py-4 rounded bg-zinc-800 border border-zinc-700 text-gold-500 font-roboto font-bold hover:bg-zinc-700 hover:text-white transition-all uppercase tracking-[0.2em] text-xs flex items-center justify-center gap-3 shadow-xl shadow-black/40 active:scale-95 disabled:opacity-50">
                      <Edit className="w-4 h-4" /> Start Manual Studio Building
                    </button>
                 </div>

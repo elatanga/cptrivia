@@ -100,7 +100,9 @@ export type AnalyticsEventType =
   | 'TIMER_RESET'
   | 'TIMER_FINISHED'
   | 'VIEW_SETTINGS_CHANGED'
-  | 'CATEGORY_RENAMED';
+  | 'CATEGORY_RENAMED'
+  | 'SPECIAL_MOVE_ARMED'
+  | 'SPECIAL_MOVE_ARMORY_CLEARED';
 
 export interface GameAnalyticsEvent {
   id: string;
