@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { Users, Inbox, Shield, Search, Check, X, Copy, Trash2, Clock, Mail, MessageSquare, Plus, Loader2, RefreshCw, Key, Ban, UserCheck, AlertTriangle, Send, Eye, FileText, Smartphone } from 'lucide-react';
+import { Shield, Search, Check, X, Copy, Trash2, Mail, MessageSquare, Plus, Loader2, RefreshCw, Key, Ban, UserCheck, AlertTriangle, FileText, Smartphone } from 'lucide-react';
 import { authService } from '../services/authService';
-import { User, TokenRequest, AuditLogEntry, UserRole, UserSource } from '../types';
+import { User, TokenRequest, AuditLogEntry, UserRole, UserSource, DeliveryMethod, ChannelDeliveryState, UserStatus } from '../types';
 
 interface Props {
   currentUser: string;
@@ -11,12 +11,15 @@ interface Props {
 }
 
 export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) => {
+  const buildEmptyUserForm = () => ({ username: '', role: 'PRODUCER' as UserRole, status: 'ACTIVE' as UserStatus, duration: '', email: '', phone: '', tiktok: '', firstName: '', lastName: '', notes: '', sendSms: true, sendEmail: false });
   const [activeTab, setActiveTab] = useState<'USERS' | 'INBOX' | 'AUDIT'>('USERS');
   const [users, setUsers] = useState<User[]>([]);
   const [requests, setRequests] = useState<TokenRequest[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [retryLoading, setRetryLoading] = useState<string | null>(null);
-  
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [recoveryIssue, setRecoveryIssue] = useState<{ recoveryCode: string; issuedAt: string; expiresAt: string } | null>(null);
+
   // Master Admin Check
   const myself = users.find(u => u.username === currentUser);
   const isMaster = myself?.role === 'MASTER_ADMIN';
@@ -28,11 +31,11 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
 
   // State: Modals / Actions
   const [isCreating, setIsCreating] = useState(false);
-  const [newUser, setNewUser] = useState({ username: '', role: 'PRODUCER' as UserRole, duration: '', email: '', phone: '', tiktok: '', firstName: '', lastName: '' });
+  const [newUser, setNewUser] = useState(buildEmptyUserForm());
   const [actionLoading, setActionLoading] = useState<string | null>(null); 
   
   // Modals
-  const [credentialModal, setCredentialModal] = useState<{username: string, token: string} | null>(null);
+  const [credentialModal, setCredentialModal] = useState<{username: string, token: string, delivery?: Partial<Record<DeliveryMethod, ChannelDeliveryState>>} | null>(null);
   const [viewUser, setViewUser] = useState<User | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     type: 'REVOKE' | 'GRANT' | 'REFRESH' | 'DELETE';
@@ -41,16 +44,25 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
 
   // Approval Modal State
   const [approvingReq, setApprovingReq] = useState<TokenRequest | null>(null);
-  const [approvalUsername, setApprovalUsername] = useState('');
+  const [approvalForm, setApprovalForm] = useState({ username: '', role: 'PRODUCER' as UserRole, email: '', notes: '', sendSms: true, sendEmail: false });
+  const [rejectingReq, setRejectingReq] = useState<TokenRequest | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   useEffect(() => {
     refreshData();
   }, [activeTab]);
 
   const refreshData = () => {
-    setUsers(authService.getAllUsers());
-    setRequests(authService.getRequests());
-    setAuditLogs(authService.getAuditLogs());
+    try {
+      setUsers(authService.getAllUsers(currentUser));
+      setRequests(authService.getRequests(currentUser));
+      setAuditLogs(authService.getAuditLogs(currentUser));
+      setAccessDenied(false);
+    } catch (e: any) {
+      setAccessDenied(true);
+      addToast('error', e.message || 'Master Admin privileges required.');
+      onClose();
+    }
   };
 
   // --- ACTIONS ---
@@ -61,21 +73,30 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
       const duration = newUser.duration ? parseInt(newUser.duration) : undefined;
       const token = await authService.createUser(currentUser, { 
         username: newUser.username,
+        status: newUser.status,
         email: newUser.email,
         phone: newUser.phone,
         profile: {
           firstName: newUser.firstName,
           lastName: newUser.lastName,
           tiktokHandle: newUser.tiktok,
+          notes: newUser.notes,
           source: 'MANUAL_CREATE' as UserSource
         }
       }, newUser.role, duration);
+
+      const channels: DeliveryMethod[] = [];
+      if (newUser.sendSms) channels.push('SMS');
+      if (newUser.sendEmail) channels.push('EMAIL');
+      const deliveryResult = channels.length > 0
+        ? await authService.sendUserCredentials(currentUser, newUser.username, token, channels)
+        : undefined;
       
       addToast('success', 'User created.');
-      setCredentialModal({ username: newUser.username, token });
+      setCredentialModal({ username: newUser.username, token, delivery: deliveryResult?.delivery });
       
       setIsCreating(false);
-      setNewUser({ username: '', role: 'PRODUCER', duration: '', email: '', phone: '', tiktok: '', firstName: '', lastName: '' });
+      setNewUser(buildEmptyUserForm());
       refreshData();
     } catch (e: any) {
       addToast('error', e.message);
@@ -85,7 +106,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
   const handleRetryNotify = async (reqId: string) => {
     setRetryLoading(reqId);
     try {
-      await authService.retryAdminNotification(reqId);
+      await authService.retryAdminNotification(currentUser, reqId);
       addToast('success', 'Notification retry initiated.');
       refreshData();
     } catch (e) {
@@ -95,22 +116,68 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
     }
   };
 
-  const startApproval = (req: TokenRequest) => {
-    setApprovingReq(req);
-    setApprovalUsername(req.preferredUsername);
+  const handleIssueRecovery = async () => {
+    try {
+      const issue = await authService.issueMasterRecovery(currentUser);
+      setRecoveryIssue(issue);
+      addToast('success', 'Time-bound master recovery code issued.');
+    } catch (e: any) {
+      addToast('error', e.message || 'Unable to issue recovery code.');
+    }
+  };
+
+  const startApproval = async (req: TokenRequest) => {
+    try {
+      const locked = await authService.beginRequestReview(currentUser, req.id);
+      setApprovingReq(locked);
+      setApprovalForm({
+        username: authService.suggestAvailableUsername(req.preferredUsername),
+        role: 'PRODUCER',
+        email: req.email || '',
+        notes: '',
+        sendSms: true,
+        sendEmail: Boolean(req.email),
+      });
+    } catch (e: any) {
+      addToast('error', e.message || 'Unable to open request review.');
+    }
   };
 
   const confirmApproval = async () => {
     if (!approvingReq) return;
     setActionLoading(approvingReq.id);
     try {
-      const result = await authService.approveRequest(currentUser, approvingReq.id, approvalUsername);
-      setCredentialModal({ username: result.user.username, token: result.rawToken });
+      const result = await authService.approveRequest(currentUser, approvingReq.id, {
+        username: approvalForm.username,
+        role: approvalForm.role,
+        email: approvalForm.email,
+        sendSms: approvalForm.sendSms,
+        sendEmail: approvalForm.sendEmail,
+        notes: approvalForm.notes,
+      });
+      setCredentialModal({ username: result.user.username, token: result.rawToken, delivery: result.delivery });
       addToast('success', 'Request Approved & User Created');
       setApprovingReq(null);
+      setApprovalForm({ username: '', role: 'PRODUCER', email: '', notes: '', sendSms: true, sendEmail: false });
       refreshData();
     } catch (e: any) {
       addToast('error', e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const confirmReject = async () => {
+    if (!rejectingReq) return;
+    setActionLoading(rejectingReq.id);
+    try {
+      await authService.rejectRequest(currentUser, rejectingReq.id, rejectReason);
+      addToast('info', 'Request rejected.');
+      setRejectingReq(null);
+      setRejectReason('');
+      refreshData();
+    } catch (e: any) {
+      addToast('error', e.message || 'Reject failed');
     } finally {
       setActionLoading(null);
     }
@@ -159,6 +226,20 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
     }
   };
 
+  const handleResendCredentials = async (targetUsername: string, method: DeliveryMethod) => {
+    setActionLoading(`${targetUsername}:${method}`);
+    try {
+      const result = await authService.resendUserCredentials(currentUser, targetUsername, [method]);
+      setCredentialModal({ username: targetUsername, token: result.rawToken, delivery: result.delivery });
+      addToast('success', `${method} credentials issued.`);
+      refreshData();
+    } catch (e: any) {
+      addToast('error', e.message || 'Credential resend failed');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // --- FILTER LOGIC ---
   const filteredUsers = users.filter(u => {
     const matchSearch = 
@@ -172,6 +253,19 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
 
     return matchSearch && matchRole && matchStatus;
   });
+
+  if (accessDenied || (users.length > 0 && !isMaster)) {
+    return (
+      <div className="h-full flex items-center justify-center bg-zinc-950 text-white p-6">
+        <div className="max-w-md w-full bg-black border border-red-900 rounded-2xl p-8 text-center space-y-4">
+          <Shield className="w-10 h-10 text-red-500 mx-auto" />
+          <h2 className="text-xl font-black uppercase tracking-wider">Master Admin Only</h2>
+          <p className="text-sm text-zinc-400">The admin console is locked to the verified Master Admin account.</p>
+          <button onClick={onClose} className="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm font-bold uppercase">Close</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col bg-zinc-950 text-white font-sans">
@@ -225,6 +319,16 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                 </button>
               </div>
 
+              <div className="bg-zinc-900/50 p-4 rounded-lg border border-zinc-800 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] font-black text-gold-500">Master Recovery</div>
+                  <p className="text-xs text-zinc-400 mt-1">Issue a one-time recovery code for the Master Admin account. The plaintext code is shown once and expires automatically in 15 minutes.</p>
+                </div>
+                <button onClick={handleIssueRecovery} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded text-xs flex items-center gap-2 self-start md:self-auto">
+                  <Key className="w-4 h-4" /> Generate Recovery Code
+                </button>
+              </div>
+
               {/* Create User Form */}
               {isCreating && (
                 <form onSubmit={handleCreateUser} className="bg-zinc-900 p-6 rounded-lg border border-gold-500/30 mb-6 animate-in slide-in-from-top-4">
@@ -235,12 +339,12 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                       <input required value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase text-zinc-500 font-bold">First Name</label>
-                      <input value={newUser.firstName} onChange={e => setNewUser({...newUser, firstName: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
+                      <label className="text-[10px] uppercase text-zinc-500 font-bold">First Name *</label>
+                      <input required value={newUser.firstName} onChange={e => setNewUser({...newUser, firstName: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
                     </div>
                      <div className="space-y-1">
-                      <label className="text-[10px] uppercase text-zinc-500 font-bold">Last Name</label>
-                      <input value={newUser.lastName} onChange={e => setNewUser({...newUser, lastName: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
+                      <label className="text-[10px] uppercase text-zinc-500 font-bold">Last Name *</label>
+                      <input required value={newUser.lastName} onChange={e => setNewUser({...newUser, lastName: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase text-zinc-500 font-bold">Role</label>
@@ -250,21 +354,50 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase text-zinc-500 font-bold">Email (Optional)</label>
+                      <label className="text-[10px] uppercase text-zinc-500 font-bold">Status</label>
+                      <select value={newUser.status} onChange={e => setNewUser({...newUser, status: e.target.value as UserStatus})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs outline-none">
+                        <option value="ACTIVE">Active</option>
+                        <option value="REVOKED">Revoked</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase text-zinc-500 font-bold">Email</label>
                       <input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase text-zinc-500 font-bold">Phone (Optional)</label>
-                      <input type="tel" value={newUser.phone} onChange={e => setNewUser({...newUser, phone: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
+                      <label className="text-[10px] uppercase text-zinc-500 font-bold">Phone *</label>
+                      <input required type="tel" placeholder="+14155552671" value={newUser.phone} onChange={e => setNewUser({...newUser, phone: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase text-zinc-500 font-bold">TikTok Handle</label>
+                      <input value={newUser.tiktok} onChange={e => setNewUser({...newUser, tiktok: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
                     </div>
                      <div className="space-y-1">
                       <label className="text-[10px] uppercase text-zinc-500 font-bold">Duration (Mins, Optional)</label>
                       <input type="number" placeholder="Permanent" value={newUser.duration} onChange={e => setNewUser({...newUser, duration: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none" />
                     </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <label className="text-[10px] uppercase text-zinc-500 font-bold">Notes</label>
+                      <textarea value={newUser.notes} onChange={e => setNewUser({...newUser, notes: e.target.value})} rows={3} className="w-full bg-black border border-zinc-700 p-2 rounded text-white text-xs focus:border-gold-500 outline-none resize-none" />
+                    </div>
+                  </div>
+                  <div className="mb-4 rounded-xl border border-zinc-800 bg-black/40 p-4 space-y-3">
+                    <div className="text-[10px] uppercase tracking-[0.2em] font-black text-gold-500">Credential Delivery</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-zinc-300">
+                      <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={newUser.sendSms} onChange={e => setNewUser({...newUser, sendSms: e.target.checked})} />
+                        Send username + token by SMS
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={newUser.sendEmail} onChange={e => setNewUser({...newUser, sendEmail: e.target.checked})} />
+                        Send username + token by email
+                      </label>
+                    </div>
+                    <p className="text-[10px] text-zinc-500">Delivery uses the configured server-backed provider when available, with safe fallback behavior in local/test mode.</p>
                   </div>
                   <div className="flex justify-end gap-3">
                     <button type="button" onClick={() => setIsCreating(false)} className="text-zinc-500 hover:text-white px-4 py-2 text-xs">Cancel</button>
-                    <button type="submit" className="bg-gold-600 text-black font-bold px-6 py-2 rounded text-xs hover:bg-gold-500">Generate & Send</button>
+                    <button type="submit" className="bg-gold-600 text-black font-bold px-6 py-2 rounded text-xs hover:bg-gold-500">Create User</button>
                   </div>
                 </form>
               )}
@@ -287,6 +420,10 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                         {u.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {u.email}</span>}
                         {u.phone && <span className="flex items-center gap-1"><MessageSquare className="w-3 h-3" /> {u.phone}</span>}
                       </div>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold uppercase">
+                        <span className={`px-2 py-1 rounded ${u.credentialDelivery?.SMS?.status === 'SENT' ? 'bg-green-900/40 text-green-300' : u.credentialDelivery?.SMS?.status === 'FAILED' ? 'bg-red-900/40 text-red-300' : 'bg-zinc-800 text-zinc-400'}`}>SMS {u.credentialDelivery?.SMS?.status || '—'}</span>
+                        <span className={`px-2 py-1 rounded ${u.credentialDelivery?.EMAIL?.status === 'SENT' ? 'bg-green-900/40 text-green-300' : u.credentialDelivery?.EMAIL?.status === 'FAILED' ? 'bg-red-900/40 text-red-300' : 'bg-zinc-800 text-zinc-400'}`}>EMAIL {u.credentialDelivery?.EMAIL?.status || '—'}</span>
+                      </div>
                     </div>
                     {/* Action Buttons */}
                     {u.role !== 'MASTER_ADMIN' && (
@@ -303,6 +440,26 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                          >
                            {actionLoading === u.username ? <Loader2 className="w-3 h-3 animate-spin"/> : <RefreshCw className="w-3 h-3" />} Token
                          </button>
+                          {u.phone && (
+                            <button 
+                              onClick={() => handleResendCredentials(u.username, 'SMS')}
+                              disabled={actionLoading === `${u.username}:SMS`}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold uppercase border border-zinc-700"
+                              title="Issue a fresh token and send by SMS"
+                            >
+                              {actionLoading === `${u.username}:SMS` ? <Loader2 className="w-3 h-3 animate-spin"/> : <Smartphone className="w-3 h-3" />} SMS
+                            </button>
+                          )}
+                          {u.email && (
+                            <button 
+                              onClick={() => handleResendCredentials(u.username, 'EMAIL')}
+                              disabled={actionLoading === `${u.username}:EMAIL`}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold uppercase border border-zinc-700"
+                              title="Issue a fresh token and send by email"
+                            >
+                              {actionLoading === `${u.username}:EMAIL` ? <Loader2 className="w-3 h-3 animate-spin"/> : <Mail className="w-3 h-3" />} Email
+                            </button>
+                          )}
                          <div className="w-px h-6 bg-zinc-800 mx-1" />
                          {u.status === 'REVOKED' ? (
                            <button onClick={() => setConfirmAction({ type: 'GRANT', username: u.username })} className="text-green-500 hover:bg-green-900/20 px-3 py-1.5 rounded text-[10px] font-bold uppercase border border-green-900 flex items-center gap-1">
@@ -347,6 +504,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                           </div>
                           <div className="text-xs text-zinc-400 flex items-center gap-3">
                             <span className="flex items-center gap-1"><Smartphone className="w-3 h-3"/> {req.phoneE164}</span>
+                            {req.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3"/> {req.email}</span>}
                             <span className="bg-zinc-800 px-1.5 py-0.5 rounded text-[10px]">TikTok: {req.tiktokHandle}</span>
                           </div>
                         </div>
@@ -362,8 +520,22 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                          <p className="text-[10px] text-zinc-600 mt-1 font-mono">{new Date(req.createdAt).toLocaleString()}</p>
                          {req.approvedAt && <p className="text-[10px] text-green-700">Appr: {new Date(req.approvedAt).toLocaleDateString()}</p>}
                          {req.rejectedAt && <p className="text-[10px] text-red-700">Rej: {new Date(req.rejectedAt).toLocaleDateString()}</p>}
+                          {req.reviewedBy && <p className="text-[10px] text-zinc-500">By: {req.reviewedBy}</p>}
                       </div>
                    </div>
+
+                    {(req.rejectionReason || req.delivery?.SMS || req.delivery?.EMAIL) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                        {req.rejectionReason && <div className="rounded border border-red-900/40 bg-red-950/20 p-3 text-red-200">Rejection reason: {req.rejectionReason}</div>}
+                        <div className="rounded border border-zinc-800 bg-black/40 p-3 text-zinc-300 space-y-2">
+                          <div className="uppercase tracking-widest text-[10px] text-zinc-500 font-bold">Credential Delivery</div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className={`px-2 py-1 rounded ${req.delivery?.SMS?.status === 'SENT' ? 'bg-green-900/40 text-green-300' : req.delivery?.SMS?.status === 'FAILED' ? 'bg-red-900/40 text-red-300' : 'bg-zinc-800 text-zinc-400'}`}>SMS {req.delivery?.SMS?.status || '—'}</span>
+                            <span className={`px-2 py-1 rounded ${req.delivery?.EMAIL?.status === 'SENT' ? 'bg-green-900/40 text-green-300' : req.delivery?.EMAIL?.status === 'FAILED' ? 'bg-red-900/40 text-red-300' : 'bg-zinc-800 text-zinc-400'}`}>EMAIL {req.delivery?.EMAIL?.status || '—'}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                    {/* Footer Row: Admin Notification Status */}
                    <div className="flex justify-between items-center pt-3 border-t border-zinc-800/50">
@@ -392,7 +564,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                       
                       {req.status === 'PENDING' && (
                         <div className="flex gap-2">
-                          <button onClick={() => authService.rejectRequest(currentUser, req.id).then(refreshData)} className="px-3 py-1.5 bg-zinc-950 border border-zinc-800 hover:border-red-500 hover:text-red-500 rounded text-xs">Reject</button>
+                          <button onClick={() => { setRejectingReq(req); setRejectReason(''); }} className="px-3 py-1.5 bg-zinc-950 border border-zinc-800 hover:border-red-500 hover:text-red-500 rounded text-xs">Reject</button>
                           <button onClick={() => startApproval(req)} className="px-4 py-1.5 bg-gold-600 hover:bg-gold-500 text-black font-bold rounded text-xs flex items-center gap-2">
                             <Check className="w-3 h-3" /> Review & Approve
                           </button>
@@ -476,25 +648,48 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                    <div className="space-y-1">
                       <label className="text-xs uppercase text-zinc-500 font-bold">Assign Username</label>
                       <input 
-                         value={approvalUsername} 
-                         onChange={e => setApprovalUsername(e.target.value)}
+                         value={approvalForm.username} 
+                         onChange={e => setApprovalForm({ ...approvalForm, username: e.target.value })}
                          className="w-full bg-black border border-zinc-700 p-3 rounded text-white focus:border-gold-500 outline-none"
                       />
                       <p className="text-[10px] text-zinc-500">Must be unique. Default is requested preferred name.</p>
                    </div>
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     <div className="space-y-1">
+                       <label className="text-xs uppercase text-zinc-500 font-bold">Role</label>
+                       <select value={approvalForm.role} onChange={e => setApprovalForm({ ...approvalForm, role: e.target.value as UserRole })} className="w-full bg-black border border-zinc-700 p-3 rounded text-white outline-none">
+                         <option value="PRODUCER">Producer</option>
+                         {isMaster && <option value="ADMIN">Admin</option>}
+                       </select>
+                     </div>
+                     <div className="space-y-1">
+                       <label className="text-xs uppercase text-zinc-500 font-bold">Email</label>
+                       <input value={approvalForm.email} onChange={e => setApprovalForm({ ...approvalForm, email: e.target.value })} className="w-full bg-black border border-zinc-700 p-3 rounded text-white focus:border-gold-500 outline-none" />
+                     </div>
+                   </div>
+                   <div className="space-y-1">
+                     <label className="text-xs uppercase text-zinc-500 font-bold">Notes</label>
+                     <textarea value={approvalForm.notes} onChange={e => setApprovalForm({ ...approvalForm, notes: e.target.value })} rows={3} className="w-full bg-black border border-zinc-700 p-3 rounded text-white focus:border-gold-500 outline-none resize-none" />
+                   </div>
+                   <div className="rounded border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300 space-y-2">
+                     <div className="uppercase tracking-widest text-[10px] font-black text-gold-500">Delivery Channels</div>
+                     <label className="flex items-center gap-2"><input type="checkbox" checked={approvalForm.sendSms} onChange={e => setApprovalForm({ ...approvalForm, sendSms: e.target.checked })} /> Send SMS credentials</label>
+                     <label className="flex items-center gap-2"><input type="checkbox" checked={approvalForm.sendEmail} onChange={e => setApprovalForm({ ...approvalForm, sendEmail: e.target.checked })} /> Send email credentials</label>
+                   </div>
                    <div className="bg-zinc-800/50 p-3 rounded border border-zinc-800 text-xs text-zinc-400">
                       <p><strong>Applicant:</strong> {approvingReq.firstName} {approvingReq.lastName}</p>
                       <p><strong>Phone:</strong> {approvingReq.phoneE164}</p>
+                      {approvingReq.email && <p><strong>Email:</strong> {approvingReq.email}</p>}
                    </div>
                 </div>
                 <div className="flex justify-end gap-3">
                    <button onClick={() => setApprovingReq(null)} className="px-4 py-2 text-zinc-400 hover:text-white text-sm">Cancel</button>
                    <button 
                      onClick={confirmApproval} 
-                     disabled={!approvalUsername || actionLoading === approvingReq.id}
+                      disabled={!approvalForm.username || actionLoading === approvingReq.id}
                      className="bg-gold-600 hover:bg-gold-500 text-black font-bold px-6 py-2 rounded text-sm flex items-center gap-2"
                    >
-                     {actionLoading === approvingReq.id ? <Loader2 className="w-4 h-4 animate-spin"/> : 'Create User & Send Token'}
+                      {actionLoading === approvingReq.id ? <Loader2 className="w-4 h-4 animate-spin"/> : 'Approve & Provision'}
                    </button>
                 </div>
              </div>
@@ -511,12 +706,70 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
                 <div className="h-px bg-zinc-800" />
                 <div className="flex justify-between items-center text-xs text-zinc-500 uppercase font-bold"><span>Access Token</span><button onClick={() => { navigator.clipboard.writeText(credentialModal.token); addToast('success', 'Token copied'); }} className="text-gold-500 hover:text-white flex items-center gap-1"><Copy className="w-3 h-3" /> COPY</button></div>
                 <div className="text-gold-500 font-mono text-lg break-all">{credentialModal.token}</div>
+                <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase">
+                  <span className={`px-2 py-1 rounded ${credentialModal.delivery?.SMS?.status === 'SENT' ? 'bg-green-900/40 text-green-300' : credentialModal.delivery?.SMS?.status === 'FAILED' ? 'bg-red-900/40 text-red-300' : 'bg-zinc-800 text-zinc-400'}`}>SMS {credentialModal.delivery?.SMS?.status || 'NOT SENT'}</span>
+                  <span className={`px-2 py-1 rounded ${credentialModal.delivery?.EMAIL?.status === 'SENT' ? 'bg-green-900/40 text-green-300' : credentialModal.delivery?.EMAIL?.status === 'FAILED' ? 'bg-red-900/40 text-red-300' : 'bg-zinc-800 text-zinc-400'}`}>EMAIL {credentialModal.delivery?.EMAIL?.status || 'NOT SENT'}</span>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3 mb-2">
-                 <button onClick={() => handleSendMessage(credentialModal.username, 'SMS', `Access Token for CruzPham Studios: ${credentialModal.token}`)} className="bg-zinc-800 hover:bg-zinc-700 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-2"><Smartphone className="w-3 h-3"/> Resend SMS</button>
-                 <button onClick={() => handleSendMessage(credentialModal.username, 'EMAIL', `Your Access Token: ${credentialModal.token}`)} className="bg-zinc-800 hover:bg-zinc-700 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-2"><Mail className="w-3 h-3"/> Resend Email</button>
+                 <button onClick={async () => {
+                   try {
+                     const result = await authService.sendUserCredentials(currentUser, credentialModal.username, credentialModal.token, ['SMS']);
+                     setCredentialModal({ ...credentialModal, delivery: { ...credentialModal.delivery, ...result.delivery } });
+                     addToast('success', 'SMS sent.');
+                     refreshData();
+                   } catch (e: any) {
+                     addToast('error', e.message || 'SMS resend failed');
+                   }
+                 }} className="bg-zinc-800 hover:bg-zinc-700 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-2"><Smartphone className="w-3 h-3"/> Resend SMS</button>
+                 <button onClick={async () => {
+                   try {
+                     const result = await authService.sendUserCredentials(currentUser, credentialModal.username, credentialModal.token, ['EMAIL']);
+                     setCredentialModal({ ...credentialModal, delivery: { ...credentialModal.delivery, ...result.delivery } });
+                     addToast('success', 'Email sent.');
+                     refreshData();
+                   } catch (e: any) {
+                     addToast('error', e.message || 'Email resend failed');
+                   }
+                 }} className="bg-zinc-800 hover:bg-zinc-700 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-2"><Mail className="w-3 h-3"/> Resend Email</button>
               </div>
               <button onClick={() => setCredentialModal(null)} className="w-full bg-gold-600 hover:bg-gold-500 text-black font-bold py-3 rounded text-sm mt-4">Done</button>
+            </div>
+          </div>
+        )}
+
+        {rejectingReq && (
+          <div className="absolute inset-0 z-50 bg-black/90 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="w-full max-w-md bg-zinc-900 border border-red-900 rounded-xl p-6 shadow-2xl">
+              <h2 className="text-xl font-serif font-bold text-white mb-4">Reject Access Request</h2>
+              <div className="space-y-3">
+                <p className="text-sm text-zinc-400">Add an optional note for rejecting {rejectingReq.firstName} {rejectingReq.lastName}'s request.</p>
+                <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={4} className="w-full bg-black border border-zinc-700 p-3 rounded text-white focus:border-red-500 outline-none resize-none" placeholder="Optional reason shown in the audit log" />
+              </div>
+              <div className="flex justify-end gap-3 mt-6">
+                <button onClick={() => { setRejectingReq(null); setRejectReason(''); }} className="px-4 py-2 text-zinc-400 hover:text-white text-sm">Cancel</button>
+                <button onClick={confirmReject} disabled={actionLoading === rejectingReq.id} className="bg-red-600 hover:bg-red-500 text-white font-bold px-6 py-2 rounded text-sm flex items-center gap-2">
+                  {actionLoading === rejectingReq.id ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Reject Request'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {recoveryIssue && (
+          <div className="absolute inset-0 z-50 bg-black/90 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="w-full max-w-md bg-zinc-900 border border-purple-500 rounded-xl p-6 shadow-2xl">
+              <div className="flex items-center justify-center mb-6"><div className="w-12 h-12 bg-purple-500/20 rounded-full flex items-center justify-center border border-purple-500 text-purple-300"><Key className="w-6 h-6" /></div></div>
+              <h2 className="text-xl font-bold text-center text-white mb-2">Master Recovery Code Issued</h2>
+              <p className="text-center text-sm text-zinc-400 mb-4">Store this code offline. It will not be displayed again after this modal closes.</p>
+              <div className="bg-black p-4 rounded border border-zinc-800 mb-4 space-y-3">
+                <div className="flex justify-between items-center text-xs text-zinc-500 uppercase font-bold"><span>Recovery Code</span><button onClick={() => { navigator.clipboard.writeText(recoveryIssue.recoveryCode); addToast('success', 'Recovery code copied'); }} className="text-gold-500 hover:text-white flex items-center gap-1"><Copy className="w-3 h-3" /> COPY</button></div>
+                <div className="text-purple-300 font-mono text-lg break-all">{recoveryIssue.recoveryCode}</div>
+              </div>
+              <div className="bg-red-950/30 border border-red-900/40 rounded-lg p-3 text-[11px] text-red-200 uppercase tracking-wide font-bold">
+                Expires {new Date(recoveryIssue.expiresAt).toLocaleString()}.
+              </div>
+              <button onClick={() => setRecoveryIssue(null)} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded text-sm mt-4">Done</button>
             </div>
           </div>
         )}

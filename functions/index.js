@@ -122,6 +122,8 @@ const sendSms = async (to, body, correlationId) => {
   return { status: "SENT", provider: "twilio", timestamp: new Date().toISOString() };
 };
 
+const DELIVERY_METHODS = new Set(["EMAIL", "SMS"]);
+
 const handleNewRequestNotification = async (requestData, correlationId) => {
   const updates = {};
   
@@ -254,6 +256,40 @@ exports.sendManualNotification = functions.https.onCall(async (data, context) =>
   } catch (e) {
     log("ERROR", "NETWORK", "Manual Send Failed", correlationId, { error: e });
     throw new functions.https.HttpsError("internal", "Delivery failed: " + e.message);
+  }
+});
+
+exports.sendProvisioningNotification = functions.https.onCall(async (data, context) => {
+  const { method, to, content, subject, correlationId } = data || {};
+  log("INFO", "SYSTEM", `Provisioning notification via ${method}`, correlationId, { hasRecipient: Boolean(to) });
+
+  if (!DELIVERY_METHODS.has(method)) {
+    throw new functions.https.HttpsError("invalid-argument", "Invalid delivery method");
+  }
+  if (!to || typeof to !== "string") {
+    throw new functions.https.HttpsError("invalid-argument", "Missing delivery destination");
+  }
+  if (!content || typeof content !== "string") {
+    throw new functions.https.HttpsError("invalid-argument", "Missing content");
+  }
+
+  try {
+    let result;
+    if (method === "EMAIL") {
+      result = await sendEmail(to, subject || "CruzPham Studios", content, correlationId);
+    } else {
+      result = await sendSms(normalizePhone(to), content, correlationId);
+    }
+
+    return {
+      success: result.status === "SENT",
+      providerId: result.provider || undefined,
+      status: result.status,
+      error: result.status === "SENT" ? undefined : `${method} delivery unavailable`,
+    };
+  } catch (e) {
+    log("ERROR", "NETWORK", "Provisioning notification failed", correlationId, { error: e, method });
+    throw new functions.https.HttpsError("internal", `Delivery failed: ${e.message}`);
   }
 });
 

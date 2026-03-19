@@ -124,7 +124,7 @@ describe('BootstrapScreen Regression Suite', () => {
       args.some(arg => typeof arg === 'string' && arg.includes(SENSITIVE_TOKEN))
     );
     
-    expect(leaked).toBe(false, "SENSITIVE_TOKEN was leaked to console.log!");
+    expect(leaked).toBe(false);
     consoleSpy.mockRestore();
   });
 });
