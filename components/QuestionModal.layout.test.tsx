@@ -3,6 +3,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { QuestionModal } from './QuestionModal';
 import { Question, Player, GameTimer } from '../types';
+import { logger } from '../services/logger';
 
 // Mock types for tests
 declare const jest: any;
@@ -10,8 +11,6 @@ declare const describe: any;
 declare const test: any;
 declare const expect: any;
 declare const beforeEach: any;
-// Fix: Declare require for dynamic module loading in tests to fix "Cannot find name 'require'"
-declare const require: any;
 
 // Mock sound service
 jest.mock('../services/soundService', () => ({
@@ -93,7 +92,7 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
     expect(container).toBeInTheDocument();
     expect(container).toHaveClass('max-w-7xl');
     expect(container).toHaveClass('backdrop-blur-2xl');
-    expect(container).toHaveClass('rounded-[2.5rem]');
+    expect(container).toHaveClass('md:rounded-[2.5rem]');
     expect(container).toHaveClass('grid');
   });
 
@@ -129,10 +128,9 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
   });
 
   test('F) LOGGING: Logs reveal UI render event', () => {
+    const infoSpy = jest.spyOn(logger, 'info');
     setupModal();
-    // Fix: Using the declared require to access logger from the mock context
-    const { logger } = require('../services/logger');
-    expect(logger.info).toHaveBeenCalledWith(
+    expect(infoSpy).toHaveBeenCalledWith(
       "reveal_ui_rendered",
       expect.objectContaining({ tileId: 'q1', ts: expect.any(String) })
     );

@@ -118,12 +118,79 @@ export const DirectorPanel: React.FC<Props> = ({
   const refreshBackendMode = () => setBackendMode(specialMovesClient.getBackendMode());
 
   const sentenceCase = (value: string) => value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase());
+  const pointsLabel = (value?: number) => {
+    const safePoints = Number.isFinite(value) ? Number(value) : 0;
+    return `${safePoints} point${safePoints === 1 ? '' : 's'}`;
+  };
+  const normalizeName = (value?: string) => {
+    const trimmed = (value || '').trim();
+    return trimmed || 'A player';
+  };
+  const formatPlayedPrefix = (playerName?: string, categoryName?: string, points?: number) => {
+    const safeCategory = (categoryName || '').trim() || 'Unknown Category';
+    return `${normalizeName(playerName)} played ${safeCategory} for ${pointsLabel(points)}`;
+  };
+  const extractStealVictim = (note?: string) => {
+    if (!note) return '';
+    const match = note.match(/^stolen from\s+(.+)$/i);
+    return match?.[1]?.trim() || '';
+  };
+  const includesDoubleOrNothing = (value: unknown) => typeof value === 'string' && /double\s*or\s*nothing/i.test(value);
+  const isDoubleOrNothingEvent = (event: GameAnalyticsEvent) => {
+    const c = event.context || {};
+    return [c.note, c.message, c.before, c.after].some(includesDoubleOrNothing);
+  };
+
+  type PendingPlayContext = {
+    tileId: string;
+    categoryName?: string;
+    points?: number;
+    openerName?: string;
+    ts: number;
+  };
+
+  const isFinalOutcomeEvent = (event: GameAnalyticsEvent) => (
+    event.type === 'POINTS_AWARDED'
+    || event.type === 'POINTS_STOLEN'
+    || event.type === 'TILE_VOIDED'
+    || event.type === 'QUESTION_RETURNED'
+  );
+
+  const formatFinalOutcomeSentence = (event: GameAnalyticsEvent, pendingPlay?: PendingPlayContext): string => {
+    const c = event.context || {};
+    const points = typeof c.points === 'number' ? c.points : pendingPlay?.points;
+    const categoryName = c.categoryName || pendingPlay?.categoryName;
+    const openerName = pendingPlay?.openerName;
+    const awardedOrStealerName = c.playerName || event.actor?.playerName;
+    const prefix = formatPlayedPrefix(openerName || awardedOrStealerName, categoryName, points);
+    const isDoN = isDoubleOrNothingEvent(event);
+
+    if (event.type === 'POINTS_STOLEN') {
+      return `${prefix} -> ${normalizeName(awardedOrStealerName)} stole it.`;
+    }
+    if (event.type === 'POINTS_AWARDED') {
+      if (isDoN) {
+        return `${prefix} -> Double or Nothing won.`;
+      }
+      return `${prefix} -> points awarded${awardedOrStealerName ? ` to ${awardedOrStealerName}` : ''}.`;
+    }
+    if (event.type === 'TILE_VOIDED') {
+      return `${prefix} -> points voided.`;
+    }
+    if (event.type === 'QUESTION_RETURNED') {
+      if (isDoN) {
+        return `${prefix} -> Double or Nothing lost.`;
+      }
+      return `${prefix} -> no points awarded.`;
+    }
+    return formatEventSentence(event);
+  };
 
   const isKeyActivityEvent = (event: GameAnalyticsEvent) => {
-    if (event.type === 'POINTS_AWARDED' || event.type === 'POINTS_STOLEN' || event.type === 'TILE_VOIDED' || event.type === 'SPECIAL_MOVE_ARMED' || event.type === 'PLAYER_ADDED') {
+    if (isFinalOutcomeEvent(event)) {
       return true;
     }
-    return event.type === 'PLAYER_EDITED' && event.context?.note === 'name-changed';
+    return false;
   };
 
   const getEventChannel = (event: GameAnalyticsEvent): LogChannel => {
@@ -151,17 +218,17 @@ export const DirectorPanel: React.FC<Props> = ({
       case 'SESSION_ENDED':
         return 'The game session ended.';
       case 'TILE_OPENED':
-        return `A ${points || 0}-point tile was opened in ${categoryName}.`;
+        return `${playerName} stepped up for ${categoryName} at ${pointsLabel(points)}. Let the spotlight roll.`;
       case 'ANSWER_REVEALED':
-        return `The answer was revealed for the ${points || 0}-point tile in ${categoryName}.`;
+        return `Answer reveal is up for ${categoryName} (${pointsLabel(points)}).`;
       case 'POINTS_AWARDED':
-        return `${playerName} was awarded ${delta || points || 0} points in ${categoryName}.`;
+        return `${playerName} hit ${categoryName} for ${pointsLabel(delta || points)}. Crowd goes wild.`;
       case 'POINTS_STOLEN':
-        return `${playerName} stole ${delta || points || 0} points${c.note ? ` (${c.note})` : ''}.`;
+        return `${playerName} stole ${pointsLabel(delta || points)} in ${categoryName}${extractStealVictim(c.note) ? ` from ${extractStealVictim(c.note)}` : ''}. Huge swing.`;
       case 'TILE_VOIDED':
-        return `The ${points || 0}-point tile in ${categoryName} was voided.`;
+        return `${categoryName} for ${pointsLabel(points)} was ruled void. Next play.`;
       case 'QUESTION_RETURNED':
-        return `The ${points || 0}-point tile in ${categoryName} was returned to the board.`;
+        return `${categoryName} for ${pointsLabel(points)} was sent back to the board.`;
       case 'QUESTION_EDITED':
         return `A board tile was edited in ${categoryName}.`;
       case 'AI_TILE_REPLACE_START':
@@ -214,7 +281,7 @@ export const DirectorPanel: React.FC<Props> = ({
       case 'CATEGORY_RENAMED':
         return `A category was renamed to ${c.after || categoryName}.`;
       case 'SPECIAL_MOVE_ARMED':
-        return `${playerName} armed ${sentenceCase(c.note || 'special move')} on a ${points || 0}-point tile in ${categoryName}.`;
+        return `${playerName} armed ${sentenceCase(c.note || 'special move')} on ${categoryName} (${pointsLabel(points)}).`;
       case 'SPECIAL_MOVE_ARMORY_CLEARED':
         return 'All armed special moves were cleared from the board.';
       default:
@@ -235,16 +302,60 @@ export const DirectorPanel: React.FC<Props> = ({
   }, [gameState.events]);
 
   const auditEvents = useMemo(() => {
-    const selected = [...(gameState.events || [])].filter((event) => isKeyActivityEvent(event));
+    const ordered = [...(gameState.events || [])].sort((a, b) => a.ts - b.ts);
+    const pendingByTileId = new Map<string, PendingPlayContext>();
+    let selectedPlayerName: string | undefined;
+    const summaries: Array<{
+      id: string;
+      iso: string;
+      type: AnalyticsEventType;
+      channel: LogChannel;
+      event: GameAnalyticsEvent;
+      sentence: string;
+    }> = [];
 
-    const latestTwelve = selected.slice(-12).reverse();
+    ordered.forEach((event) => {
+      const c = event.context || {};
+
+      if (event.type === 'PLAYER_SELECTED') {
+        selectedPlayerName = c.playerName || selectedPlayerName;
+      }
+
+      if (event.type === 'TILE_OPENED' && c.tileId) {
+        pendingByTileId.set(c.tileId, {
+          tileId: c.tileId,
+          categoryName: c.categoryName,
+          points: typeof c.points === 'number' ? c.points : undefined,
+          openerName: c.playerName || selectedPlayerName,
+          ts: event.ts,
+        });
+      }
+
+      if (!isFinalOutcomeEvent(event)) return;
+
+      const pendingPlay = c.tileId ? pendingByTileId.get(c.tileId) : undefined;
+      summaries.push({
+        id: event.id,
+        iso: event.iso,
+        type: event.type,
+        channel: getEventChannel(event),
+        event,
+        sentence: formatFinalOutcomeSentence(event, pendingPlay),
+      });
+
+      if (c.tileId) {
+        pendingByTileId.delete(c.tileId);
+      }
+    });
+
+    const latestTwelve = summaries.slice(-12);
     return latestTwelve.map((event) => ({
       id: event.id,
       iso: event.iso,
       type: event.type,
-      channel: getEventChannel(event),
-      event,
-      sentence: formatEventSentence(event)
+      channel: event.channel,
+      event: event.event,
+      sentence: event.sentence,
     }));
   }, [gameState.events]);
 
@@ -1374,7 +1485,7 @@ export const DirectorPanel: React.FC<Props> = ({
 
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-4">
-                <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-3">Audit (Last 12 Key Activities)</div>
+                <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-3">Audit (Last 12 Final Outcomes)</div>
                 <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-2 custom-scrollbar" data-testid="audit-log-list">
                   {filteredAuditEvents.length === 0 && <div className="text-[11px] text-zinc-500">No key activity logged yet.</div>}
                   {filteredAuditEvents.map((entry) => (

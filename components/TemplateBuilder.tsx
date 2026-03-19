@@ -25,6 +25,9 @@ interface Props {
   addToast: (type: any, msg: string) => void;
 }
 
+type QuickGameMode = 'single_player' | 'two_player' | null;
+type QuickTimerMode = 'timed' | 'untimed' | null;
+
 const MAX_PLAYERS = 8;
 const MIN_PLAYERS = 1;
 const makeStableId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -47,6 +50,8 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
   // Config & AI State
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiDifficulty, setAiDifficulty] = useState<Difficulty>('mixed');
+  const [quickGameMode, setQuickGameMode] = useState<QuickGameMode>(initialTemplate?.config?.quickGameMode ?? null);
+  const [quickTimerMode, setQuickTimerMode] = useState<QuickTimerMode>(initialTemplate?.config?.quickTimerMode ?? null);
   
   const getSafePointScale = (val?: number) => {
     const allowed = [10, 20, 25, 50, 100];
@@ -91,6 +96,40 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     
     return initialList;
   });
+
+  const applyQuickGameMode = (mode: Exclude<QuickGameMode, null>) => {
+    if (isLocked) return;
+
+    const targetCount = mode === 'single_player' ? 1 : 2;
+    setPlayerConfigs((prev) => {
+      const base = [...prev];
+      const normalized = base.map((p) => ({ ...p, name: normalizePlayerName(p.name) }));
+
+      while (normalized.length < targetCount) {
+        normalized.push({ id: crypto.randomUUID(), name: `PLAYER ${normalized.length + 1}` });
+      }
+
+      const next = normalized.slice(0, targetCount).map((p, idx) => ({
+        ...p,
+        name: normalizePlayerName(p.name) || `PLAYER ${idx + 1}`,
+      }));
+
+      return next;
+    });
+
+    if (!quickTimerMode) {
+      setQuickTimerMode('untimed');
+    }
+
+    setQuickGameMode(mode);
+    logger.info('template_quick_game_mode_selected', { showId, mode, targetCount });
+  };
+
+  const handleQuickTimerModeSelect = (mode: Exclude<QuickTimerMode, null>) => {
+    if (isLocked) return;
+    setQuickTimerMode(mode);
+    logger.info('template_quick_timer_mode_selected', { showId, mode });
+  };
 
   const [categories, setCategories] = useState<Category[]>(initialTemplate?.categories || []);
   const [editCell, setEditCell] = useState<{cIdx: number, qIdx: number} | null>(null);
@@ -159,6 +198,28 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
       });
 
       const finalPlayerNames = playerConfigs.map(p => p.name).filter(n => !!n);
+      const normalizedQuickMode: QuickGameMode = quickGameMode;
+      const normalizedTimerMode: QuickTimerMode = quickGameMode
+        ? (quickTimerMode || 'untimed')
+        : quickTimerMode;
+
+      if (quickGameMode && !quickTimerMode) {
+        logger.warn('template_quick_timer_mode_defaulted', {
+          showId,
+          templateId: initialTemplate?.id || 'new',
+          defaultedTo: 'untimed',
+        });
+      }
+
+      logger.info('template_quick_setup_resolved', {
+        showId,
+        templateId: initialTemplate?.id || 'new',
+        quickGameMode: normalizedQuickMode,
+        quickTimerMode: normalizedTimerMode,
+        playerCount: finalPlayerNames.length,
+        categories: validatedCategories.length,
+        rowCount: validatedCategories[0]?.questions.length || config.rowCount,
+      });
 
       if (initialTemplate) {
         dataService.updateTemplate({
@@ -170,7 +231,9 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
             playerNames: finalPlayerNames,
             categoryCount: validatedCategories.length,
             rowCount: validatedCategories[0]?.questions.length || config.rowCount,
-            pointScale: config.pointScale
+            pointScale: config.pointScale,
+            quickGameMode: normalizedQuickMode,
+            quickTimerMode: normalizedTimerMode,
           }
         });
       } else {
@@ -179,7 +242,9 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
           playerNames: finalPlayerNames,
           categoryCount: validatedCategories.length,
           rowCount: validatedCategories[0]?.questions.length || config.rowCount,
-          pointScale: config.pointScale
+          pointScale: config.pointScale,
+          quickGameMode: normalizedQuickMode,
+          quickTimerMode: normalizedTimerMode,
         }, validatedCategories);
       }
       
@@ -407,6 +472,53 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                           ))}
                        </div>
                        <p className="text-[9px] text-zinc-500 font-mono italic">Range: {config.pointScale} - {config.pointScale * config.rowCount} pts</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
+                    <div className="space-y-2">
+                      <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Quick Game Setup</h3>
+                      <p className="text-[10px] text-zinc-500">Fast setup for one-person or head-to-head play.</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={() => applyQuickGameMode('single_player')}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${quickGameMode === 'single_player' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                        >
+                          1 Player
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={() => applyQuickGameMode('two_player')}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${quickGameMode === 'two_player' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                        >
+                          2 Players
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Timer Mode</h3>
+                      <p className="text-[10px] text-zinc-500">Sets default timer behavior for games started from this template.</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={() => handleQuickTimerModeSelect('timed')}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${quickTimerMode === 'timed' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                        >
+                          Timed
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={() => handleQuickTimerModeSelect('untimed')}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${quickTimerMode === 'untimed' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                        >
+                          No Timer
+                        </button>
+                      </div>
                     </div>
                   </div>
 
