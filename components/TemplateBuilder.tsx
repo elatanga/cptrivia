@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { Save, X, Wand2, RefreshCw, Loader2, Download, Upload, Plus, Minus, Trash2, HelpCircle, AlertCircle, Maximize2, Minimize2, RotateCcw, Sparkles, Hash, LogOut, Edit } from 'lucide-react';
-import { GameTemplate, Category, Question, Difficulty } from '../types';
-import { generateTriviaGame, generateSingleQuestion, generateCategoryQuestions } from '../services/geminiService';
+import { GameTemplate, Category, Question, Difficulty, AppError } from '../types';
+import { generateTriviaGame, generateSingleQuestion, generateCategoryQuestions, getGeminiConfigHealth } from '../services/geminiService';
 import { dataService } from '../services/dataService';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
@@ -27,6 +27,7 @@ interface Props {
 
 const MAX_PLAYERS = 8;
 const MIN_PLAYERS = 1;
+const makeStableId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
 export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onClose, onSave, onLogout, addToast }) => {
   // --- STATE MACHINE ---
@@ -95,6 +96,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
   const [editCell, setEditCell] = useState<{cIdx: number, qIdx: number} | null>(null);
   
   const isLocked = genState.status === 'GENERATING' || genState.status === 'APPLYING' || isSaving;
+  const aiConfigHealth = getGeminiConfigHealth();
 
   // --- LOGGING & LAYOUT INSTRUMENTATION ---
   useEffect(() => {
@@ -215,7 +217,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
       if (currentGenId.current === genId) {
         setGenState({ status: 'FAILED', id: null, stage: '' });
         if (snapshotRef.current) setCategories(snapshotRef.current);
-        addToast('error', 'AI Generation failed.');
+        addToast('error', getAiToastMessage(e, 'AI Generation failed.'));
       }
     }
   };
@@ -240,7 +242,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     } catch (e: any) {
       if (currentGenId.current === genId) {
         setGenState({ status: 'FAILED', id: null, stage: '' });
-        addToast('error', 'AI Failed to rewrite category.');
+        addToast('error', getAiToastMessage(e, 'AI Failed to rewrite category.'));
       }
     }
   };
@@ -264,7 +266,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     } catch (e: any) {
       if (currentGenId.current === genId) {
         setGenState({ status: 'FAILED', id: null, stage: '' });
-        addToast('error', 'Failed to generate question.');
+        addToast('error', getAiToastMessage(e, 'Failed to generate question.'));
       }
     }
   };
@@ -276,13 +278,13 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
       addToast('error', 'Title is required');
       return;
     }
-    const newCats: Category[] = Array.from({ length: config.catCount }).map((_, cI) => {
+      const newCats: Category[] = Array.from({ length: config.catCount }).map((_, cI) => {
       const luckyIndex = Math.floor(Math.random() * config.rowCount);
       return {
-        id: Math.random().toString(),
+        id: makeStableId(),
         title: `Category ${cI + 1}`,
         questions: Array.from({ length: config.rowCount }).map((_, qI) => ({
-          id: Math.random().toString(),
+          id: makeStableId(),
           text: 'Enter question text...',
           answer: 'Enter answer...',
           points: (qI + 1) * config.pointScale,
@@ -332,6 +334,15 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     const newCats = [...categories];
     newCats[cIdx] = { ...newCats[cIdx], title: val };
     setCategories(newCats);
+  };
+
+  const getAiToastMessage = (error: any, fallback: string) => {
+    if (error instanceof AppError) {
+      if (error.code === 'ERR_FORBIDDEN') return 'AI is not configured. Set GEMINI_API_KEY and reload.';
+      if (error.code === 'ERR_NETWORK') return 'Network offline. Reconnect and try AI generation again.';
+      return error.message || fallback;
+    }
+    return fallback;
   };
 
   if (step === 'CONFIG') {
@@ -445,6 +456,14 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                  <div className="relative z-10">
                     <h3 className="text-sm uppercase text-purple-400 font-roboto font-bold flex items-center gap-2 tracking-widest mb-2"><Sparkles className="w-4 h-4" /> AI Magic Studio</h3>
                     <p className="text-[11px] text-zinc-500 leading-relaxed font-bold">Automate the entire production. Enter a topic and let Gemini generate all categories and questions instantly.</p>
+                    <div data-testid="ai-config-health" className={`mt-3 text-[10px] uppercase tracking-wider font-black px-2 py-1 rounded inline-block ${aiConfigHealth.ready ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-700/40' : 'bg-amber-900/30 text-amber-300 border border-amber-700/40'}`}>
+                      {aiConfigHealth.ready ? 'AI Ready' : 'AI Not Configured'}
+                    </div>
+                    {!aiConfigHealth.ready && (
+                      <p className="mt-2 text-[10px] text-amber-300/90 font-bold">
+                        Set <code>GEMINI_API_KEY</code> (or <code>API_KEY</code>) and reload.
+                      </p>
+                    )}
                  </div>
                  <div className="space-y-5 relative z-10 flex-1 min-h-0">
                     <div>
@@ -471,8 +490,8 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                         if (aiPrompt) {
                           soundService.playClick();
                           const newCats = Array.from({ length: config.catCount }).map((_, cI) => ({
-                            id: Math.random().toString(), title: `AI Generating...`,
-                            questions: Array.from({ length: config.rowCount }).map((_, qI) => ({ id: Math.random().toString(), text: '', answer: '', points: (qI + 1) * config.pointScale, isRevealed: false, isAnswered: false, isDoubleOrNothing: false }))
+                            id: makeStableId(), title: `AI Generating...`,
+                            questions: Array.from({ length: config.rowCount }).map((_, qI) => ({ id: makeStableId(), text: '', answer: '', points: (qI + 1) * config.pointScale, isRevealed: false, isAnswered: false, isDoubleOrNothing: false }))
                           }));
                           setCategories(newCats);
                           setStep('BUILDER');
@@ -549,6 +568,14 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
         <aside className="flex-none w-full lg:w-72 bg-zinc-950 border-r border-zinc-800 p-4 shrink-0 space-y-6 overflow-y-auto custom-scrollbar lg:h-full">
            <div className="bg-purple-950/10 border border-purple-500/20 p-4 rounded-xl space-y-4">
               <h4 className="text-[11px] text-purple-400 uppercase font-roboto font-bold tracking-widest flex items-center gap-2"><Sparkles className="w-3.5 h-3.5" /> Magic Studio</h4>
+              <div data-testid="ai-config-health-inline" className={`text-[9px] uppercase tracking-wider font-black px-2 py-1 rounded inline-block ${aiConfigHealth.ready ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-700/40' : 'bg-amber-900/30 text-amber-300 border border-amber-700/40'}`}>
+                {aiConfigHealth.ready ? 'AI Ready' : 'AI Not Configured'}
+              </div>
+              {!aiConfigHealth.ready && (
+                <p className="text-[9px] text-amber-300/90 font-bold">
+                  Set <code>GEMINI_API_KEY</code> (or <code>API_KEY</code>) and reload.
+                </p>
+              )}
               <div className="space-y-1.5">
                  <label className="text-[9px] uppercase text-zinc-500 font-black">AI Topic</label>
                  <input disabled={isLocked} value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} placeholder="Enter board topic..." className="w-full bg-black border border-zinc-800 p-2 rounded text-xs text-white outline-none focus:border-purple-500 font-roboto font-bold" />
