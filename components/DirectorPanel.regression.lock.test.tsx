@@ -3,7 +3,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
-import { GameState, Category } from '../types';
+import { GameState } from '../types';
 import * as geminiService from '../services/geminiService';
 
 /**
@@ -76,6 +76,8 @@ describe('Director Panel: Content Logic Lock', () => {
     
     const regenBtn = screen.getByTitle(/Regenerate this category/i);
     fireEvent.click(regenBtn);
+    fireEvent.click(screen.getByText('Regenerate voided/disabled/inactive tiles only'));
+    fireEvent.click(screen.getByText('Run Regeneration'));
 
     await waitFor(() => {
       const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
@@ -99,6 +101,8 @@ describe('Director Panel: Content Logic Lock', () => {
     render(<DirectorPanel gameState={goldenState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
     
     fireEvent.click(screen.getByTitle(/Regenerate this category/i));
+    fireEvent.click(screen.getByText('Regenerate voided/disabled/inactive tiles only'));
+    fireEvent.click(screen.getByText('Run Regeneration'));
 
     await waitFor(() => {
       const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;

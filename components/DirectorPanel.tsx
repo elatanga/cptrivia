@@ -5,8 +5,9 @@ import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from '..
 import { generateSingleQuestion, generateCategoryQuestions } from '../services/geminiService';
 import { logger } from '../services/logger';
 import { soundService } from '../services/soundService';
-import { normalizePlayerName, applyAiCategoryPreservePoints } from '../services/utils';
+import { normalizePlayerName } from '../services/utils';
 import { sanitizeBoardViewSettings, sanitizeBoardViewSettingsPatch } from '../services/boardViewSettings';
+import { CategoryRegenerationMode, isTileActive, preserveTileStateOnRegenerate, regenerateCategoryWithMode } from '../services/boardRegenerationService';
 import { DirectorAiRegenerator } from './DirectorAiRegenerator';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
 import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
@@ -91,6 +92,10 @@ export const DirectorPanel: React.FC<Props> = ({
   const [tileAiLoading, setTileAiLoading] = useState(false);
   const tileAiGenIdRef = useRef<string | null>(null);
   const tileSnapshotRef = useRef<Category[] | null>(null);
+  const categoryAiGenIdRef = useRef<string | null>(null);
+  const categorySnapshotRef = useRef<Category[] | null>(null);
+  const [categoryRegenDialog, setCategoryRegenDialog] = useState<{ cIdx: number } | null>(null);
+  const [categoryRegenMode, setCategoryRegenMode] = useState<CategoryRegenerationMode>('active_only');
   
   const [processingWildcards, setProcessingWildcards] = useState<Set<string>>(new Set());
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
@@ -572,123 +577,46 @@ export const DirectorPanel: React.FC<Props> = ({
     }
   };
 
-  /**
-   * REFINED TILE AI REGEN HANDLER
-   * - Preserves metadata flags (id, points, state)
-   * - Provides snapshot rollback (effectively no commit on fail)
-   * - PII-safe structured logging
-   * - Race rule enforcement via tileAiGenIdRef
-   */
-  const handleTileAiRegen = async (cIdx: number, qIdx: number, difficulty: Difficulty) => {
-    if (tileAiLoading) return;
+  const getTileStateSnapshot = (question: Question) => {
+    const tile = question as Question & { isDisabled?: boolean; isPlayable?: boolean; isActive?: boolean };
+    return {
+      isAnswered: !!tile.isAnswered,
+      isVoided: !!tile.isVoided,
+      isRevealed: !!tile.isRevealed,
+      isDisabled: typeof tile.isDisabled === 'boolean' ? tile.isDisabled : undefined,
+      isPlayable: typeof tile.isPlayable === 'boolean' ? tile.isPlayable : undefined,
+      isActive: typeof tile.isActive === 'boolean' ? tile.isActive : undefined,
+      derivedActive: isTileActive(tile),
+    };
+  };
+
+  const regenerateTileContent = async (
+    cIdx: number,
+    qIdx: number,
+    difficulty: Difficulty,
+    source: 'quick' | 'modal'
+  ) => {
+    if (aiLoading || tileAiLoading) return;
+
+    const cat = gameState.categories[cIdx];
+    const q = cat?.questions[qIdx];
+    if (!cat || !q) return;
 
     const genId = crypto.randomUUID();
     tileAiGenIdRef.current = genId;
     tileSnapshotRef.current = [...gameState.categories];
 
-    const tsStart = new Date().toISOString();
-    const cat = gameState.categories[cIdx];
-    const q = cat.questions[qIdx];
-
-    logger.info('director_tile_ai_regen_start', {
-      ts: tsStart,
+    const beforeState = getTileStateSnapshot(q);
+    logger.info('board_regen_tile_start', {
       genId,
-      catId: cat.id,
+      categoryId: cat.id,
+      categoryName: cat.title,
       tileId: q.id,
       points: q.points,
-      difficulty
+      difficulty,
+      source,
+      beforeState,
     });
-
-    setTileAiLoading(true);
-    soundService.playClick();
-
-    try {
-      const result = await generateSingleQuestion(
-        gameState.showTitle || "General Trivia",
-        q.points,
-        cat.title,
-        difficulty,
-        genId
-      );
-
-      // RACE CONDITION CHECK
-      if (tileAiGenIdRef.current !== genId) {
-        logger.warn('director_tile_ai_regen_stale', { genId, current: tileAiGenIdRef.current });
-        return;
-      }
-
-      const nextCategories = [...gameState.categories];
-      const nextQs = [...nextCategories[cIdx].questions];
-
-      // PRESERVATION LOCK: Updates text/answer but keeps existing object metadata/id
-      nextQs[qIdx] = {
-        ...q, 
-        text: result.text,
-        answer: result.answer
-      };
-
-      nextCategories[cIdx] = { ...cat, questions: nextQs };
-
-      onUpdateState({ ...gameState, categories: nextCategories });
-
-      emitGameEvent('AI_TILE_REPLACE_APPLIED', {
-        actor: { role: 'director' },
-        context: {
-          tileId: q.id,
-          categoryName: cat.title,
-          points: q.points,
-          note: 'AI tile regeneration applied'
-        }
-      });
-
-      logger.info('director_tile_ai_regen_success', { 
-        ts: new Date().toISOString(), 
-        genId, 
-        tileId: q.id 
-      });
-      addToast('success', 'Question generated.');
-    } catch (e: any) {
-      // Rollback: No updateState call preserves existing board
-      emitGameEvent('AI_TILE_REPLACE_FAILED', {
-        actor: { role: 'director' },
-        context: {
-          tileId: q.id,
-          categoryName: cat.title,
-          points: q.points,
-          message: e.message,
-          note: 'AI tile regeneration failed'
-        }
-      });
-      logger.error('director_tile_ai_regen_failed', {
-        ts: new Date().toISOString(),
-        genId,
-        tileId: q.id,
-        message: e.message
-      });
-      addToast('error', 'Failed to generate question.');
-    } finally {
-      if (tileAiGenIdRef.current === genId) {
-        setTileAiLoading(false);
-      }
-    }
-  };
-
-  const handleAiRegenTile = async (cIdx: number, qIdx: number, difficulty: Difficulty = 'mixed') => {
-    if (aiLoading) return;
-    
-    const cat = gameState.categories[cIdx];
-    const q = cat.questions[qIdx];
-    const genId = crypto.randomUUID();
-    
-    logger.info('director_tile_ai_regen_start', { 
-      tileId: q.id, 
-      catId: cat.id, 
-      points: q.points, 
-      difficulty: difficulty
-    });
-
-    setAiLoading(true);
-    soundService.playClick();
 
     emitGameEvent('AI_TILE_REPLACE_START', {
       actor: { role: 'director' },
@@ -696,32 +624,50 @@ export const DirectorPanel: React.FC<Props> = ({
         tileId: q.id,
         categoryName: cat.title,
         points: q.points,
-        note: 'Quick AI tile regeneration requested'
-      }
+        note: `Tile regeneration requested (${source})`,
+      },
     });
+
+    if (source === 'modal') setTileAiLoading(true);
+    else setAiLoading(true);
+
+    soundService.playClick();
 
     try {
       const result = await generateSingleQuestion(
-        gameState.showTitle || "General Trivia",
+        gameState.showTitle || 'General Trivia',
         q.points,
         cat.title,
         difficulty,
         genId
       );
 
+      if (tileAiGenIdRef.current !== genId) {
+        logger.warn('board_regen_tile_stale_result', { genId, current: tileAiGenIdRef.current, tileId: q.id });
+        return;
+      }
+
       const nextCategories = [...gameState.categories];
-      const nextQs = [...nextCategories[cIdx].questions];
-      
-      // Preserve ID, Points, and State Flags strictly
-      nextQs[qIdx] = { 
-        ...nextQs[qIdx], 
-        text: result.text, 
-        answer: result.answer 
-      };
-      
-      nextCategories[cIdx] = { ...nextCategories[cIdx], questions: nextQs };
+      const nextQuestions = [...nextCategories[cIdx].questions];
+      nextQuestions[qIdx] = preserveTileStateOnRegenerate(nextQuestions[qIdx], {
+        ...nextQuestions[qIdx],
+        text: result.text,
+        answer: result.answer,
+      });
+      nextCategories[cIdx] = { ...nextCategories[cIdx], questions: nextQuestions };
+
+      const afterState = getTileStateSnapshot(nextQuestions[qIdx]);
 
       onUpdateState({ ...gameState, categories: nextCategories });
+
+      logger.info('board_regen_tile_applied', {
+        genId,
+        categoryId: cat.id,
+        tileId: q.id,
+        source,
+        beforeState,
+        afterState,
+      });
 
       emitGameEvent('AI_TILE_REPLACE_APPLIED', {
         actor: { role: 'director' },
@@ -729,13 +675,22 @@ export const DirectorPanel: React.FC<Props> = ({
           tileId: q.id,
           categoryName: cat.title,
           points: q.points,
-          note: 'Quick AI tile regeneration applied'
-        }
+          note: `Tile regeneration applied (${source})`,
+          beforeState,
+          afterState,
+        },
       });
-      
-      logger.info('director_tile_ai_regen_success', { tileId: q.id, genId });
-      addToast('success', 'Tile updated via AI.');
+
+      addToast('success', 'Tile content regenerated.');
     } catch (e: any) {
+      logger.error('board_regen_tile_failed', {
+        genId,
+        categoryId: cat.id,
+        tileId: q.id,
+        source,
+        error: e.message,
+        snapshotCategories: tileSnapshotRef.current?.length,
+      });
       emitGameEvent('AI_TILE_REPLACE_FAILED', {
         actor: { role: 'director' },
         context: {
@@ -743,77 +698,130 @@ export const DirectorPanel: React.FC<Props> = ({
           categoryName: cat.title,
           points: q.points,
           message: e.message,
-          note: 'Quick AI tile regeneration failed'
-        }
+          note: `Tile regeneration failed (${source})`,
+        },
       });
-      logger.error('director_tile_ai_regen_failed', { tileId: q.id, error: e.message, genId });
       addToast('error', `AI Failed: ${e.message}`);
     } finally {
+      if (tileAiGenIdRef.current === genId) tileAiGenIdRef.current = null;
       setAiLoading(false);
+      setTileAiLoading(false);
     }
   };
 
-  const handleAiRewriteCategory = async (cIdx: number) => {
+  const handleTileAiRegen = async (cIdx: number, qIdx: number, difficulty: Difficulty) => {
+    await regenerateTileContent(cIdx, qIdx, difficulty, 'modal');
+  };
+
+  const handleAiRegenTile = async (cIdx: number, qIdx: number, difficulty: Difficulty = 'mixed') => {
+    await regenerateTileContent(cIdx, qIdx, difficulty, 'quick');
+  };
+
+  const openCategoryRegenDialog = (cIdx: number) => {
+    setCategoryRegenMode('active_only');
+    setCategoryRegenDialog({ cIdx });
+  };
+
+  const runCategoryRegeneration = async (cIdx: number, mode: CategoryRegenerationMode) => {
     if (aiLoading) return;
-    
-    const genId = crypto.randomUUID();
+
     const cat = gameState.categories[cIdx];
-    
-    // Log masked prompt data
-    const promptSnippet = (gameState.showTitle || "General Trivia").substring(0, 20) + "...";
-    logger.info('ai_category_regen_start', { 
-      genId, 
-      categoryId: cat.id, 
-      promptLen: (gameState.showTitle || "").length, 
-      promptSnippet,
-      difficulty: 'mixed'
+    if (!cat) return;
+
+    const genId = crypto.randomUUID();
+    categoryAiGenIdRef.current = genId;
+    categorySnapshotRef.current = [...gameState.categories];
+    const prompt = gameState.showTitle || 'General Trivia';
+
+    logger.info('board_regen_category_start', {
+      genId,
+      categoryId: cat.id,
+      categoryName: cat.title,
+      mode,
+      questionCount: cat.questions.length,
+      promptLength: prompt.length,
+    });
+
+    emitGameEvent('AI_CATEGORY_REPLACE_START', {
+      actor: { role: 'director' },
+      context: {
+        categoryIndex: cIdx,
+        categoryName: cat.title,
+        note: `Category regeneration requested (${mode})`,
+      },
     });
 
     setAiLoading(true);
     soundService.playClick();
-    
-    emitGameEvent('AI_CATEGORY_REPLACE_START', { actor: { role: 'director' }, context: { categoryIndex: cIdx, categoryName: cat.title } });
 
     try {
-      const newQs = await generateCategoryQuestions(
-        gameState.showTitle || "General Trivia", 
-        cat.title, 
-        cat.questions.length, 
-        'mixed', 
-        100, 
+      const generatedQuestions = await generateCategoryQuestions(
+        prompt,
+        cat.title,
+        cat.questions.length,
+        'mixed',
+        100,
         genId
       );
 
-      const nextCategories = [...gameState.categories];
-      nextCategories[cIdx] = applyAiCategoryPreservePoints(cat, newQs);
+      if (categoryAiGenIdRef.current !== genId) {
+        logger.warn('board_regen_category_stale_result', { genId, current: categoryAiGenIdRef.current, categoryId: cat.id });
+        return;
+      }
 
-      onUpdateState({ ...gameState, categories: nextCategories });
+      const result = regenerateCategoryWithMode(cat, generatedQuestions, mode);
+      const nextCategories = [...gameState.categories];
+      nextCategories[cIdx] = result.category;
+
+      onUpdateState({
+        ...gameState,
+        categories: nextCategories,
+        activeCategoryId: mode === 'reset_all_active' ? null : gameState.activeCategoryId,
+        activeQuestionId: mode === 'reset_all_active' ? null : gameState.activeQuestionId,
+      });
+
+      logger.info('board_regen_category_applied', {
+        genId,
+        categoryId: cat.id,
+        mode,
+        targetedTiles: result.targetedTiles,
+        updatedTiles: result.updatedTiles,
+      });
+
       emitGameEvent('AI_CATEGORY_REPLACE_APPLIED', {
         actor: { role: 'director' },
-        context: { categoryIndex: cIdx, categoryName: cat.title, note: 'AI category regeneration applied' }
+        context: {
+          categoryIndex: cIdx,
+          categoryName: cat.title,
+          note: `Category regeneration applied (${mode})`,
+          targetedTiles: result.targetedTiles,
+          updatedTiles: result.updatedTiles,
+        },
       });
-      
-      logger.info('ai_category_regen_success', { 
-        genId, 
-        categoryId: cat.id, 
-        preservedPoints: true 
-      });
-      addToast('success', `${cat.title} updated.`);
+
+      addToast('success', `${cat.title} updated (${result.updatedTiles} tiles).`);
     } catch (e: any) {
-      // ROLLBACK ON FAILURE
+      logger.error('board_regen_category_failed', {
+        genId,
+        categoryId: cat.id,
+        mode,
+        error: e.message,
+        snapshotCategories: categorySnapshotRef.current?.length,
+      });
       emitGameEvent('AI_CATEGORY_REPLACE_FAILED', {
         actor: { role: 'director' },
-        context: { categoryIndex: cIdx, categoryName: cat.title, message: e.message, note: 'AI category regeneration failed' }
+        context: {
+          categoryIndex: cIdx,
+          categoryName: cat.title,
+          message: e.message,
+          note: `Category regeneration failed (${mode})`,
+        },
       });
-      logger.error('ai_category_regen_failed', { 
-        genId, 
-        categoryId: cat.id, 
-        error: e.message 
-      });
-      
       addToast('error', `AI rewrite failed: ${e.message}`);
     } finally {
+      if (categoryAiGenIdRef.current === genId) categoryAiGenIdRef.current = null;
       setAiLoading(false);
+      setCategoryRegenDialog(null);
     }
   };
 
@@ -1073,7 +1081,7 @@ export const DirectorPanel: React.FC<Props> = ({
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5">
                 <div className="text-[10px] uppercase tracking-widest font-black text-purple-300 mb-4">Session Game Timer</div>
                 <div className="space-y-4">
-                  {!sessionTimer?.isRunning ? (
+                  {!sessionTimer?.remainingSeconds ? (
                     <div className="flex gap-2 flex-wrap">
                       {(['15m', '30m', '1h', '1h30m', '2h'] as const).map((preset) => (
                         <button
@@ -1396,13 +1404,13 @@ export const DirectorPanel: React.FC<Props> = ({
 
         {activeTab === 'BOARD' && (
           <div className="space-y-8 animate-in fade-in duration-300">
-            <DirectorAiRegenerator gameState={gameState} onUpdateState={onUpdateState} addToast={addToast} />
+            <DirectorAiRegenerator gameState={gameState} onUpdateState={onUpdateState} addToast={addToast} emitGameEvent={emitGameEvent} />
             <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${gameState.categories.length}, minmax(180px, 1fr))` }}>
               {gameState.categories.map((cat, cIdx) => (
                 <div key={cat.id} className="space-y-3">
                   <div className="group relative">
                     <input value={cat.title} onChange={e => onUpdateState({...gameState, categories: gameState.categories.map((c, i) => i === cIdx ? {...c, title: e.target.value} : c)})} className="bg-zinc-900 text-gold-400 font-bold text-xs p-2 rounded w-full border border-transparent focus:border-gold-500 outline-none pr-8" />
-                    <button onClick={() => handleAiRewriteCategory(cIdx)} className="absolute right-1 top-1 p-1 text-zinc-600 hover:text-purple-400 transition-colors" title="Regenerate this category only"><Wand2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => openCategoryRegenDialog(cIdx)} className="absolute right-1 top-1 p-1 text-zinc-600 hover:text-purple-400 transition-colors" title="Regenerate this category only"><Wand2 className="w-3.5 h-3.5" /></button>
                   </div>
                   {cat.questions.map((q, qIdx) => (
                     <div key={q.id} onClick={() => setEditingQuestion({cIdx, qIdx})} className={`p-3 rounded border flex flex-col gap-1 cursor-pointer transition-all hover:brightness-110 relative group ${q.isVoided ? 'bg-red-900/20 border-red-800' : q.isAnswered ? 'bg-zinc-900 border-zinc-800 opacity-60' : 'bg-zinc-800 border-zinc-700'}`}>
@@ -1434,6 +1442,64 @@ export const DirectorPanel: React.FC<Props> = ({
           </div>
         )}
       </div>
+
+      {categoryRegenDialog && (() => {
+        const cat = gameState.categories[categoryRegenDialog.cIdx];
+        if (!cat) return null;
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="w-full max-w-xl bg-zinc-900 border border-purple-500/40 rounded-xl p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-purple-300 font-black uppercase tracking-widest text-xs">Category Regeneration Mode</h3>
+                  <p className="text-zinc-400 text-sm mt-2">
+                    Choose how <span className="text-gold-400 font-black">{cat.title}</span> should regenerate.
+                  </p>
+                </div>
+                <button onClick={() => setCategoryRegenDialog(null)} className="text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                <button
+                  onClick={() => setCategoryRegenMode('active_only')}
+                  className={`w-full rounded-xl border p-4 text-left transition-all ${categoryRegenMode === 'active_only' ? 'border-purple-400 bg-purple-500/10 text-white' : 'border-zinc-700 bg-black/30 text-zinc-300 hover:border-zinc-500'}`}
+                >
+                  <div className="text-[11px] font-black uppercase tracking-wider">Regenerate active tiles only</div>
+                  <div className="text-[11px] text-zinc-400 mt-1">Updates content for currently playable tiles and leaves inactive tiles untouched.</div>
+                </button>
+
+                <button
+                  onClick={() => setCategoryRegenMode('inactive_only')}
+                  className={`w-full rounded-xl border p-4 text-left transition-all ${categoryRegenMode === 'inactive_only' ? 'border-purple-400 bg-purple-500/10 text-white' : 'border-zinc-700 bg-black/30 text-zinc-300 hover:border-zinc-500'}`}
+                >
+                  <div className="text-[11px] font-black uppercase tracking-wider">Regenerate voided/disabled/inactive tiles only</div>
+                  <div className="text-[11px] text-zinc-400 mt-1">Updates non-playable tiles while preserving their inactive state.</div>
+                </button>
+
+                <button
+                  onClick={() => setCategoryRegenMode('reset_all_active')}
+                  className={`w-full rounded-xl border p-4 text-left transition-all ${categoryRegenMode === 'reset_all_active' ? 'border-gold-500 bg-gold-500/10 text-white' : 'border-zinc-700 bg-black/30 text-zinc-300 hover:border-zinc-500'}`}
+                >
+                  <div className="text-[11px] font-black uppercase tracking-wider">Reset category and regenerate all tiles as active</div>
+                  <div className="text-[11px] text-zinc-400 mt-1">Regenerates every tile in this category and clears answered/voided/disabled state.</div>
+                </button>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button onClick={() => setCategoryRegenDialog(null)} className="px-4 py-2 text-zinc-400 hover:text-white text-sm">Cancel</button>
+                <button
+                  onClick={() => runCategoryRegeneration(categoryRegenDialog.cIdx, categoryRegenMode)}
+                  disabled={aiLoading}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-black uppercase tracking-widest"
+                >
+                  {aiLoading ? 'Regenerating...' : 'Run Regeneration'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {editingQuestion && (() => {
         const { cIdx, qIdx } = editingQuestion;

@@ -112,6 +112,8 @@ describe('DirectorPanel: Settings & Category Regen', () => {
     // Trigger rewrite on first category
     const regenBtn = screen.getByTitle(/Regenerate this category/i);
     fireEvent.click(regenBtn);
+    fireEvent.click(screen.getByText('Regenerate active tiles only'));
+    fireEvent.click(screen.getByText('Run Regeneration'));
 
     await waitFor(() => {
       const updatedCat = mockOnUpdateState.mock.calls[0][0].categories[0];
@@ -130,7 +132,9 @@ describe('DirectorPanel: Settings & Category Regen', () => {
     fireEvent.click(xsBtn);
 
     expect(mockEmitGameEvent).toHaveBeenCalledWith('VIEW_SETTINGS_CHANGED', expect.objectContaining({
-      context: { after: { categoryTitleScale: 'XS' } }
+      context: expect.objectContaining({
+        after: expect.objectContaining({ categoryTitleScale: 'XS' })
+      })
     }));
   });
 

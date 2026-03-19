@@ -1,43 +1,53 @@
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Sparkles, Loader2, AlertCircle } from 'lucide-react';
 import { GameState, Difficulty, Category } from '../types';
 import { generateTriviaGame } from '../services/geminiService';
 import { logger } from '../services/logger';
 import { soundService } from '../services/soundService';
+import { applyBoardMasterRegeneration } from '../services/boardRegenerationService';
 
 interface Props {
   gameState: GameState;
   onUpdateState: (newState: GameState) => void;
   addToast: (type: 'success' | 'error' | 'info', msg: string) => void;
+  emitGameEvent?: (type: any, payload: any) => void;
 }
 
-export const DirectorAiRegenerator: React.FC<Props> = ({ gameState, onUpdateState, addToast }) => {
+export const DirectorAiRegenerator: React.FC<Props> = ({ gameState, onUpdateState, addToast, emitGameEvent }) => {
   const [prompt, setPrompt] = useState('');
   const [difficulty, setDifficulty] = useState<Difficulty>('mixed');
   const [isLoading, setIsLoading] = useState(false);
+  const inFlightGenIdRef = useRef<string | null>(null);
 
   const handleRegenerate = async () => {
     if (isLoading || !prompt.trim()) return;
     
     // 1. Prepare Metadata & Snapshot
     const genId = crypto.randomUUID();
-    const boardSnapshot = [...gameState.categories]; // Shallow copy of array for structural rollback
     const catCount = gameState.categories.length;
     const rowCount = gameState.categories[0]?.questions.length || 5;
     
     // Mask prompt for logging
     const maskedSnippet = prompt.substring(0, 20) + (prompt.length > 20 ? "..." : "");
     
+    inFlightGenIdRef.current = genId;
     setIsLoading(true);
     soundService.playClick();
     
-    logger.info('ai_board_regen_start', { 
+    logger.info('board_regen_master_start', {
       genId, 
       promptLen: prompt.length,
       promptSnippet: maskedSnippet, 
       difficulty, 
-      dimensions: `${catCount}x${rowCount}` 
+      dimensions: `${catCount}x${rowCount}`,
+      categories: catCount,
+      tiles: catCount * rowCount,
+    });
+
+    emitGameEvent?.('AI_BOARD_REGEN_START', {
+      actor: { role: 'director' },
+      context: { note: 'Board master regeneration requested', categories: catCount, rows: rowCount, difficulty }
     });
 
     try {
@@ -51,49 +61,48 @@ export const DirectorAiRegenerator: React.FC<Props> = ({ gameState, onUpdateStat
         genId
       );
 
-      // 3. Perform atomic zip-merge to preserve IDs, Points, and State Flags
-      // This is the core "Atomic Update" logic
-      const nextCats: Category[] = gameState.categories.map((exCat, cIdx) => {
-        const aiCat = aiCats[cIdx];
-        if (!aiCat) return exCat; 
+      if (inFlightGenIdRef.current !== genId) {
+        logger.warn('board_regen_master_stale_result', { genId, current: inFlightGenIdRef.current });
+        return;
+      }
 
-        return {
-          ...exCat,
-          title: aiCat.title, 
-          questions: exCat.questions.map((exQ, qIdx) => {
-            const aiQ = aiCat.questions[qIdx];
-            if (!aiQ) return exQ; 
-
-            return {
-              ...exQ,       // Preserves ID, Points, isAnswered, isRevealed, isDoubleOrNothing
-              text: aiQ.text,
-              answer: aiQ.answer
-            };
-          })
-        };
-      });
+      // Full-board reset: regenerate all categories and clear progress flags to active/playable defaults.
+      const nextCats: Category[] = applyBoardMasterRegeneration(gameState.categories, aiCats);
 
       // 4. Single atomic state update to prevent UI drift
       onUpdateState({
         ...gameState,
         showTitle: prompt,
-        categories: nextCats
+        categories: nextCats,
+        activeCategoryId: null,
+        activeQuestionId: null,
       });
 
-      logger.info('ai_board_regen_success', { genId, preservedPoints: true });
-      addToast('success', 'Board content updated (IDs & Points preserved).');
+      logger.info('board_regen_master_complete', { genId, categories: catCount, tiles: catCount * rowCount, resetToActive: true });
+      emitGameEvent?.('AI_BOARD_REGEN_APPLIED', {
+        actor: { role: 'director' },
+        context: { note: 'Board master regeneration applied', categories: catCount, rows: rowCount }
+      });
+      addToast('success', 'Board reset and regenerated. All tiles are active.');
       setPrompt(''); 
     } catch (e: any) {
       // 5. ROLLBACK / FAIL-SAFE
       // We don't call onUpdateState, which effectively reverts to the existing gameState
-      logger.error('ai_board_regen_failed', { 
+      logger.error('board_regen_master_failed', {
         genId, 
-        error: e.message 
+        error: e.message,
+      });
+      emitGameEvent?.('AI_BOARD_REGEN_FAILED', {
+        actor: { role: 'director' },
+        context: { note: 'Board master regeneration failed', message: e.message }
       });
       
       addToast('error', `Regeneration failed: ${e.message}`);
     } finally {
-      setIsLoading(false);
+      if (inFlightGenIdRef.current === genId) {
+        setIsLoading(false);
+        inFlightGenIdRef.current = null;
+      }
     }
   };
 
@@ -152,7 +161,7 @@ export const DirectorAiRegenerator: React.FC<Props> = ({ gameState, onUpdateStat
 
       <div className="flex items-center gap-2 text-[9px] text-purple-400/50 font-bold italic">
         <AlertCircle className="w-3 h-3" />
-        <span>Replaces content but locks {gameState.categories.length} categories, {gameState.categories[0]?.questions.length || 5} rows, and all point values.</span>
+        <span>Resets all categories to active/playable and regenerates all content while keeping board structure and points.</span>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { AppShell } from './components/AppShell';
 import { ToastContainer } from './components/Toast';
 import { LoginScreen } from './components/LoginScreen';
@@ -11,6 +11,7 @@ import { ShortcutsPanel } from './components/ShortcutsPanel';
 import { DirectorPanel } from './components/DirectorPanel';
 import { AdminPanel } from './components/AdminPanel';
 import { ConfirmationModal } from './components/ConfirmationModal';
+import { EndGameCelebrationModal } from './components/EndGameCelebrationModal';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
 import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent } from './types';
@@ -21,7 +22,20 @@ import { normalizePlayerName } from './services/utils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
+import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
+
+const QUESTION_TIMER_DURATION_OPTIONS = [5, 7, 8, 10, 15] as const;
+const DEFAULT_QUESTION_TIMER_DURATION_SECONDS = 10;
+const TIMER_STATE_STORAGE_KEY = 'cruzpham_timer_state';
+
+const resolveQuestionCountdownDuration = (raw: unknown) => {
+  const value = Number(raw);
+  if (QUESTION_TIMER_DURATION_OPTIONS.includes(value as (typeof QUESTION_TIMER_DURATION_OPTIONS)[number])) {
+    return value;
+  }
+  return DEFAULT_QUESTION_TIMER_DURATION_SECONDS;
+};
 
 const App: React.FC = () => {
   // App Boot State
@@ -43,6 +57,8 @@ const App: React.FC = () => {
   const [showEndGameConfirm, setShowEndGameConfirm] = useState(false);
   const [editingTemplateStatus, setEditingTemplateStatus] = useState(false); // Track if builder is open
   const [showTimerExpiredPrompt, setShowTimerExpiredPrompt] = useState(false);
+  const [isEndGameCelebrationOpen, setIsEndGameCelebrationOpen] = useState(false);
+  const [hasShownEndGameCelebration, setHasShownEndGameCelebration] = useState(false);
 
   // --- ADMIN NOTIFICATIONS ---
   const [pendingRequests, setPendingRequests] = useState(0);
@@ -69,10 +85,10 @@ const App: React.FC = () => {
   });
 
   const [questionTimerEnabled, setQuestionTimerEnabled] = useState(true);
-  const [questionTimerDurationSeconds, setQuestionTimerDurationSeconds] = useState(10);
+  const [questionTimerDurationSeconds, setQuestionTimerDurationSeconds] = useState(DEFAULT_QUESTION_TIMER_DURATION_SECONDS);
 
   const [questionTimer, setQuestionTimer] = useState<QuestionCountdownTimer>({
-    durationSeconds: 10,
+    durationSeconds: DEFAULT_QUESTION_TIMER_DURATION_SECONDS,
     remainingSeconds: 0,
     isRunning: false,
     isStopped: true,
@@ -101,6 +117,51 @@ const App: React.FC = () => {
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const specialMovesOverlay = useSpecialMovesOverlay(gameState.isGameStarted ? activeShow?.id : undefined);
+  const isBoardComplete = useMemo(() => isTriviaBoardComplete(gameState.categories), [gameState.categories]);
+  const celebrationResult = useMemo(() => deriveEndGameCelebrationResult(gameState.players), [gameState.players]);
+  const questionTimerDurationRef = useRef(questionTimerDurationSeconds);
+
+  useEffect(() => {
+    questionTimerDurationRef.current = questionTimerDurationSeconds;
+  }, [questionTimerDurationSeconds]);
+
+  const handleSetQuestionTimerDuration = useCallback((seconds: number) => {
+    const resolvedSeconds = resolveQuestionCountdownDuration(seconds);
+    if (resolvedSeconds !== Number(seconds)) {
+      logger.warn('question_timer_duration_invalid_fallback', {
+        selected: seconds,
+        fallback: resolvedSeconds,
+      });
+    }
+
+    logger.info('counter_studio_question_duration_selected', { seconds: resolvedSeconds });
+    setQuestionTimerDurationSeconds(resolvedSeconds);
+  }, []);
+
+  useEffect(() => {
+    if (!gameState.isGameStarted) {
+      if (isEndGameCelebrationOpen) setIsEndGameCelebrationOpen(false);
+      if (hasShownEndGameCelebration) setHasShownEndGameCelebration(false);
+      return;
+    }
+
+    if (!isBoardComplete) return;
+    if (hasShownEndGameCelebration) return;
+    if (gameState.activeQuestionId || gameState.activeCategoryId) return;
+    if (showTimerExpiredPrompt || showEndGameConfirm) return;
+
+    setIsEndGameCelebrationOpen(true);
+    setHasShownEndGameCelebration(true);
+  }, [
+    gameState.isGameStarted,
+    gameState.activeQuestionId,
+    gameState.activeCategoryId,
+    hasShownEndGameCelebration,
+    isBoardComplete,
+    isEndGameCelebrationOpen,
+    showTimerExpiredPrompt,
+    showEndGameConfirm,
+  ]);
 
   // Layout Logging
   useEffect(() => {
@@ -188,8 +249,10 @@ const App: React.FC = () => {
     });
 
     setShowTimerExpiredPrompt(false);
+    setIsEndGameCelebrationOpen(false);
+    setHasShownEndGameCelebration(false);
     setQuestionTimer({
-      durationSeconds: questionTimerDurationSeconds,
+      durationSeconds: resolveQuestionCountdownDuration(questionTimerDurationRef.current),
       remainingSeconds: 0,
       isRunning: false,
       isStopped: true,
@@ -258,33 +321,57 @@ const App: React.FC = () => {
     return unsubscribe;
   }, [deriveTimerAudio]);
 
-  const startQuestionTimer = useCallback((questionId: string, durationSeconds = questionTimerDurationSeconds) => {
+  const startQuestionTimer = useCallback((questionId: string, durationSeconds?: number) => {
+    const selectedDuration = durationSeconds ?? questionTimerDurationRef.current;
+    const resolvedDuration = resolveQuestionCountdownDuration(selectedDuration);
+    if (resolvedDuration !== Number(selectedDuration)) {
+      logger.warn('question_timer_start_fallback_duration', {
+        requestedDuration: selectedDuration,
+        fallbackDuration: resolvedDuration,
+        questionId,
+      });
+    }
+
     const now = Date.now();
+    logger.info('question_timer_start', {
+      questionId,
+      durationSeconds: resolvedDuration,
+      selectedDuration: questionTimerDurationRef.current,
+    });
+
     setQuestionTimer({
-      durationSeconds,
-      remainingSeconds: durationSeconds,
+      durationSeconds: resolvedDuration,
+      remainingSeconds: resolvedDuration,
       isRunning: true,
       isStopped: false,
       startedAt: now,
-      endsAt: now + durationSeconds * 1000,
+      endsAt: now + resolvedDuration * 1000,
       activeQuestionId: questionId,
     });
-  }, [questionTimerDurationSeconds]);
+  }, []);
 
   const restartQuestionTimer = useCallback(() => {
     const questionId = gameStateRef.current.activeQuestionId;
     if (!questionId) return;
-    startQuestionTimer(questionId, questionTimerDurationSeconds);
-  }, [questionTimerDurationSeconds, startQuestionTimer]);
+    logger.info('question_timer_restart', {
+      questionId,
+      durationSeconds: questionTimerDurationRef.current,
+    });
+    startQuestionTimer(questionId, questionTimerDurationRef.current);
+  }, [startQuestionTimer]);
 
   const stopQuestionTimer = useCallback(() => {
+    logger.info('question_timer_stop', {
+      questionId: gameStateRef.current.activeQuestionId,
+      remainingSeconds: questionTimer.remainingSeconds,
+    });
     setQuestionTimer((prev) => ({
       ...prev,
       isRunning: false,
       isStopped: true,
       endsAt: null,
     }));
-  }, []);
+  }, [questionTimer.remainingSeconds]);
 
   const setTimerSoundEnabled = useCallback((enabled: boolean) => {
     const svc = soundService as any;
@@ -365,12 +452,38 @@ const App: React.FC = () => {
   const handleStorageChange = useCallback((e: StorageEvent) => {
     if (e.key === 'cruzpham_gamestate' && e.newValue) {
       setGameState(JSON.parse(e.newValue));
+      return;
+    }
+
+    if (e.key === TIMER_STATE_STORAGE_KEY && e.newValue) {
+      try {
+        const payload = JSON.parse(e.newValue);
+        const nextDuration = resolveQuestionCountdownDuration(payload.questionTimerDurationSeconds);
+        setQuestionTimerEnabled(payload.questionTimerEnabled !== false);
+        setQuestionTimerDurationSeconds(nextDuration);
+        if (payload.questionTimer) setQuestionTimer(payload.questionTimer);
+        if (payload.sessionTimer) setSessionTimer(payload.sessionTimer);
+      } catch (error: any) {
+        logger.warn('timer_state_hydration_failed', { message: error?.message });
+      }
     }
   }, []);
 
   // Use Ref to access latest state in event listeners without re-binding
   const gameStateRef = useRef(gameState);
   useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      TIMER_STATE_STORAGE_KEY,
+      JSON.stringify({
+        questionTimerEnabled,
+        questionTimerDurationSeconds,
+        questionTimer,
+        sessionTimer,
+      })
+    );
+  }, [questionTimerEnabled, questionTimerDurationSeconds, questionTimer, sessionTimer]);
 
   // UI State Persistence Effect
   useEffect(() => {
@@ -528,6 +641,7 @@ const App: React.FC = () => {
       selectedPreset: preset
     };
     setSessionTimer(newTimer);
+    logger.info('session_timer_start', { preset, durationSeconds: duration });
 
     emitGameEvent('SESSION_TIMER_START', {
       actor: { role: 'director' },
@@ -539,11 +653,13 @@ const App: React.FC = () => {
     setSessionTimer((prev) => {
       if (!prev.remainingSeconds) return prev;
       if (prev.isRunning) {
+        logger.info('session_timer_pause', { remainingSeconds: prev.remainingSeconds, preset: prev.selectedPreset });
         emitGameEvent('SESSION_TIMER_PAUSED', { actor: { role: 'director' }, context: {} });
         return { ...prev, isRunning: false, isStopped: true, endsAt: null };
       }
 
       const now = Date.now();
+      logger.info('session_timer_resume', { remainingSeconds: prev.remainingSeconds, preset: prev.selectedPreset });
       emitGameEvent('SESSION_TIMER_RESUMED', { actor: { role: 'director' }, context: {} });
       return {
         ...prev,
@@ -556,6 +672,7 @@ const App: React.FC = () => {
   };
 
   const handleResetSessionTimer = () => {
+    logger.info('session_timer_reset');
     setSessionTimer({
       durationSeconds: 0,
       remainingSeconds: 0,
@@ -617,6 +734,20 @@ const App: React.FC = () => {
            setGameState(parsed);
            if (parsed.showTitle && !activeShow) {
               setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: parsed.showTitle, createdAt: '' });
+           }
+         }
+
+         const savedTimerState = localStorage.getItem(TIMER_STATE_STORAGE_KEY);
+         if (savedTimerState) {
+           try {
+             const timerState = JSON.parse(savedTimerState);
+             const resolvedDuration = resolveQuestionCountdownDuration(timerState.questionTimerDurationSeconds);
+             setQuestionTimerEnabled(timerState.questionTimerEnabled !== false);
+             setQuestionTimerDurationSeconds(resolvedDuration);
+             if (timerState.questionTimer) setQuestionTimer(timerState.questionTimer);
+             if (timerState.sessionTimer) setSessionTimer(timerState.sessionTimer);
+           } catch (error: any) {
+             logger.warn('timer_state_restore_failed', { message: error?.message });
            }
          }
        } catch (e) {
@@ -684,13 +815,19 @@ const App: React.FC = () => {
       localStorage.removeItem('cruzpham_active_session_id');
       localStorage.removeItem('cruzpham_ui_state');
       localStorage.removeItem('cruzpham_gamestate');
+      localStorage.removeItem(TIMER_STATE_STORAGE_KEY);
       setViewMode('BOARD');
+      setIsEndGameCelebrationOpen(false);
+      setHasShownEndGameCelebration(false);
     }
   };
 
   // --- GAME LOGIC ---
 
   const handlePlayTemplate = (template: GameTemplate) => {
+    setIsEndGameCelebrationOpen(false);
+    setHasShownEndGameCelebration(false);
+
     const initCategories = template.categories.map(cat => {
       const hasDouble = cat.questions.some(q => q.isDoubleOrNothing);
       const luckyIndex = !hasDouble ? Math.floor(Math.random() * cat.questions.length) : -1;
@@ -761,7 +898,7 @@ const App: React.FC = () => {
     };
     saveGameState(newState);
     setQuestionTimer({
-      durationSeconds: questionTimerDurationSeconds,
+      durationSeconds: resolveQuestionCountdownDuration(questionTimerDurationRef.current),
       remainingSeconds: 0,
       isRunning: false,
       isStopped: true,
@@ -780,6 +917,8 @@ const App: React.FC = () => {
     });
     setViewMode('BOARD');
     setShowEndGameConfirm(false);
+    setIsEndGameCelebrationOpen(false);
+    setHasShownEndGameCelebration(false);
     addToast('info', 'Game Session Ended');
   };
 
@@ -795,10 +934,11 @@ const App: React.FC = () => {
     });
 
     if (questionTimerEnabled) {
-      startQuestionTimer(qId);
+      const selectedDuration = resolveQuestionCountdownDuration(questionTimerDurationRef.current);
+      startQuestionTimer(qId, selectedDuration);
       emitGameEvent('QUESTION_COUNTDOWN_START', {
         actor: { role: 'director' },
-        context: { tileId: qId, note: `Question countdown auto-started (${questionTimerDurationSeconds}s)` }
+        context: { tileId: qId, note: `Question countdown auto-started (${selectedDuration}s)` }
       });
     }
 
@@ -1038,7 +1178,7 @@ const App: React.FC = () => {
           questionTimerEnabled={questionTimerEnabled}
           questionTimerDurationSeconds={questionTimerDurationSeconds}
           onQuestionTimerToggle={setQuestionTimerEnabled}
-          onQuestionTimerDurationChange={setQuestionTimerDurationSeconds}
+          onQuestionTimerDurationChange={handleSetQuestionTimerDuration}
           onQuestionTimerRestart={() => {
             restartQuestionTimer();
             emitGameEvent('QUESTION_COUNTDOWN_START', { actor: { role: 'director' }, context: { note: `Question countdown restarted (${questionTimerDurationSeconds}s)` } });
@@ -1071,6 +1211,11 @@ const App: React.FC = () => {
     <AppShell activeShowTitle={gameState.showTitle || (activeShow ? activeShow.title : undefined)} username={session?.username} onLogout={handleLogout} shortcuts={showShortcuts ? <ShortcutsPanel /> : null}>
       <ToastContainer toasts={toasts} removeToast={removeToast} />
       <ConfirmationModal isOpen={showEndGameConfirm} title="End Game?" message="This will close the current game session and return to the template library." confirmLabel="End Game" isDanger={true} onConfirm={handleEndGame} onCancel={() => setShowEndGameConfirm(false)} />
+      <EndGameCelebrationModal
+        isOpen={isEndGameCelebrationOpen}
+        result={celebrationResult}
+        onClose={() => setIsEndGameCelebrationOpen(false)}
+      />
       {showTimerExpiredPrompt && (
         <div className="fixed inset-0 z-[99999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-2xl bg-zinc-950 border border-gold-500/40 rounded-2xl p-6">
@@ -1196,7 +1341,7 @@ const App: React.FC = () => {
                      questionTimerEnabled={questionTimerEnabled}
                      questionTimerDurationSeconds={questionTimerDurationSeconds}
                      onQuestionTimerToggle={setQuestionTimerEnabled}
-                     onQuestionTimerDurationChange={setQuestionTimerDurationSeconds}
+                     onQuestionTimerDurationChange={handleSetQuestionTimerDuration}
                      onQuestionTimerRestart={() => {
                        restartQuestionTimer();
                        emitGameEvent('QUESTION_COUNTDOWN_START', { actor: { role: 'director' }, context: { note: `Question countdown restarted (${questionTimerDurationSeconds}s)` } });

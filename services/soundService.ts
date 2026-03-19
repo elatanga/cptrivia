@@ -1,4 +1,5 @@
 import { SoundBoardState, SoundControlState, SoundDefinition, SoundKey } from '../types';
+import { logger } from './logger';
 
 const SOUND_BOARD_STATE_KEY = 'cruzpham_sound_board';
 const SOUND_BOARD_MASTER_ENABLED_KEY = 'cruzpham_sound_enabled';
@@ -8,6 +9,19 @@ const LEGACY_MUTE_KEY = 'cruzpham_mute';
 type SoundBoardListener = (state: SoundBoardState) => void;
 
 const clampVolume = (value: number) => Math.max(0, Math.min(1, Number(value.toFixed(2))));
+
+const DEFAULT_MASTER_VOLUME = 0.5;
+const DEFAULT_SOUND_VOLUMES: Partial<Record<SoundKey, number>> = {
+  // Keep award subtle and premium by default.
+  award: 0.35,
+};
+
+export const getEffectiveSoundVolume = (soundKey: SoundKey, state: SoundBoardState) => {
+  if (!state.masterEnabled || state.masterMuted) return 0;
+  const cfg = state.sounds[soundKey];
+  if (!cfg || !cfg.enabled || cfg.muted) return 0;
+  return clampVolume(state.masterVolume * cfg.volume);
+};
 
 export const SOUND_DEFINITIONS: SoundDefinition[] = [
   { key: 'timerTick', label: 'Timer Tick', category: 'TIMERS' },
@@ -38,14 +52,17 @@ const DEFAULT_SOUND_CONTROL: SoundControlState = {
 
 const buildDefaultSoundBoardState = (): SoundBoardState => {
   const sounds = SOUND_DEFINITIONS.reduce((acc, def) => {
-    acc[def.key] = { ...DEFAULT_SOUND_CONTROL };
+    acc[def.key] = {
+      ...DEFAULT_SOUND_CONTROL,
+      volume: DEFAULT_SOUND_VOLUMES[def.key] ?? DEFAULT_SOUND_CONTROL.volume,
+    };
     return acc;
   }, {} as Record<SoundKey, SoundControlState>);
 
   return {
     masterEnabled: true,
     masterMuted: false,
-    masterVolume: 0.5,
+    masterVolume: DEFAULT_MASTER_VOLUME,
     sounds
   };
 };
@@ -91,10 +108,11 @@ class SoundService {
           SOUND_DEFINITIONS.forEach(({ key }) => {
             const cfg = (parsed.sounds as any)[key];
             if (!cfg) return;
+            const parsedVolume = typeof cfg.volume === 'number' ? clampVolume(cfg.volume) : (DEFAULT_SOUND_VOLUMES[key] ?? 1);
             nextState.sounds[key] = {
               enabled: typeof cfg.enabled === 'boolean' ? cfg.enabled : true,
               muted: typeof cfg.muted === 'boolean' ? cfg.muted : false,
-              volume: typeof cfg.volume === 'number' ? clampVolume(cfg.volume) : 1
+              volume: key === 'award' && parsedVolume === 1 ? (DEFAULT_SOUND_VOLUMES.award ?? parsedVolume) : parsedVolume
             };
           });
         }
@@ -164,15 +182,19 @@ class SoundService {
   }
 
   setMasterSoundEnabled(enabled: boolean) {
+    logger.info('sound_master_enabled_changed', { enabled });
     this.mutateState((draft) => ({ ...draft, masterEnabled: enabled }));
   }
 
   setMasterMuted(muted: boolean) {
+    logger.info('sound_master_muted_changed', { muted });
     this.mutateState((draft) => ({ ...draft, masterMuted: muted }));
   }
 
   setMasterVolume(volume: number) {
-    this.mutateState((draft) => ({ ...draft, masterVolume: clampVolume(volume) }));
+    const clamped = clampVolume(volume);
+    logger.info('sound_master_volume_changed', { volume: clamped });
+    this.mutateState((draft) => ({ ...draft, masterVolume: clamped }));
   }
 
   increaseMasterVolume(step = 0.1) {
@@ -184,6 +206,7 @@ class SoundService {
   }
 
   setSoundEnabled(soundKey: SoundKey, enabled: boolean) {
+    logger.info('sound_enabled_changed', { soundKey, enabled });
     this.mutateState((draft) => ({
       ...draft,
       sounds: {
@@ -197,6 +220,7 @@ class SoundService {
   }
 
   setSoundMuted(soundKey: SoundKey, muted: boolean) {
+    logger.info('sound_muted_changed', { soundKey, muted });
     this.mutateState((draft) => ({
       ...draft,
       sounds: {
@@ -210,13 +234,18 @@ class SoundService {
   }
 
   setSoundVolume(soundKey: SoundKey, volume: number) {
+    const clamped = clampVolume(volume);
+    if (clamped !== volume) {
+      logger.warn('sound_volume_clamped', { soundKey, requested: volume, applied: clamped });
+    }
+    logger.info('sound_volume_changed', { soundKey, volume: clamped });
     this.mutateState((draft) => ({
       ...draft,
       sounds: {
         ...draft.sounds,
         [soundKey]: {
           ...draft.sounds[soundKey],
-          volume: clampVolume(volume)
+          volume: clamped
         }
       }
     }));
@@ -238,11 +267,7 @@ class SoundService {
   }
 
   private getPlaybackContext(soundKey: SoundKey): { ctx: AudioContext; volume: number } | null {
-    const cfg = this.soundBoard.sounds[soundKey];
-    if (!this.soundBoard.masterEnabled || this.soundBoard.masterMuted) return null;
-    if (!cfg || !cfg.enabled || cfg.muted) return null;
-
-    const volume = this.soundBoard.masterVolume * cfg.volume;
+    const volume = getEffectiveSoundVolume(soundKey, this.soundBoard);
     if (volume <= 0) return null;
 
     const ctx = this.getCtx();
@@ -269,10 +294,17 @@ class SoundService {
   }
 
   playSound(soundKey: SoundKey) {
+    if (soundKey !== 'timerTick') {
+      logger.info('sound_play_request', {
+        soundKey,
+        effectiveVolume: getEffectiveSoundVolume(soundKey, this.soundBoard)
+      });
+    }
+
     switch (soundKey) {
       case 'timerTick': this.playTimerTick(); break;
       case 'timerEnd': this.playTimerAlarm(); break;
-      case 'sessionCue': this.playTimerAlarm(); break;
+      case 'sessionCue': this.playTimerAlarm('sessionCue'); break;
       case 'steal': this.playSteal(); break;
       case 'award': this.playAward(); break;
       case 'void': this.playVoid(); break;
@@ -283,8 +315,8 @@ class SoundService {
       case 'doubleOrNothing': this.playDoubleOrNothing(); break;
       case 'click': this.playClick(); break;
       case 'select': this.playSelect(); break;
-      case 'tileOpen': this.playSelect(); break;
-      case 'modalOpen': this.playClick(); break;
+      case 'tileOpen': this.playSelect('tileOpen'); break;
+      case 'modalOpen': this.playClick('modalOpen'); break;
       case 'toastSuccess': this.playToast('success'); break;
       case 'toastError': this.playToast('error'); break;
       case 'toastInfo': this.playToast('info'); break;
@@ -297,11 +329,15 @@ class SoundService {
   }
 
   previewSound(soundKey: SoundKey) {
+    logger.info('sound_preview_request', {
+      soundKey,
+      effectiveVolume: getEffectiveSoundVolume(soundKey, this.soundBoard)
+    });
     this.playSound(soundKey);
   }
 
-  playClick() {
-    const playback = this.getPlaybackContext('click');
+  playClick(soundKey: SoundKey = 'click') {
+    const playback = this.getPlaybackContext(soundKey);
     if (!playback) return;
     this.vibrate(5);
 
@@ -322,8 +358,8 @@ class SoundService {
     osc.stop(t + 0.05);
   }
 
-  playSelect() {
-    const playback = this.getPlaybackContext('select');
+  playSelect(soundKey: SoundKey = 'select') {
+    const playback = this.getPlaybackContext(soundKey);
     if (!playback) return;
     this.vibrate(10);
 
@@ -417,7 +453,7 @@ class SoundService {
       filter.frequency.value = 2000;
 
       gain.gain.setValueAtTime(0, t + (i * 0.06));
-      gain.gain.linearRampToValueAtTime(volume * 0.1, t + (i * 0.06) + 0.05);
+      gain.gain.linearRampToValueAtTime(volume * 0.055, t + (i * 0.06) + 0.05);
       gain.gain.exponentialRampToValueAtTime(0.001, t + (i * 0.06) + 0.4);
 
       osc.connect(filter);
@@ -530,8 +566,8 @@ class SoundService {
     osc.stop(t + 0.05);
   }
 
-  playTimerAlarm() {
-    const playback = this.getPlaybackContext('timerEnd');
+  playTimerAlarm(soundKey: SoundKey = 'timerEnd') {
+    const playback = this.getPlaybackContext(soundKey);
     if (!playback) return;
     this.vibrate([100, 50, 100]);
 
