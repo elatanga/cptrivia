@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { QuestionModal } from './QuestionModal';
 import { Question, Player, GameTimer } from '../types';
 
@@ -94,5 +94,27 @@ describe('QuestionModal Component Logic', () => {
       />
     );
     expect(screen.queryByTestId('double-label')).not.toBeInTheDocument();
+  });
+
+  test('C) LONG QUESTION: Uses reduced readable font sizing tier', () => {
+    const longQuestion: Question = {
+      ...mockQuestion,
+      text: 'Long question text '.repeat(30)
+    };
+
+    render(
+      <QuestionModal
+        question={longQuestion}
+        categoryTitle="Geography"
+        players={mockPlayers}
+        selectedPlayerId="p1"
+        timer={mockTimer}
+        onClose={jest.fn()}
+        onReveal={jest.fn()}
+      />
+    );
+
+    const qText = screen.getByTestId('question-text');
+    expect(qText.getAttribute('style')).toContain('clamp(24px, 3vw, 48px)');
   });
 });

@@ -87,8 +87,8 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
     it('enforces title requirement before building', () => {
       render(<TemplateBuilder {...defaultProps} />);
       const buildBtn = screen.getByText(/Start Manual Studio Building/i);
-      expect(buildBtn).toBeDisabled();
-      expect(mockAddToast).not.toHaveBeenCalled();
+      fireEvent.click(buildBtn);
+      expect(mockAddToast).toHaveBeenCalledWith('error', 'Title is required');
     });
 
     it('clamps player roster at 8 maximum', () => {

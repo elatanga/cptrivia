@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
 import { GameState } from '../types';
+import { AnalyticsEventType } from '../types';
 import * as geminiService from '../services/geminiService';
 
 vi.mock('../services/geminiService', () => ({
@@ -23,6 +24,11 @@ describe('DirectorPanel: Settings & Category Regen', () => {
   const mockOnUpdateState = vi.fn();
   const mockEmitGameEvent = vi.fn();
   const mockAddToast = vi.fn();
+  const mockStartQuestionCountdown = vi.fn();
+  const mockStopQuestionCountdown = vi.fn();
+  const mockStartSessionTimer = vi.fn();
+  const mockPauseSessionTimer = vi.fn();
+  const mockResetSessionTimer = vi.fn();
 
   const baseGameState: GameState = {
     showTitle: 'Studio Show',
@@ -55,14 +61,35 @@ describe('DirectorPanel: Settings & Category Regen', () => {
     vi.clearAllMocks();
     // Stub crypto
     vi.stubGlobal('crypto', { randomUUID: () => 'uuid-123' });
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:logs'),
+      revokeObjectURL: vi.fn()
+    });
   });
+
+  const renderPanel = (state: GameState = baseGameState) =>
+    render(
+      <DirectorPanel
+        gameState={state}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+        questionCountdown={{ duration: 0, isActive: false, startedAt: null, timeRemaining: 0 }}
+        onQuestionCountdownStart={mockStartQuestionCountdown}
+        onQuestionCountdownStop={mockStopQuestionCountdown}
+        sessionTimer={{ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false }}
+        onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerPause={mockPauseSessionTimer}
+        onSessionTimerReset={mockResetSessionTimer}
+      />
+    );
 
   it('A) CATEGORY REGEN: preserves manual point adjustments', async () => {
     vi.mocked(geminiService.generateCategoryQuestions).mockResolvedValue([
       { id: 'new', text: 'New AI Q', answer: 'New AI A', points: 500, isRevealed: false, isAnswered: false }
     ]);
 
-    render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
+    renderPanel();
     
     // Trigger rewrite on first category
     const regenBtn = screen.getByTitle(/Regenerate this category/i);
@@ -76,7 +103,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
   });
 
   it('B) SETTINGS: emits event on scale change', () => {
-    render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
+    renderPanel();
     
     fireEvent.click(screen.getByText('Settings'));
     
@@ -87,5 +114,88 @@ describe('DirectorPanel: Settings & Category Regen', () => {
     expect(mockEmitGameEvent).toHaveBeenCalledWith('VIEW_SETTINGS_CHANGED', expect.objectContaining({
       context: { after: { categoryTitleScale: 'XS' } }
     }));
+  });
+
+  it('C) LOGS & AUDIT: renders full history sentences, limits audit to 12 key items, and downloads logs', () => {
+    const eventTs = Date.now();
+    const extendedState: GameState = {
+      ...baseGameState,
+      events: [
+        {
+          id: 'evt-ai-1',
+          ts: eventTs - 1,
+          iso: new Date(eventTs - 1).toISOString(),
+          type: 'AI_TILE_REPLACE_APPLIED' as AnalyticsEventType,
+          actor: { role: 'director' },
+          context: { categoryName: 'Art', points: 100, note: 'AI tile regeneration applied' }
+        },
+        ...Array.from({ length: 13 }, (_, i) => ({
+        id: `evt-${i + 1}`,
+        ts: eventTs + i,
+        iso: new Date(eventTs + i).toISOString(),
+        type: 'POINTS_AWARDED' as AnalyticsEventType,
+        actor: { role: 'director' },
+        context: { playerName: `Player ${i + 1}`, points: 100, delta: 100, categoryName: 'Art' }
+        }))
+      ]
+    };
+
+    const clickSpy = vi.fn();
+    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation(((tagName: string) => {
+      const element = document.createElementNS('http://www.w3.org/1999/xhtml', tagName) as any;
+      if (tagName.toLowerCase() === 'a') {
+        element.click = clickSpy;
+      }
+      return element;
+    }) as any);
+
+    renderPanel(extendedState);
+
+    fireEvent.click(screen.getByRole('button', { name: /logs & audit/i }));
+
+    expect(screen.getAllByText(/Player 13 was awarded 100 points in Art\./i).length).toBeGreaterThan(0);
+
+    const auditList = screen.getByTestId('audit-log-list');
+    expect(auditList.children.length).toBe(12);
+
+    // Search filter narrows results
+    fireEvent.change(screen.getByLabelText(/log search/i), { target: { value: 'player 13' } });
+    expect(screen.getByTestId('log-filter-count')).toHaveTextContent('1 matching history logs');
+
+    // Channel filter isolates AI entries
+    fireEvent.change(screen.getByLabelText(/channel filter/i), { target: { value: 'AI' } });
+    expect(screen.getByTestId('log-filter-count')).toHaveTextContent('0 matching history logs');
+    fireEvent.change(screen.getByLabelText(/log search/i), { target: { value: 'ai tile' } });
+    expect(screen.getByTestId('log-filter-count')).toHaveTextContent('1 matching history logs');
+
+    // Key-only hides non-key AI event
+    fireEvent.click(screen.getByLabelText(/key activities only/i));
+    expect(screen.getByTestId('log-filter-count')).toHaveTextContent('0 matching history logs');
+
+    // Clear filter restores full set
+    fireEvent.click(screen.getByRole('button', { name: /clear filters/i }));
+    expect(screen.getByTestId('log-filter-count')).toHaveTextContent('14 matching history logs');
+
+    // Sort control works without throwing
+    fireEvent.change(screen.getByLabelText(/sort order filter/i), { target: { value: 'OLDEST' } });
+    expect(screen.getByTestId('log-filter-count')).toHaveTextContent('14 matching history logs');
+
+    fireEvent.click(screen.getByRole('button', { name: /download filtered logs/i }));
+    expect((URL.createObjectURL as any)).toHaveBeenCalled();
+    expect(clickSpy).toHaveBeenCalled();
+
+    createElementSpy.mockRestore();
+  });
+
+  it('D) COUNTER STUDIO: triggers question countdown and session timer controls', () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: /counter studio/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: '10s' }));
+    expect(mockStartQuestionCountdown).toHaveBeenCalledWith(10);
+
+    fireEvent.click(screen.getByRole('button', { name: '30m' }));
+    expect(mockStartSessionTimer).toHaveBeenCalledWith('30m');
   });
 });

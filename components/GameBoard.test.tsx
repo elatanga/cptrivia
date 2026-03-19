@@ -127,4 +127,19 @@ describe('GameBoard Component Visibility & Theme', () => {
         expect.objectContaining({ backgroundTheme: "luxury_light" })
     );
   });
+
+  test('F) GAME TIMER: Renders board clock when session timer is active', () => {
+    render(
+      <GameBoard
+        categories={mockCategories}
+        onSelectQuestion={vi.fn()}
+        viewSettings={mockViewSettings}
+        sessionTimerActive={true}
+        sessionTimeRemaining={95}
+      />
+    );
+
+    expect(screen.getByText(/Game Time/i)).toBeInTheDocument();
+    expect(screen.getByText('1:35')).toBeInTheDocument();
+  });
 });

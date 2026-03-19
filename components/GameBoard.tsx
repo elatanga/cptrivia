@@ -1,6 +1,6 @@
 
 import React, { useEffect } from 'react';
-import { Zap } from 'lucide-react';
+import { Zap, Clock } from 'lucide-react';
 import { Category, BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
@@ -12,9 +12,11 @@ interface Props {
   onSelectQuestion: (catId: string, qId: string) => void;
   viewSettings: BoardViewSettings;
   overlay?: SMSOverlayDoc | null;
+  sessionTimerActive?: boolean;
+  sessionTimeRemaining?: number;
 }
 
-export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay }) => {
+export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay, sessionTimerActive, sessionTimeRemaining }) => {
   useEffect(() => {
     logger.info("trivia_board_theme_updated", { backgroundTheme: "luxury_light", atIso: new Date().toISOString() });
   }, []);
@@ -30,9 +32,24 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
 
   return (
     <div 
-      className="h-full w-full flex flex-col p-2 md:p-4 font-roboto font-bold select-none min-h-[400px] lg:min-h-0"
+      className="h-full w-full flex flex-col p-2 md:p-4 font-roboto font-bold select-none min-h-[400px] lg:min-h-0 relative"
       style={boardStyles}
     >
+      {/* SESSION TIMER DISPLAY */}
+      {sessionTimerActive && sessionTimeRemaining !== undefined && (
+        <div className="absolute top-2 right-2 md:top-4 md:right-4 z-20 flex items-center gap-3 bg-black/70 backdrop-blur-sm border border-gold-500/40 rounded-xl px-3 md:px-5 py-2 md:py-3 shadow-xl">
+          <Clock className="w-4 h-4 md:w-5 md:h-5 text-gold-500 flex-shrink-0" />
+          <div className="flex flex-col items-end">
+            <div className="text-[8px] md:text-[9px] uppercase tracking-widest font-black text-zinc-400">Game Time</div>
+            <div className="text-lg md:text-2xl font-black font-mono tabular-nums text-gold-500 drop-shadow-lg leading-none">
+              {Math.floor(sessionTimeRemaining / 60)}:{String(sessionTimeRemaining % 60).padStart(2, '0')}
+            </div>
+          </div>
+          {sessionTimeRemaining <= 60 && (
+            <div className="ml-1 w-1.5 h-1.5 md:w-2 md:h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
+          )}
+        </div>
+      )}
       <div 
         className="flex-1 grid gap-1.5 md:gap-3 w-full h-full min-h-0 min-w-0"
         style={{ 

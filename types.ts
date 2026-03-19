@@ -100,7 +100,15 @@ export type AnalyticsEventType =
   | 'TIMER_RESET'
   | 'TIMER_FINISHED'
   | 'VIEW_SETTINGS_CHANGED'
-  | 'CATEGORY_RENAMED';
+  | 'CATEGORY_RENAMED'
+  | 'SPECIAL_MOVE_ARMED'
+  | 'SPECIAL_MOVE_ARMORY_CLEARED'
+  | 'QUESTION_COUNTDOWN_START'
+  | 'QUESTION_COUNTDOWN_STOPPED'
+  | 'SESSION_TIMER_START'
+  | 'SESSION_TIMER_EXPIRED'
+  | 'SESSION_TIMER_PAUSED'
+  | 'SESSION_TIMER_RESUMED';
 
 export interface GameAnalyticsEvent {
   id: string;
@@ -143,6 +151,21 @@ export interface GameState {
   viewSettings: BoardViewSettings;
   lastPlays: PlayEvent[];
   events: GameAnalyticsEvent[]; 
+}
+
+export interface QuestionCountdownTimer {
+  duration: number;
+  isActive: boolean;
+  startedAt: number | null;
+  timeRemaining: number;
+}
+
+export interface SessionGameTimer {
+  preset: '15m' | '30m' | '1h' | '1h30m' | '2h' | null;
+  isActive: boolean;
+  startedAt: number | null;
+  timeRemaining: number;
+  paused: boolean;
 }
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug';

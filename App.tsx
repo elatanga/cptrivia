@@ -15,6 +15,7 @@ import { ConfirmationModal } from './components/ConfirmationModal';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
 import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent } from './types';
+import { QuestionCountdownTimer, SessionGameTimer } from './types';
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
 import { normalizePlayerName } from './services/utils';
@@ -41,6 +42,7 @@ const App: React.FC = () => {
   // --- MODALS ---
   const [showEndGameConfirm, setShowEndGameConfirm] = useState(false);
   const [editingTemplateStatus, setEditingTemplateStatus] = useState(false); // Track if builder is open
+  const [showTimerExpiredPrompt, setShowTimerExpiredPrompt] = useState(false);
 
   // --- ADMIN NOTIFICATIONS ---
   const [pendingRequests, setPendingRequests] = useState(0);
@@ -73,6 +75,21 @@ const App: React.FC = () => {
     events: []
   });
 
+  const [questionCountdown, setQuestionCountdown] = useState<QuestionCountdownTimer>({
+    duration: 0,
+    isActive: false,
+    startedAt: null,
+    timeRemaining: 0
+  });
+
+  const [sessionTimer, setSessionTimer] = useState<SessionGameTimer>({
+    preset: null,
+    isActive: false,
+    startedAt: null,
+    timeRemaining: 0,
+    paused: false
+  });
+
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const specialMovesOverlay = useSpecialMovesOverlay(gameState.isGameStarted ? activeShow?.id : undefined);
 
@@ -91,6 +108,67 @@ const App: React.FC = () => {
   const saveGameState = (state: GameState) => {
     localStorage.setItem('cruzpham_gamestate', JSON.stringify(state));
     setGameState(state);
+  };
+
+  const getPresetDuration = (preset: string): number => {
+    switch (preset) {
+      case '15m': return 15 * 60;
+      case '30m': return 30 * 60;
+      case '1h': return 60 * 60;
+      case '1h30m': return 90 * 60;
+      case '2h': return 120 * 60;
+      default: return 0;
+    }
+  };
+
+  const handleSessionTimerExpired = () => {
+    emitGameEvent('SESSION_TIMER_EXPIRED', {
+      actor: { role: 'system' },
+      context: {
+        message: 'Game timer expired. Game over.'
+      }
+    });
+
+    addToast('info', 'Game time expired. Continue or end the game.');
+    setShowTimerExpiredPrompt(true);
+  };
+
+  const handleQuestionCountdownComplete = () => {
+    logger.info('question_countdown_completed', { tileId: gameState.activeQuestionId });
+    addToast('info', 'Question countdown finished. Ready for resolution.');
+  };
+
+  const handleContinueAfterTimerExpired = () => {
+    setShowTimerExpiredPrompt(false);
+    setSessionTimer({ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false });
+  };
+
+  const handleEndGameAfterTimerExpired = () => {
+    const voidedCategories = gameState.categories.map((cat) => ({
+      ...cat,
+      questions: cat.questions.map((q) =>
+        !q.isAnswered && !q.isVoided ? { ...q, isVoided: true } : q
+      )
+    }));
+
+    saveGameState({
+      ...gameState,
+      categories: voidedCategories,
+      isGameStarted: false,
+      activeQuestionId: null,
+      activeCategoryId: null,
+      timer: { ...gameState.timer, endTime: null, isRunning: false },
+      lastPlays: []
+    });
+
+    emitGameEvent('SESSION_ENDED', {
+      actor: { role: 'director' },
+      context: { note: 'Game ended after session timer expiration' }
+    });
+
+    setShowTimerExpiredPrompt(false);
+    setSessionTimer({ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false });
+    setViewMode('BOARD');
   };
 
   // --- ANALYTICS EVENT EMITTER (CANONICAL LOG BUS) ---
@@ -227,6 +305,59 @@ const App: React.FC = () => {
     }
     return () => clearInterval(interval);
   }, [session]);
+
+  // SESSION TIMER COUNTDOWN
+  useEffect(() => {
+    if (!sessionTimer.isActive || sessionTimer.paused || !gameState.isGameStarted) return;
+
+    const interval = window.setInterval(() => {
+      setSessionTimer((prev) => {
+        const next = Math.max(0, prev.timeRemaining - 1);
+
+        if (next > 0 && next <= 10) soundService.playTimerTick();
+        if (next === 0 && prev.timeRemaining !== 0) {
+          soundService.playTimerAlarm();
+          handleSessionTimerExpired();
+        }
+
+        return { ...prev, timeRemaining: next };
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [sessionTimer.isActive, sessionTimer.paused, gameState.isGameStarted]);
+
+  const handleStartSessionTimer = (preset: '15m' | '30m' | '1h' | '1h30m' | '2h') => {
+    const duration = getPresetDuration(preset);
+    const newTimer: SessionGameTimer = {
+      preset,
+      isActive: true,
+      startedAt: Date.now(),
+      timeRemaining: duration,
+      paused: false
+    };
+    setSessionTimer(newTimer);
+
+    emitGameEvent('SESSION_TIMER_START', {
+      actor: { role: 'director' },
+      context: { note: `Game timer started: ${preset}` }
+    });
+  };
+
+  const handlePauseSessionTimer = () => {
+    setSessionTimer((prev) => {
+      const paused = !prev.paused;
+      emitGameEvent(paused ? 'SESSION_TIMER_PAUSED' : 'SESSION_TIMER_RESUMED', {
+        actor: { role: 'director' },
+        context: {}
+      });
+      return { ...prev, paused };
+    });
+  };
+
+  const handleResetSessionTimer = () => {
+    setSessionTimer({ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false });
+  };
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -682,7 +813,27 @@ const App: React.FC = () => {
     if (!session) return <div className="p-8 text-center text-white">Authentication required.</div>;
     return (
       <div className="h-screen w-screen bg-zinc-950 text-white overflow-hidden">
-        <DirectorPanel gameState={gameState} onUpdateState={saveGameState} emitGameEvent={emitGameEvent} addToast={addToast} gameId={activeShow?.id} specialMovesOverlay={specialMovesOverlay} />
+        <DirectorPanel
+          gameState={gameState}
+          onUpdateState={saveGameState}
+          emitGameEvent={emitGameEvent}
+          addToast={addToast}
+          gameId={activeShow?.id}
+          specialMovesOverlay={specialMovesOverlay}
+          questionCountdown={questionCountdown}
+          onQuestionCountdownStart={(duration) => {
+            setQuestionCountdown({ duration, isActive: true, startedAt: Date.now(), timeRemaining: duration });
+            emitGameEvent('QUESTION_COUNTDOWN_START', { actor: { role: 'director' }, context: { note: `Question countdown started: ${duration}s` } });
+          }}
+          onQuestionCountdownStop={() => {
+            setQuestionCountdown((prev) => ({ ...prev, isActive: false }));
+            emitGameEvent('QUESTION_COUNTDOWN_STOPPED', { actor: { role: 'director' }, context: { note: 'Question countdown stopped' } });
+          }}
+          sessionTimer={sessionTimer}
+          onSessionTimerStart={handleStartSessionTimer}
+          onSessionTimerPause={handlePauseSessionTimer}
+          onSessionTimerReset={handleResetSessionTimer}
+        />
         <ToastContainer toasts={toasts} removeToast={removeToast} />
       </div>
     );
@@ -697,6 +848,29 @@ const App: React.FC = () => {
     <AppShell activeShowTitle={gameState.showTitle || (activeShow ? activeShow.title : undefined)} username={session?.username} onLogout={handleLogout} shortcuts={showShortcuts ? <ShortcutsPanel /> : null}>
       <ToastContainer toasts={toasts} removeToast={removeToast} />
       <ConfirmationModal isOpen={showEndGameConfirm} title="End Game?" message="This will close the current game session and return to the template library." confirmLabel="End Game" isDanger={true} onConfirm={handleEndGame} onCancel={() => setShowEndGameConfirm(false)} />
+      {showTimerExpiredPrompt && (
+        <div className="fixed inset-0 z-[99999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-zinc-950 border border-gold-500/40 rounded-2xl p-6">
+            <h3 className="text-gold-500 text-lg font-black uppercase tracking-wider">Game Timer Complete</h3>
+            <p className="text-zinc-300 text-sm mt-2">Time is up. Continue playing or end now and lock all unopened tiles.</p>
+            <div className="mt-4 bg-black/50 border border-zinc-800 rounded-xl p-4 max-h-64 overflow-y-auto">
+              <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-bold mb-3">Current Standings</div>
+              <div className="space-y-2">
+                {[...gameState.players].sort((a, b) => b.score - a.score).map((p) => (
+                  <div key={p.id} className="flex justify-between text-sm text-zinc-200">
+                    <span>{p.name}</span>
+                    <span className="font-mono text-gold-400">{p.score}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <button onClick={handleContinueAfterTimerExpired} className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-black uppercase text-xs">Continue Game</button>
+              <button onClick={handleEndGameAfterTimerExpired} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-black uppercase text-xs">End Game Now</button>
+            </div>
+          </div>
+        </div>
+      )}
       {!session ? (
         <LoginScreen onLoginSuccess={handleLoginSuccess} addToast={addToast} />
       ) : (
@@ -743,28 +917,64 @@ const App: React.FC = () => {
                             <button onClick={() => { soundService.playClick(); setShowEndGameConfirm(true); }} type="button" className="text-[10px] md:text-xs uppercase text-red-500 hover:text-red-600 font-bold tracking-wider flex items-center gap-2"><Power className="w-3 h-3" /> End Show</button>
                             <button onClick={() => setViewMode('DIRECTOR')} className="text-[10px] md:text-xs uppercase font-bold text-zinc-500 hover:text-zinc-800 flex items-center gap-2 px-3 py-1.5 rounded transition-colors"><Grid className="w-3 h-3" /> Director</button>
                           </div>
-                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} /></div>
+                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} sessionTimerActive={sessionTimer.isActive} sessionTimeRemaining={sessionTimer.timeRemaining} /></div>
                         </div>
                         <div className="order-1 md:order-2 flex-none h-auto lg:h-full w-full md:w-auto relative z-30">
                           <Scoreboard players={gameState.players} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
                         </div>
                         {activeQuestion && activeCategory && (
-                          <QuestionModal question={activeQuestion} categoryTitle={activeCategory.title} players={gameState.players} selectedPlayerId={gameState.selectedPlayerId} timer={gameState.timer} onClose={handleQuestionClose} onReveal={() => {
+                          <QuestionModal 
+                            question={activeQuestion} 
+                            categoryTitle={activeCategory.title} 
+                            players={gameState.players} 
+                            selectedPlayerId={gameState.selectedPlayerId} 
+                            timer={gameState.timer}
+                            questionCountdownActive={questionCountdown.isActive}
+                            questionCountdownDuration={questionCountdown.duration}
+                            onQuestionCountdownComplete={handleQuestionCountdownComplete}
+                            onClose={handleQuestionClose}
+                            onReveal={() => {
                               emitGameEvent('ANSWER_REVEALED', {
                                 actor: { role: 'director' },
                                 context: { tileId: activeQuestion.id, points: activeQuestion.points, categoryName: activeCategory.title }
                               });
                               const newState = { ...gameState, categories: gameState.categories.map(c => c.id === gameState.activeCategoryId ? { ...c, questions: c.questions.map(q => q.id === gameState.activeQuestionId ? { ...q, isRevealed: true } : q) } : c) };
                               saveGameState(newState);
-                          }} onTimerEnd={() => {
+                            }}
+                            onTimerEnd={() => {
                               emitGameEvent('TIMER_FINISHED', { actor: { role: 'system' }, context: { tileId: activeQuestion.id, points: activeQuestion.points } });
-                          }} />
+                            }}
+                          />
                         )}
                       </div>
                     )}
                  </div>
                  <div className={`absolute inset-0 transition-opacity duration-300 bg-zinc-950 ${viewMode === 'DIRECTOR' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-                   <DirectorPanel gameState={gameState} onUpdateState={saveGameState} emitGameEvent={emitGameEvent} onPopout={handlePopout} isPoppedOut={isDirectorPoppedOut} onBringBack={handleBringBack} addToast={addToast} onClose={() => setViewMode('BOARD')} gameId={activeShow?.id} specialMovesOverlay={specialMovesOverlay} />
+                   <DirectorPanel
+                     gameState={gameState}
+                     onUpdateState={saveGameState}
+                     emitGameEvent={emitGameEvent}
+                     onPopout={handlePopout}
+                     isPoppedOut={isDirectorPoppedOut}
+                     onBringBack={handleBringBack}
+                     addToast={addToast}
+                     onClose={() => setViewMode('BOARD')}
+                     gameId={activeShow?.id}
+                     specialMovesOverlay={specialMovesOverlay}
+                     questionCountdown={questionCountdown}
+                     onQuestionCountdownStart={(duration) => {
+                       setQuestionCountdown({ duration, isActive: true, startedAt: Date.now(), timeRemaining: duration });
+                       emitGameEvent('QUESTION_COUNTDOWN_START', { actor: { role: 'director' }, context: { note: `Question countdown started: ${duration}s` } });
+                     }}
+                     onQuestionCountdownStop={() => {
+                       setQuestionCountdown((prev) => ({ ...prev, isActive: false }));
+                       emitGameEvent('QUESTION_COUNTDOWN_STOPPED', { actor: { role: 'director' }, context: { note: 'Question countdown stopped' } });
+                     }}
+                     sessionTimer={sessionTimer}
+                     onSessionTimerStart={handleStartSessionTimer}
+                     onSessionTimerPause={handlePauseSessionTimer}
+                     onSessionTimerReset={handleResetSessionTimer}
+                   />
                  </div>
                  {viewMode === 'ADMIN' && <div className="absolute inset-0 z-50 bg-zinc-950"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
                </div>

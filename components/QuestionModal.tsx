@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Check, ShieldAlert, Monitor, ArrowLeft, Trash2, Trophy, Clock, Eye } from 'lucide-react';
+import { ShieldAlert, ArrowLeft, Trash2, Trophy, Eye } from 'lucide-react';
 import { Question, Player, GameTimer } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
+import { CountdownOverlay } from './CountdownOverlay';
 
 interface Props {
   question: Question;
@@ -11,20 +12,33 @@ interface Props {
   players: Player[];
   selectedPlayerId: string | null;
   timer: GameTimer;
+  questionCountdownActive?: boolean;
+  questionCountdownDuration?: number;
+  onQuestionCountdownComplete?: () => void;
   onClose: (action: 'return' | 'void' | 'award' | 'steal', playerId?: string) => void;
   onReveal: () => void;
   onTimerEnd?: () => void;
 }
 
 export const QuestionModal: React.FC<Props> = ({ 
-  question, categoryTitle, players, selectedPlayerId, timer, onClose, onReveal, onTimerEnd 
+  question, categoryTitle, players, selectedPlayerId, timer, questionCountdownActive, questionCountdownDuration, onQuestionCountdownComplete, onClose, onReveal, onTimerEnd 
 }) => {
   const [showStealSelect, setShowStealSelect] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [countdownStopped, setCountdownStopped] = useState(false);
   
   const isRevealed = question.isRevealed;
   const isDouble = question.isDoubleOrNothing || false;
-  const activePlayer = players.find(p => p.id === selectedPlayerId);
+
+  const getQuestionFontSize = useCallback((text: string) => {
+    const length = (text || '').trim().length;
+    if (length > 320) return 'clamp(24px, 3vw, 48px)';
+    if (length > 220) return 'clamp(26px, 3.4vw, 56px)';
+    if (length > 140) return 'clamp(28px, 3.8vw, 64px)';
+    return 'clamp(30px, 4.5vw, 86px)';
+  }, []);
+
+  const questionFontSize = getQuestionFontSize(question.text);
 
   // LOGGING & SCROLL LOCK
   useEffect(() => {
@@ -86,6 +100,10 @@ export const QuestionModal: React.FC<Props> = ({
       if ('stopPropagation' in event) event.stopPropagation();
     }
 
+    if (questionCountdownActive && !countdownStopped && action !== 'return') {
+      return;
+    }
+
     if (!isRevealed && action !== 'reveal' && action !== 'return') return;
     if (showStealSelect && action !== 'return') return; 
 
@@ -124,7 +142,7 @@ export const QuestionModal: React.FC<Props> = ({
         }
         break;
     }
-  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal]);
+  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, questionCountdownActive, countdownStopped]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -165,6 +183,20 @@ export const QuestionModal: React.FC<Props> = ({
       className="fixed inset-0 z-[9999] bg-black text-white font-roboto overflow-hidden flex flex-col items-center justify-center p-4 md:p-8"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
+      {/* QUESTION COUNTDOWN OVERLAY */}
+      {questionCountdownActive && !countdownStopped && questionCountdownDuration && (
+        <CountdownOverlay
+          duration={questionCountdownDuration}
+          onComplete={() => {
+            setCountdownStopped(true);
+            if (onQuestionCountdownComplete) onQuestionCountdownComplete();
+          }}
+          onStop={() => {
+            setCountdownStopped(true);
+          }}
+        />
+      )}
+
       {/* Dynamic Ambient Background */}
       <div className={`absolute inset-0 opacity-20 transition-colors duration-700 pointer-events-none ${isRevealed ? (isDouble ? 'bg-red-900' : 'bg-gold-900') : 'bg-blue-900'}`} />
 
@@ -183,7 +215,7 @@ export const QuestionModal: React.FC<Props> = ({
       {/* SINGLE LUXURY CENTERED CONTAINER */}
       <div 
         data-testid="luxury-container"
-        className="relative z-10 w-full max-w-7xl max-h-[85vh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-6 md:p-12 shadow-[0_0_100px_rgba(0,0,0,0.8)] flex flex-col items-center justify-between overflow-hidden"
+        className="relative z-10 w-full max-w-7xl max-h-[85vh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-4 md:p-10 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden grid grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-3 md:gap-6"
       >
         {/* TIMER OVERLAY (Floating in container corner) */}
         {timeLeft !== null && (
@@ -193,7 +225,7 @@ export const QuestionModal: React.FC<Props> = ({
         )}
 
         {/* 1. DOUBLE OR NOTHING LABEL */}
-        <div className="flex-none h-12 flex items-center justify-center">
+        <div className="h-12 flex items-center justify-center">
           {isDouble && (
             <span 
               data-testid="double-label"
@@ -206,18 +238,18 @@ export const QuestionModal: React.FC<Props> = ({
         </div>
 
         {/* 2. QUESTION AREA */}
-        <div className="flex-1 flex items-center justify-center w-full px-4 overflow-hidden min-h-0">
+        <div data-testid="question-viewport" className="w-full px-2 md:px-6 overflow-hidden min-h-0 flex items-center justify-center">
           <h2 
             data-testid="question-text"
-            className={`font-roboto-bold text-center leading-[1.1] transition-all duration-700 max-h-full overflow-hidden ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
-            style={{ fontSize: 'clamp(28px, 4.5vw, 86px)' }}
+            className={`font-roboto-bold text-center leading-[1.08] transition-all duration-700 max-h-full overflow-hidden break-words px-1 ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
+            style={{ fontSize: questionFontSize, overflowWrap: 'anywhere' }}
           >
             {question.text}
           </h2>
         </div>
 
         {/* 3. ANSWER AREA */}
-        <div className="flex-none w-full flex flex-col items-center gap-8 md:gap-12 mt-4">
+        <div className="w-full flex flex-col items-center gap-4 md:gap-8">
           {isRevealed ? (
             <div 
               data-testid="answer-text"
@@ -233,11 +265,13 @@ export const QuestionModal: React.FC<Props> = ({
           ) : (
             <div className="h-2 w-32 bg-zinc-800/50 rounded-full" />
           )}
+        </div>
 
-          {/* 4. ACTION ICONS ROW */}
+        {/* 4. ACTION ICONS ROW */}
+        <div data-testid="reveal-actions-rail" className="w-full border-t border-zinc-800/60 pt-3 md:pt-5">
           <div 
             data-testid="reveal-actions"
-            className="flex flex-wrap items-center justify-center gap-4 md:gap-10 w-full"
+            className="flex flex-wrap items-center justify-center gap-3 md:gap-8 w-full"
           >
             {/* RETURN */}
             <button 
@@ -257,7 +291,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed}
               onClick={(e) => handleAction('void', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed ? 'text-zinc-500 hover:text-red-500' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && (!questionCountdownActive || countdownStopped) ? 'text-zinc-500 hover:text-red-500' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Void (ESC)"
             >
               <div className="p-3 md:p-5 bg-zinc-900/80 rounded-full border border-zinc-700 shadow-lg group-hover:border-red-900/30 transition-all">
@@ -287,7 +321,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed}
               onClick={(e) => handleAction('steal', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && (!questionCountdownActive || countdownStopped) ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Steal (S)"
             >
               <div className="p-3 md:p-5 bg-purple-950/20 border-2 border-purple-500/50 rounded-full shadow-xl group-hover:bg-purple-900/40 transition-all">
@@ -301,7 +335,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed || !selectedPlayerId}
               onClick={(e) => handleAction('award', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && selectedPlayerId ? 'text-green-500 hover:text-green-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && selectedPlayerId && (!questionCountdownActive || countdownStopped) ? 'text-green-500 hover:text-green-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Award (ENTER)"
             >
               <div className="p-3 md:p-5 bg-green-950/20 border-2 border-green-500/50 rounded-full shadow-xl group-hover:bg-green-900/40 transition-all">
