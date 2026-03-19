@@ -4,6 +4,7 @@ export interface Question {
   text: string;
   points: number;
   answer: string;
+  options?: string[];
   isRevealed: boolean;
   isAnswered: boolean;
   isVoided?: boolean;
