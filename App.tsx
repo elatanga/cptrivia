@@ -14,7 +14,7 @@ import { ConfirmationModal } from './components/ConfirmationModal';
 import { EndGameCelebrationModal } from './components/EndGameCelebrationModal';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
-import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent } from './types';
+import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType } from './types';
 import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from './types';
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
@@ -53,6 +53,43 @@ const resolveTemplateTimerEnabled = (
   if (quickTimerMode === 'timed') return true;
   if (quickTimerMode === 'untimed') return false;
   return currentEnabled;
+};
+
+type QuestionModalSpecialMoveModel = {
+  moveType: SpecialMoveType;
+  displayTitle: string;
+  pointsEffect: string;
+  penaltyEffect?: string;
+  stealPolicy: 'NO STEAL' | 'STEAL ALLOWED';
+};
+
+const SPECIAL_MOVE_MODAL_DETAILS: Partial<Record<SpecialMoveType, Omit<QuestionModalSpecialMoveModel, 'moveType'>>> = {
+  DOUBLE_TROUBLE: { displayTitle: 'DOUBLE OR LOSE', pointsEffect: 'WIN: 2X POINTS', penaltyEffect: 'MISS: -TILE VALUE', stealPolicy: 'NO STEAL' },
+  TRIPLE_THREAT: { displayTitle: 'TRIPLE OR LOSE', pointsEffect: 'WIN: 3X POINTS', penaltyEffect: 'MISS: -130%', stealPolicy: 'NO STEAL' },
+  SABOTAGE: { displayTitle: 'SAFE BET', pointsEffect: 'WIN: +50%', penaltyEffect: 'MISS: NO PENALTY', stealPolicy: 'NO STEAL' },
+  SAFE_BET: { displayTitle: 'SAFE BET', pointsEffect: 'WIN: +50%', penaltyEffect: 'MISS: NO PENALTY', stealPolicy: 'NO STEAL' },
+  MEGA_STEAL: { displayTitle: 'LOCKOUT', pointsEffect: 'STANDARD AWARD', penaltyEffect: 'MISS: NO EXTRA PENALTY', stealPolicy: 'NO STEAL' },
+  LOCKOUT: { displayTitle: 'LOCKOUT', pointsEffect: 'STANDARD AWARD', penaltyEffect: 'MISS: NO EXTRA PENALTY', stealPolicy: 'NO STEAL' },
+  SUPER_SAVE: { displayTitle: 'SUPER SAVE', pointsEffect: 'WIN: 3X POINTS', penaltyEffect: 'MISS: NO BONUS', stealPolicy: 'NO STEAL' },
+  GOLDEN_GAMBLE: { displayTitle: 'GOLDEN GAMBLE', pointsEffect: 'WIN: 225%', penaltyEffect: 'MISS: -50%', stealPolicy: 'NO STEAL' },
+  SHIELD_BOOST: { displayTitle: 'SHIELD BOOST', pointsEffect: 'WIN: 2X POINTS', penaltyEffect: 'MISS: NO PENALTY', stealPolicy: 'NO STEAL' },
+  FINAL_SHOT: { displayTitle: 'FINAL SHOT', pointsEffect: 'WIN: 3X POINTS', penaltyEffect: 'MISS: -TILE VALUE', stealPolicy: 'NO STEAL' },
+  DOUBLE_WINS_OR_NOTHING: { displayTitle: 'DOUBLE WINS OR NOTHING', pointsEffect: 'ENDGAME SCORE MOVE', stealPolicy: 'NO STEAL' },
+  TRIPLE_WINS_OR_NOTHING: { displayTitle: 'TRIPLE WINS OR NOTHING', pointsEffect: 'ENDGAME SCORE MOVE', stealPolicy: 'NO STEAL' },
+};
+
+const getQuestionModalSpecialMoveModel = (moveType?: SpecialMoveType): QuestionModalSpecialMoveModel | null => {
+  if (!moveType) return null;
+  const details = SPECIAL_MOVE_MODAL_DETAILS[moveType];
+  if (!details) {
+    return {
+      moveType,
+      displayTitle: moveType.replace(/_/g, ' '),
+      pointsEffect: 'SPECIAL RULE ACTIVE',
+      stealPolicy: isStealBlockedForMove(moveType) ? 'NO STEAL' : 'STEAL ALLOWED',
+    };
+  }
+  return { moveType, ...details };
 };
 
 const App: React.FC = () => {
@@ -125,6 +162,7 @@ const App: React.FC = () => {
     endsAt: null,
     selectedPreset: null,
   });
+  const [activeTileMoveType, setActiveTileMoveType] = useState<SpecialMoveType | undefined>(undefined);
 
   const [timerAudio, setTimerAudio] = useState<TimerAudioSettings>({
     enabled: true,
@@ -146,6 +184,7 @@ const App: React.FC = () => {
   const questionTimerDurationRef = useRef(questionTimerDurationSeconds);
   const questionTimerEnabledRef = useRef(questionTimerEnabled);
   const sessionTimerEnabledRef = useRef(sessionTimerEnabled);
+  const activeTileMoveTypeRef = useRef<SpecialMoveType | undefined>(activeTileMoveType);
 
   useEffect(() => {
     questionTimerDurationRef.current = questionTimerDurationSeconds;
@@ -158,6 +197,23 @@ const App: React.FC = () => {
   useEffect(() => {
     sessionTimerEnabledRef.current = sessionTimerEnabled;
   }, [sessionTimerEnabled]);
+
+  useEffect(() => {
+    activeTileMoveTypeRef.current = activeTileMoveType;
+  }, [activeTileMoveType]);
+
+  useEffect(() => {
+    const activeTileId = gameState.activeQuestionId;
+    if (!activeTileId) {
+      if (activeTileMoveTypeRef.current) setActiveTileMoveType(undefined);
+      return;
+    }
+    if (activeTileMoveTypeRef.current) return;
+    const deployment = specialMovesOverlay?.deploymentsByTileId?.[activeTileId];
+    if (deployment?.status === 'ARMED') {
+      setActiveTileMoveType(deployment.moveType as SpecialMoveType | undefined);
+    }
+  }, [gameState.activeQuestionId, specialMovesOverlay]);
 
   // Tracks remainingSeconds via ref so stopQuestionTimer can log it
   // without capturing questionTimer.remainingSeconds as a dep (which
@@ -1087,6 +1143,7 @@ const App: React.FC = () => {
       endsAt: null,
       selectedPreset: null,
     });
+    setActiveTileMoveType(undefined);
     setViewMode('BOARD');
     setShowEndGameConfirm(false);
     setIsEndGameCelebrationOpen(false);
@@ -1100,6 +1157,18 @@ const App: React.FC = () => {
 
     soundService.playSound?.('tileOpen');
 
+    const deployment = specialMovesOverlayRef.current?.deploymentsByTileId?.[qId];
+    setActiveTileMoveType(deployment?.status === 'ARMED' ? (deployment.moveType as SpecialMoveType | undefined) : undefined);
+
+    if (questionTimerEnabled) {
+      const selectedDuration = resolveQuestionCountdownDuration(questionTimerDurationRef.current);
+      startQuestionTimer(qId, selectedDuration);
+    }
+
+    // saveGameState FIRST (direct update) so the subsequent emitGameEvent
+    // functional updater receives the correct activeQuestionId in its `prev`.
+    saveGameState({ ...gameState, activeCategoryId: catId, activeQuestionId: qId });
+
     emitGameEvent('TILE_OPENED', {
        actor: { role: 'director' },
        context: { tileId: qId, categoryName: cat?.title, points: q?.points }
@@ -1107,14 +1176,11 @@ const App: React.FC = () => {
 
     if (questionTimerEnabled) {
       const selectedDuration = resolveQuestionCountdownDuration(questionTimerDurationRef.current);
-      startQuestionTimer(qId, selectedDuration);
       emitGameEvent('QUESTION_COUNTDOWN_START', {
         actor: { role: 'director' },
         context: { tileId: qId, note: `Question countdown auto-started (${selectedDuration}s)` }
       });
     }
-
-    saveGameState({ ...gameState, activeCategoryId: catId, activeQuestionId: qId });
   };
 
   const handleQuestionClose = (action: 'return' | 'void' | 'award' | 'steal', targetPlayerId?: string) => {
@@ -1130,6 +1196,7 @@ const App: React.FC = () => {
     }
 
     if (!activeCat || !activeQ) {
+       setActiveTileMoveType(undefined);
        saveGameState({ ...current, activeQuestionId: null, activeCategoryId: null });
        return;
     }
@@ -1137,7 +1204,7 @@ const App: React.FC = () => {
     resolvingQuestionIdRef.current = activeQ.id;
 
     const basePoints = (activeQ.isDoubleOrNothing ? activeQ.points * 2 : activeQ.points);
-    const tileMoveType = specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType;
+    const tileMoveType = activeTileMoveTypeRef.current || specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType;
     const stealBlocked = isStealBlockedForMove(tileMoveType);
     const resolvesAsFail = action === 'return' && doesReturnResolveAsFail(tileMoveType);
 
@@ -1156,34 +1223,7 @@ const App: React.FC = () => {
         })
       : basePoints;
 
-    // LOG ANALYTICS (CANONICAL BUS)
-    const tileCtx = { tileId: activeQ.id, categoryName: activeCat.title, points: activeQ.points, categoryIndex: catIdx, rowIndex: qIdx };
-    if (action === 'award' && targetPlayerId) {
-       const p = current.players.find(pl => pl.id === targetPlayerId);
-       emitGameEvent('POINTS_AWARDED', { actor: { role: 'director' }, context: { ...tileCtx, playerName: p?.name, delta: points } });
-    } else if (action === 'steal' && targetPlayerId) {
-       const stealer = current.players.find(pl => pl.id === targetPlayerId);
-       const victim = current.players.find(pl => pl.id === current.selectedPlayerId);
-       emitGameEvent('POINTS_STOLEN', { actor: { role: 'director' }, context: { ...tileCtx, playerName: stealer?.name, delta: points, note: `Stolen from ${victim?.name}` } });
-    } else if (action === 'void') {
-       emitGameEvent('TILE_VOIDED', { actor: { role: 'director' }, context: { ...tileCtx, note: 'Question voided by producer' } });
-    } else if (action === 'return') {
-       emitGameEvent('QUESTION_RETURNED', { actor: { role: 'director' }, context: { ...tileCtx } });
-      if (resolvesAsFail) {
-        const failedPlayer = current.players.find((p) => p.id === current.selectedPlayerId);
-        emitGameEvent('SCORE_ADJUSTED', {
-          actor: { role: 'director' },
-          context: {
-            ...tileCtx,
-            playerName: failedPlayer?.name,
-            playerId: failedPlayer?.id,
-            delta: points,
-            note: `Special move failure (${tileMoveType || 'UNKNOWN_MOVE'})`
-          }
-        });
-      }
-    }
-
+    // "LAST 4 PLAYS" REAL-TIME LOG (RING BUFFER)
     const newCategories = current.categories.map(c => {
       if (c.id !== current.activeCategoryId) return c;
       return {
@@ -1192,7 +1232,7 @@ const App: React.FC = () => {
           if (q.id !== current.activeQuestionId) return q;
           return {
             ...q,
-            isRevealed: false, 
+            isRevealed: false,
             isAnswered: action === 'award' || action === 'steal' || resolvesAsFail,
             isVoided: action === 'void' || resolvesAsFail
           };
@@ -1223,7 +1263,6 @@ const App: React.FC = () => {
       });
     }
 
-    // "LAST 4 PLAYS" REAL-TIME LOG (RING BUFFER)
     let updatedPlays = current.lastPlays || [];
     try {
       const playEvent: PlayEvent = {
@@ -1279,8 +1318,41 @@ const App: React.FC = () => {
       lastPlays: updatedPlays
     };
     stopQuestionTimer();
+    setActiveTileMoveType(undefined);
+
+    // saveGameState FIRST (direct update, synchronous localStorage write) so the
+    // subsequent emitGameEvent functional updaters receive the correct closed/scored
+    // state in their `prev` argument, preventing stale-prev localStorage overwrites.
     saveGameState(newState);
     resolvingQuestionIdRef.current = null;
+
+    // LOG ANALYTICS (CANONICAL BUS) — after saveGameState so prev is fresh
+    const tileCtx = { tileId: activeQ.id, categoryName: activeCat.title, points: activeQ.points, categoryIndex: catIdx, rowIndex: qIdx };
+    if (action === 'award' && targetPlayerId) {
+       const p = current.players.find(pl => pl.id === targetPlayerId);
+       emitGameEvent('POINTS_AWARDED', { actor: { role: 'director' }, context: { ...tileCtx, playerName: p?.name, delta: points } });
+    } else if (action === 'steal' && targetPlayerId) {
+       const stealer = current.players.find(pl => pl.id === targetPlayerId);
+       const victim = current.players.find(pl => pl.id === current.selectedPlayerId);
+       emitGameEvent('POINTS_STOLEN', { actor: { role: 'director' }, context: { ...tileCtx, playerName: stealer?.name, delta: points, note: `Stolen from ${victim?.name}` } });
+    } else if (action === 'void') {
+       emitGameEvent('TILE_VOIDED', { actor: { role: 'director' }, context: { ...tileCtx, note: 'Question voided by producer' } });
+    } else if (action === 'return') {
+       emitGameEvent('QUESTION_RETURNED', { actor: { role: 'director' }, context: { ...tileCtx } });
+      if (resolvesAsFail) {
+        const failedPlayer = current.players.find((p) => p.id === current.selectedPlayerId);
+        emitGameEvent('SCORE_ADJUSTED', {
+          actor: { role: 'director' },
+          context: {
+            ...tileCtx,
+            playerName: failedPlayer?.name,
+            playerId: failedPlayer?.id,
+            delta: points,
+            note: `Special move failure (${tileMoveType || 'UNKNOWN_MOVE'})`
+          }
+        });
+      }
+    }
 
     if ((action === 'award' || action === 'steal') && targetPlayerId) {
       const name = newPlayers.find(p => p.id === targetPlayerId)?.name || 'Unknown';
@@ -1505,8 +1577,8 @@ const App: React.FC = () => {
                         </div>
                         {activeQuestion && activeCategory && (
                           (() => {
-                            const activeMoveType = specialMovesOverlay?.deploymentsByTileId?.[activeQuestion.id]?.moveType;
-                            const allowSteal = !isStealBlockedForMove(activeMoveType);
+                            const modalSpecialMove = getQuestionModalSpecialMoveModel(activeTileMoveType);
+                            const allowSteal = !isStealBlockedForMove(activeTileMoveType);
                             return (
                           <QuestionModal 
                             question={activeQuestion} 
@@ -1517,6 +1589,7 @@ const App: React.FC = () => {
                             viewSettings={gameState.viewSettings}
                             allowSteal={allowSteal}
                             stealDisabledReason={allowSteal ? undefined : 'Steal disabled by active special move'}
+                            specialMoveSummary={modalSpecialMove}
                             questionCountdownRemainingSeconds={questionTimer.remainingSeconds}
                             questionCountdownDurationSeconds={questionTimer.durationSeconds}
                             isQuestionCountdownRunning={questionTimer.isRunning && questionTimer.activeQuestionId === activeQuestion.id}

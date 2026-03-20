@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -179,6 +178,112 @@ describe('Special Moves Feature Suite', () => {
     const tile = screen.getAllByRole('button').find(b => b.textContent === '100');
     expect(tile?.querySelector('.lucide-zap')).toBeInTheDocument();
     expect(tile).toHaveClass('animate-pulse');
+  });
+
+  it('B2) MODAL SYNC: Armed tile shows compact special-move banner and disables steal', async () => {
+    await setupAndPlay();
+
+    const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+    const firstTileId = state.categories[0].questions[0].id;
+
+    await act(async () => {
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          [firstTileId]: { status: 'ARMED', moveType: 'DOUBLE_TROUBLE', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+    });
+
+    const boardTile = screen.getAllByRole('button').find((b) => b.textContent === '100');
+    expect(boardTile).toBeTruthy();
+    fireEvent.click(boardTile!);
+
+    const banner = await screen.findByTestId('special-move-banner');
+    expect(banner).toHaveTextContent(/DOUBLE OR LOSE/i);
+    expect(banner).toHaveTextContent(/WIN: 2X POINTS/i);
+    expect(banner).toHaveTextContent(/NO STEAL/i);
+
+    const stealBtn = screen.getByRole('button', { name: /steal/i });
+    expect(stealBtn).toBeDisabled();
+    expect(stealBtn).toHaveAttribute('title', expect.stringMatching(/steal disabled/i));
+  });
+
+  it('B3) HARDENING: Invalid move payload does not crash QuestionModal', async () => {
+    await setupAndPlay();
+
+    const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+    const firstTileId = state.categories[0].questions[0].id;
+
+    await act(async () => {
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          [firstTileId]: { status: 'ARMED', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+    });
+
+    const boardTile = screen.getAllByRole('button').find((b) => b.textContent === '100');
+    expect(boardTile).toBeTruthy();
+    fireEvent.click(boardTile!);
+
+    expect(await screen.findByTestId('reveal-root')).toBeInTheDocument();
+    expect(screen.queryByTestId('special-move-banner')).not.toBeInTheDocument();
+  });
+
+  it('B4) RESOLUTION SYNC: Captured move still applies on return even if overlay changes mid-question', async () => {
+    await setupAndPlay();
+
+    const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+    const firstTileId = state.categories[0].questions[0].id;
+
+    await act(async () => {
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          [firstTileId]: { status: 'ARMED', moveType: 'DOUBLE_TROUBLE', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+    });
+
+    const boardTile = screen.getAllByRole('button').find((b) => b.textContent === '100');
+    expect(boardTile).toBeTruthy();
+    fireEvent.click(boardTile!);
+    await screen.findByTestId('reveal-root');
+    await screen.findByTestId('special-move-banner');
+
+    await act(async () => {
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {},
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 2
+      });
+    });
+
+    // After overlay cleared, banner should still be visible (captured move persists)
+    expect(screen.queryByTestId('special-move-banner')).toBeInTheDocument();
+
+    // Verify state has active question and selected player before return
+    const preReturnState = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+    expect(preReturnState.activeQuestionId).toBeTruthy();
+    expect(preReturnState.selectedPlayerId).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /return/i }));
+    });
+
+    await waitFor(() => {
+      const nextState = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+      expect(nextState.players?.[0]?.score).toBeLessThan(0);
+    });
   });
 
   it('C) CLEAR ARMORY: Director can wipe all armed moves', async () => {

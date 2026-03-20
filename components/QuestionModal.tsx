@@ -68,6 +68,13 @@ interface Props {
   selectedPlayerId: string | null;
   timer: GameTimer;
   viewSettings?: Partial<BoardViewSettings> | null;
+  specialMoveSummary?: {
+    moveType: string;
+    displayTitle: string;
+    pointsEffect: string;
+    penaltyEffect?: string;
+    stealPolicy: 'NO STEAL' | 'STEAL ALLOWED';
+  } | null;
   allowSteal?: boolean;
   stealDisabledReason?: string;
   questionCountdownRemainingSeconds?: number;
@@ -87,6 +94,7 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
   selectedPlayerId,
   timer,
   viewSettings,
+  specialMoveSummary,
   allowSteal = true,
   stealDisabledReason,
   questionCountdownRemainingSeconds,
@@ -360,13 +368,30 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
         {/* Legacy per-question timer badge isolated from modal rendering flow */}
         <LegacyQuestionTimerBadge timer={timer} onTimerEnd={onTimerEnd} />
 
-        {/* 1. DOUBLE OR NOTHING LABEL */}
-        <div className="h-12 flex items-center justify-center">
+        {/* 1. TOP RISK/MODIFIER LABELS */}
+        <div className="min-h-12 flex flex-col items-center justify-center gap-1">
+          {specialMoveSummary && (
+            <div
+              data-testid="special-move-banner"
+              className="w-full max-w-4xl rounded-xl border border-gold-500/40 bg-black/35 px-3 py-2 text-center"
+            >
+              <div className="text-[11px] md:text-xs font-black uppercase tracking-[0.2em] text-gold-300">
+                {specialMoveSummary.displayTitle}
+              </div>
+              <div className="mt-1 flex flex-wrap justify-center gap-1.5 text-[9px] md:text-[10px] uppercase tracking-wider font-black text-zinc-100">
+                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.pointsEffect}</span>
+                {specialMoveSummary.penaltyEffect && (
+                  <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.penaltyEffect}</span>
+                )}
+                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.stealPolicy}</span>
+              </div>
+            </div>
+          )}
           {isDouble && (
-            <span 
+            <span
               data-testid="double-label"
               className="text-red-500 font-black uppercase tracking-[0.3em] drop-shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-in fade-in slide-in-from-top-2 duration-700"
-              style={{ fontSize: 'clamp(18px, 2vw, 32px)' }}
+              style={{ fontSize: 'clamp(16px, 1.6vw, 26px)' }}
             >
               DOUBLE OR NOTHING
             </span>
