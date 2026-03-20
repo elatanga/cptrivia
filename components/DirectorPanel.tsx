@@ -7,7 +7,7 @@ import { logger } from '../services/logger';
 import { soundService } from '../services/soundService';
 import { normalizePlayerName } from '../services/utils';
 import { sanitizeBoardViewSettings, sanitizeBoardViewSettingsPatch } from '../services/boardViewSettings';
-import { CategoryRegenerationMode, isTileActive, preserveTileStateOnRegenerate, regenerateCategoryWithMode } from '../services/boardRegenerationService';
+import { CategoryRegenerationMode, isTileActive, preserveTileStateOnRegenerate, regenerateCategoryWithMode, resetTileToActive } from '../services/boardRegenerationService';
 import { DirectorAiRegenerator } from './DirectorAiRegenerator';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
 import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
@@ -163,6 +163,28 @@ export const DirectorPanel: React.FC<Props> = ({
   };
 
   const refreshBackendMode = () => setBackendMode(specialMovesClient.getBackendMode());
+
+  const getSpecialMoveErrorMessage = (error: unknown, fallback: string) => {
+    const e = error as { code?: string; message?: string; details?: any };
+    const raw = (e?.message || '').trim();
+    const detailsMessage = typeof e?.details?.message === 'string' ? e.details.message.trim() : '';
+    const normalizedCode = (e?.code || '').toLowerCase();
+
+    if (detailsMessage) return detailsMessage;
+
+    if (raw) {
+      const prefixed = raw.match(/^[A-Z_]+:\s*(.+)$/);
+      if (prefixed?.[1]) return prefixed[1];
+      if (!/internal/i.test(raw)) return raw;
+    }
+
+    if (normalizedCode.includes('already-exists')) return 'Tile is already affected by an active move.';
+    if (normalizedCode.includes('invalid-argument')) return 'Special move request is missing required data.';
+    if (normalizedCode.includes('failed-precondition')) return 'Special move request is not in a valid state.';
+    if (normalizedCode.includes('not-found')) return 'Requested special move data was not found.';
+
+    return fallback;
+  };
 
   const sentenceCase = (value: string) => value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase());
   const pointsLabel = (value?: number) => {
@@ -848,7 +870,7 @@ export const DirectorPanel: React.FC<Props> = ({
       addToast('success', 'MOVE DEPLOYED');
     } catch (e: any) {
       logger.error('director_special_move_arm_failed', { gameId, tileId, moveType: selectedMoveType, error: e.message });
-      addToast('error', e.message || 'Failed to deploy move.');
+      addToast('error', getSpecialMoveErrorMessage(e, 'Failed to deploy move.'));
     } finally {
       refreshBackendMode();
       setArmingTileId(null);
@@ -880,7 +902,7 @@ export const DirectorPanel: React.FC<Props> = ({
       addToast('info', 'ARMORY CLEARED');
     } catch (e: any) {
       logger.error('director_special_move_clear_failed', { gameId, error: e.message });
-      addToast('error', e.message || 'Failed to clear armory.');
+      addToast('error', getSpecialMoveErrorMessage(e, 'Failed to clear armory.'));
     } finally {
       refreshBackendMode();
       setIsClearingArmory(false);
@@ -959,11 +981,17 @@ export const DirectorPanel: React.FC<Props> = ({
 
       const nextCategories = [...gameState.categories];
       const nextQuestions = [...nextCategories[cIdx].questions];
-      nextQuestions[qIdx] = preserveTileStateOnRegenerate(nextQuestions[qIdx], {
-        ...nextQuestions[qIdx],
+      const existingQuestion = nextQuestions[qIdx];
+      const generatedQuestion = {
+        ...existingQuestion,
         text: result.text,
         answer: result.answer,
-      });
+      };
+      const shouldReactivateQuickTile = source === 'quick' && !isTileActive(existingQuestion);
+
+      nextQuestions[qIdx] = shouldReactivateQuickTile
+        ? resetTileToActive(existingQuestion, generatedQuestion)
+        : preserveTileStateOnRegenerate(existingQuestion, generatedQuestion);
       nextCategories[cIdx] = { ...nextCategories[cIdx], questions: nextQuestions };
 
       const afterState = getTileStateSnapshot(nextQuestions[qIdx]);
@@ -991,7 +1019,7 @@ export const DirectorPanel: React.FC<Props> = ({
         },
       });
 
-      addToast('success', 'Tile content regenerated.');
+      addToast('success', shouldReactivateQuickTile ? 'Tile content regenerated and reactivated.' : 'Tile content regenerated.');
     } catch (e: any) {
       logger.error('board_regen_tile_failed', {
         genId,
