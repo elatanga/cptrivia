@@ -92,8 +92,8 @@ describe('Special Moves Feature Suite', () => {
     fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
     expect(await screen.findByLabelText(/special moves backend mode/i)).toHaveTextContent(/backend:\s*functions/i);
 
-    // 2. Select DOUBLE TROUBLE
-    const moveBtn = await screen.findByText('DOUBLE TROUBLE');
+    // 2. Select DOUBLE OR LOSE
+    const moveBtn = await screen.findByText('DOUBLE OR LOSE');
     fireEvent.click(moveBtn);
 
     // 3. Click first 100pt tile
@@ -114,6 +114,33 @@ describe('Special Moves Feature Suite', () => {
 
     // 5. Verify success toast
     expect(await screen.findByText(/MOVE DEPLOYED/i)).toBeInTheDocument();
+  });
+
+  it('A0) LABELS: Director tabs show SPECIAL MOVES and SPECIAL MOVES GUIDE', async () => {
+    await setupAndPlay();
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+
+    const specialMovesTab = await screen.findByRole('button', { name: /special moves/i });
+    const guideTab = await screen.findByRole('button', { name: /special moves guide/i });
+
+    expect(specialMovesTab).toBeInTheDocument();
+    expect(guideTab).toBeInTheDocument();
+
+    fireEvent.click(guideTab);
+    expect(await screen.findByText(/special moves guide/i, { selector: 'h3' })).toBeInTheDocument();
+  });
+
+  it('A2) GIFT SECTION: shows Gift Activated Special Moves with gift-required markers', async () => {
+    await setupAndPlay();
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+
+    expect(await screen.findByText(/gift activated special moves/i)).toBeInTheDocument();
+    expect(await screen.findAllByText(/gift required/i)).not.toHaveLength(0);
+    expect(await screen.findByText('SUPER SAVE')).toBeInTheDocument();
+    expect(await screen.findByText('GOLDEN GAMBLE')).toBeInTheDocument();
   });
 
   it.each([

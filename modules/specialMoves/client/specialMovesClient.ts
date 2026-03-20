@@ -6,6 +6,21 @@ import { logger } from '../../../services/logger';
 import { SMSOverlayDoc } from '../firestoreTypes';
 import { SpecialMoveType } from '../../../types';
 
+const ALLOWED_MOVE_TYPES: SpecialMoveType[] = [
+  'DOUBLE_TROUBLE',
+  'TRIPLE_THREAT',
+  'SABOTAGE',
+  'MEGA_STEAL',
+  'DOUBLE_WINS_OR_NOTHING',
+  'TRIPLE_WINS_OR_NOTHING',
+  'SAFE_BET',
+  'LOCKOUT',
+  'SUPER_SAVE',
+  'GOLDEN_GAMBLE',
+  'SHIELD_BOOST',
+  'FINAL_SHOT',
+];
+
 export interface RequestArmParams {
   gameId: string;
   tileId: string;
@@ -122,6 +137,10 @@ class SpecialMovesClient {
    * Dispatches a request to arm a specific board tile.
    */
   async requestArmTile(params: RequestArmParams): Promise<{ success: boolean; id: string }> {
+    if (!ALLOWED_MOVE_TYPES.includes(params.moveType)) {
+      throw new Error(`Unsupported special move type: ${params.moveType}`);
+    }
+
     if (functions) {
       this.setBackendMode('FUNCTIONS');
       const call = httpsCallable<RequestArmParams, { success: boolean; id: string }>(functions, 'sms_requestArm');
