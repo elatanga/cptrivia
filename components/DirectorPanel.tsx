@@ -13,6 +13,7 @@ import { DirectorSettingsPanel } from './DirectorSettingsPanel';
 import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
+import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
 
 interface Props {
   gameState: GameState;
@@ -73,6 +74,15 @@ export const DirectorPanel: React.FC<Props> = ({
 }) => {
   type LogChannel = 'ALL' | 'BOARD' | 'SCOREBOARD' | 'AI' | 'SPECIAL_MOVES' | 'SYSTEM';
   type SortOrder = 'NEWEST' | 'OLDEST';
+  type EndgameChallenge = {
+    id: string;
+    moveType: 'DOUBLE_WINS_OR_NOTHING' | 'TRIPLE_WINS_OR_NOTHING';
+    playerId: string;
+    categoryId: string;
+    questionText: string;
+    answerText: string;
+    status: 'PENDING' | 'RESOLVED' | 'CANCELED';
+  };
 
   const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'SOUND_BOARD' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
   const [editingQuestion, setEditingQuestion] = useState<{cIdx: number, qIdx: number} | null>(null);
@@ -86,6 +96,9 @@ export const DirectorPanel: React.FC<Props> = ({
   const [channelFilter, setChannelFilter] = useState<LogChannel>('ALL');
   const [keyOnlyFilter, setKeyOnlyFilter] = useState(false);
   const [sortOrder, setSortOrder] = useState<SortOrder>('NEWEST');
+  const [selectedEndgameCategoryId, setSelectedEndgameCategoryId] = useState<string>('');
+  const [isPreparingEndgameChallenge, setIsPreparingEndgameChallenge] = useState(false);
+  const [activeEndgameChallenge, setActiveEndgameChallenge] = useState<EndgameChallenge | null>(null);
   
   // Per-tile AI state
   const [tileAiDifficulty, setTileAiDifficulty] = useState<Difficulty>("mixed");
@@ -103,10 +116,44 @@ export const DirectorPanel: React.FC<Props> = ({
   const [confirmResetAll, setConfirmResetAll] = useState(false);
 
   const moveLabels: Record<SpecialMoveType, string> = {
-    DOUBLE_TROUBLE: 'DOUBLE TROUBLE',
-    TRIPLE_THREAT: 'TRIPLE THREAT',
-    SABOTAGE: 'SABOTAGE',
-    MEGA_STEAL: 'MEGA STEAL'
+    DOUBLE_TROUBLE: 'DOUBLE OR LOSE',
+    TRIPLE_THREAT: 'TRIPLE OR LOSE',
+    SABOTAGE: 'SAFE BET',
+    MEGA_STEAL: 'LOCKOUT',
+    DOUBLE_WINS_OR_NOTHING: 'DOUBLE YOUR WINS OR NOTHING',
+    TRIPLE_WINS_OR_NOTHING: 'TRIPLE YOUR WINS OR NOTHING',
+    SAFE_BET: 'SAFE BET',
+    LOCKOUT: 'LOCKOUT',
+    SUPER_SAVE: 'SUPER SAVE',
+    GOLDEN_GAMBLE: 'GOLDEN GAMBLE',
+    SHIELD_BOOST: 'SHIELD BOOST',
+    FINAL_SHOT: 'FINAL SHOT',
+  };
+
+  const standardMoveTypes: SpecialMoveType[] = [
+    'DOUBLE_TROUBLE',
+    'TRIPLE_THREAT',
+    'SAFE_BET',
+    'LOCKOUT',
+    'DOUBLE_WINS_OR_NOTHING',
+    'TRIPLE_WINS_OR_NOTHING',
+  ];
+
+  const giftMoveTypes: SpecialMoveType[] = ['SUPER_SAVE', 'GOLDEN_GAMBLE', 'SHIELD_BOOST', 'FINAL_SHOT'];
+
+  const moveDescriptions: Record<SpecialMoveType, string> = {
+    DOUBLE_TROUBLE: 'Tile only. Correct = 2x. Fail/return = lose tile value. No steal.',
+    TRIPLE_THREAT: 'Tile only. Correct = 3x. Fail/return = lose 130% of tile value. No steal.',
+    SABOTAGE: 'Legacy alias for Safe Bet.',
+    MEGA_STEAL: 'Legacy alias for Lockout.',
+    SAFE_BET: 'Tile only. Correct = +50%. Wrong = no penalty. No steal.',
+    LOCKOUT: 'Tile only. No steal allowed. Normal award, no extra fail penalty.',
+    DOUBLE_WINS_OR_NOTHING: 'Endgame challenge. Top-2 only. Correct doubles total score, wrong resets to 0.',
+    TRIPLE_WINS_OR_NOTHING: 'Endgame challenge. Top-2 only. Correct triples total score, wrong resets to 0.',
+    SUPER_SAVE: 'Gift required. First 3 columns only. Correct = 3x. No steal.',
+    GOLDEN_GAMBLE: 'Gift required. Middle columns only. Correct = +125%. Wrong = -50%. No steal.',
+    SHIELD_BOOST: 'Gift required. Non-final column only. Correct = 2x. Wrong = no penalty. No steal.',
+    FINAL_SHOT: 'Gift required. Last 2 columns only. Correct = 3x. Wrong = lose tile value. No steal.',
   };
 
   const backendModeLabels: Record<SMSBackendMode, string> = {
@@ -419,6 +466,130 @@ export const DirectorPanel: React.FC<Props> = ({
     version: 1
   };
 
+  const isEndgameMove = (moveType: SpecialMoveType) => moveType === 'DOUBLE_WINS_OR_NOTHING' || moveType === 'TRIPLE_WINS_OR_NOTHING';
+  const isTileMove = (moveType: SpecialMoveType) => !isEndgameMove(moveType);
+  const boardColumnCount = useMemo(() => getBoardPointColumns(gameState.categories), [gameState.categories]);
+  const giftGlobalDisabledReasons = useMemo(() => {
+    const result: Partial<Record<SpecialMoveType, string | null>> = {};
+    giftMoveTypes.forEach((moveType) => {
+      result[moveType] = getGiftMoveGlobalDisabledReason(moveType, gameState.categories);
+    });
+    return result;
+  }, [giftMoveTypes, gameState.categories]);
+
+  const isBoardExhausted = useMemo(
+    () => gameState.categories.every((category) => category.questions.every((question) => question.isAnswered || question.isVoided)),
+    [gameState.categories]
+  );
+  const hasActiveTile = !!gameState.activeCategoryId && !!gameState.activeQuestionId;
+  const rankedPlayers = useMemo(
+    () => [...gameState.players].sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return gameState.players.findIndex((p) => p.id === a.id) - gameState.players.findIndex((p) => p.id === b.id);
+    }),
+    [gameState.players]
+  );
+  const topTwoPlayerIds = useMemo(() => new Set(rankedPlayers.slice(0, 2).map((p) => p.id)), [rankedPlayers]);
+  const selectedPlayerEligibleForEndgame = !!gameState.selectedPlayerId && topTwoPlayerIds.has(gameState.selectedPlayerId);
+  const canUseEndgameMoves = isBoardExhausted && !hasActiveTile;
+  const endgameDisabledReason = !isBoardExhausted
+    ? 'Available only after all tiles are played.'
+    : hasActiveTile
+      ? 'Finish the currently active tile first.'
+      : !selectedPlayerEligibleForEndgame
+        ? 'Select one of the top two players first.'
+        : '';
+
+  const resolveEndgameChallenge = (outcome: 'SUCCESS' | 'FAIL') => {
+    if (!activeEndgameChallenge || activeEndgameChallenge.status !== 'PENDING') return;
+    const challengedPlayer = gameState.players.find((player) => player.id === activeEndgameChallenge.playerId);
+    if (!challengedPlayer) {
+      addToast('error', 'Challenge player no longer available.');
+      return;
+    }
+
+    const multiplier = activeEndgameChallenge.moveType === 'TRIPLE_WINS_OR_NOTHING' ? 3 : 2;
+    const newScore = outcome === 'SUCCESS' ? Math.round(challengedPlayer.score * multiplier) : 0;
+    const delta = newScore - challengedPlayer.score;
+
+    onUpdateState({
+      ...gameState,
+      players: gameState.players.map((player) => (
+        player.id === challengedPlayer.id ? { ...player, score: newScore } : player
+      ))
+    });
+
+    emitGameEvent('SCORE_ADJUSTED', {
+      actor: { role: 'director' },
+      context: {
+        playerId: challengedPlayer.id,
+        playerName: challengedPlayer.name,
+        delta,
+        note: `${activeEndgameChallenge.moveType}:${outcome}`,
+      }
+    });
+
+    setActiveEndgameChallenge({ ...activeEndgameChallenge, status: 'RESOLVED' });
+    addToast(outcome === 'SUCCESS' ? 'success' : 'error', outcome === 'SUCCESS' ? `${challengedPlayer.name} wins ${multiplier}x total score!` : `${challengedPlayer.name} reset to 0.`);
+  };
+
+  const startEndgameChallenge = async () => {
+    if (!isEndgameMove(selectedMoveType)) return;
+    if (!canUseEndgameMoves || !selectedPlayerEligibleForEndgame) {
+      addToast('error', endgameDisabledReason || 'Move unavailable right now.');
+      return;
+    }
+    if (!selectedEndgameCategoryId) {
+      addToast('error', 'Select a category first.');
+      return;
+    }
+    if (isPreparingEndgameChallenge || activeEndgameChallenge?.status === 'PENDING') return;
+
+    const selectedCategory = gameState.categories.find((category) => category.id === selectedEndgameCategoryId);
+    const selectedPlayer = gameState.players.find((player) => player.id === gameState.selectedPlayerId);
+    if (!selectedCategory || !selectedPlayer) {
+      addToast('error', 'Unable to prepare challenge.');
+      return;
+    }
+
+    setIsPreparingEndgameChallenge(true);
+    try {
+      const challenge = await generateSingleQuestion(
+        gameState.showTitle || 'General Trivia',
+        500,
+        selectedCategory.title,
+        'hard',
+        crypto.randomUUID()
+      );
+
+      const nextChallenge: EndgameChallenge = {
+        id: crypto.randomUUID(),
+        moveType: selectedMoveType,
+        playerId: selectedPlayer.id,
+        categoryId: selectedCategory.id,
+        questionText: challenge.text,
+        answerText: challenge.answer,
+        status: 'PENDING'
+      };
+      setActiveEndgameChallenge(nextChallenge);
+      emitGameEvent('SPECIAL_MOVE_ARMED', {
+        actor: { role: 'director' },
+        context: {
+          playerId: selectedPlayer.id,
+          playerName: selectedPlayer.name,
+          categoryName: selectedCategory.title,
+          note: `${selectedMoveType}:challenge_prepared`
+        }
+      });
+      addToast('info', 'Endgame challenge generated. Ask the question and resolve outcome.');
+    } catch (e: any) {
+      logger.error('director_endgame_challenge_prepare_failed', { moveType: selectedMoveType, error: e.message });
+      addToast('error', 'Failed to generate endgame challenge.');
+    } finally {
+      setIsPreparingEndgameChallenge(false);
+    }
+  };
+
   // --- CLEANUP ON MODAL CLOSE ---
   useEffect(() => {
     if (editingQuestion === null) {
@@ -626,6 +797,25 @@ export const DirectorPanel: React.FC<Props> = ({
       return;
     }
 
+    if (!isTileMove(selectedMoveType)) {
+      addToast('error', 'This move targets a player challenge, not a tile.');
+      return;
+    }
+
+    const existingDeployment = currentOverlay.deploymentsByTileId?.[tileId];
+    if (existingDeployment?.status === 'ARMED') {
+      addToast('error', 'Tile already armed with a special move.');
+      return;
+    }
+
+    if (isGiftActivatedMove(selectedMoveType)) {
+      const giftDisabledReason = getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, tileId);
+      if (giftDisabledReason) {
+        addToast('error', giftDisabledReason);
+        return;
+      }
+    }
+
     setArmingTileId(tileId);
     soundService.playClick();
 
@@ -648,7 +838,11 @@ export const DirectorPanel: React.FC<Props> = ({
           categoryName: tile?.category.title,
           points: tile?.question.points,
           note: selectedMoveType,
-          message: `Armed ${selectedMoveType}`
+          message: `Armed ${selectedMoveType}`,
+          after: {
+            activationSource: isGiftActivatedMove(selectedMoveType) ? 'gift' : 'standard',
+            giftRequired: isGiftActivatedMove(selectedMoveType)
+          }
         }
       });
       addToast('success', 'MOVE DEPLOYED');
@@ -954,10 +1148,10 @@ export const DirectorPanel: React.FC<Props> = ({
             <Users className="w-4 h-4" /> Players
           </button>
           <button aria-label="Moves Tab" onClick={() => setActiveTab('MOVES')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
-            <ShieldAlert className="w-4 h-4" /> Moves
+            <ShieldAlert className="w-4 h-4" /> Special Moves
           </button>
           <button onClick={() => setActiveTab('MOVES_HELP')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES_HELP' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
-            <Info className="w-4 h-4" /> Moves Help
+            <Info className="w-4 h-4" /> Special Moves Guide
           </button>
           <button onClick={() => setActiveTab('LOGS_AUDIT')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'LOGS_AUDIT' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <History className="w-4 h-4" /> Logs & Audit
@@ -1280,7 +1474,7 @@ export const DirectorPanel: React.FC<Props> = ({
             <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
-                  <ShieldAlert className="w-4 h-4" /> MOVES
+                  <ShieldAlert className="w-4 h-4" /> SPECIAL MOVES
                 </h3>
                 <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Select a move, then arm any live tile on the board.</p>
                 <div className="mt-2">
@@ -1302,18 +1496,135 @@ export const DirectorPanel: React.FC<Props> = ({
               </button>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {(Object.keys(moveLabels) as SpecialMoveType[]).map((moveType) => (
-                <button
-                  key={moveType}
-                  onClick={() => setSelectedMoveType(moveType)}
-                  className={`rounded-2xl border p-4 text-left transition-all ${selectedMoveType === moveType ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-800 bg-zinc-900/40 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900/70'}`}
-                >
-                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Special Move</div>
-                  <div className="mt-2 text-sm font-black uppercase tracking-wide">{moveLabels[moveType]}</div>
-                </button>
-              ))}
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/25 p-4">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 font-black mb-3">Standard Special Moves</div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {standardMoveTypes.map((moveType) => {
+                  const disabled = isEndgameMove(moveType) ? !canUseEndgameMoves : false;
+                  const disabledReason = isEndgameMove(moveType) ? endgameDisabledReason : '';
+
+                  return (
+                    <button
+                      key={moveType}
+                      disabled={disabled}
+                      onClick={() => setSelectedMoveType(moveType)}
+                      className={`rounded-2xl border p-4 text-left transition-all ${disabled ? 'opacity-50 cursor-not-allowed border-zinc-800 bg-zinc-900/20 text-zinc-500' : selectedMoveType === moveType ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-800 bg-zinc-900/40 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900/70'}`}
+                    >
+                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Special Move</div>
+                      <div className="mt-2 text-sm font-black uppercase tracking-wide">{moveLabels[moveType]}</div>
+                      <div className="mt-2 text-[10px] text-zinc-400 leading-relaxed">{moveDescriptions[moveType]}</div>
+                      {disabledReason && <div className="mt-2 text-[10px] font-black text-red-300">{disabledReason}</div>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            <div className="rounded-2xl border border-purple-700/40 bg-purple-950/20 p-4 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-purple-200 font-black">Gift Activated Special Moves</div>
+                  <p className="text-[11px] text-zinc-300 mt-1">Host gift activation required. Gift moves enforce stricter tile eligibility and include no-steal safety.</p>
+                </div>
+                <span className="inline-flex items-center rounded-full border border-purple-400/40 bg-purple-800/30 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-purple-100">Gift Required</span>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {giftMoveTypes.map((moveType) => {
+                  const disabledReason = giftGlobalDisabledReasons[moveType] || '';
+                  const disabled = !!disabledReason;
+                  const selected = selectedMoveType === moveType;
+
+                  return (
+                    <button
+                      key={moveType}
+                      disabled={disabled}
+                      onClick={() => setSelectedMoveType(moveType)}
+                      className={`rounded-2xl border p-4 text-left transition-all ${disabled ? 'opacity-55 cursor-not-allowed border-zinc-800 bg-zinc-900/25 text-zinc-500' : selected ? 'border-purple-400 bg-purple-500/10 text-purple-100 shadow-lg shadow-purple-900/20' : 'border-zinc-800 bg-zinc-900/40 text-zinc-200 hover:border-purple-500 hover:bg-zinc-900/70'}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Gift Move</div>
+                        <span className="inline-flex items-center rounded-full border border-amber-400/50 bg-amber-800/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-200">Gift Required</span>
+                      </div>
+                      <div className="mt-2 text-sm font-black uppercase tracking-wide">{moveLabels[moveType]}</div>
+                      <div className="mt-2 text-[10px] text-zinc-400 leading-relaxed">{moveDescriptions[moveType]}</div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <span className="rounded border border-zinc-700/80 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-zinc-300">No Steal</span>
+                        {moveType === 'SUPER_SAVE' && <span className="rounded border border-zinc-700/80 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-zinc-300">Early Columns Only</span>}
+                        {moveType === 'FINAL_SHOT' && <span className="rounded border border-zinc-700/80 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-zinc-300">Late Columns Only</span>}
+                        {(moveType === 'SUPER_SAVE' || moveType === 'FINAL_SHOT') && <span className="rounded border border-zinc-700/80 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-zinc-300">Board Min 6 Columns</span>}
+                      </div>
+                      {disabledReason && <div className="mt-2 text-[10px] font-black text-red-300">{disabledReason}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black/30 px-4 py-3 text-[11px] text-zinc-300">
+              <span className="font-black text-gold-400 uppercase">Active move: {moveLabels[selectedMoveType]}</span>
+              {isGiftActivatedMove(selectedMoveType) && <span className="ml-2 inline-flex items-center rounded-full border border-amber-400/50 bg-amber-900/30 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-200">Gift Required</span>}
+              <span className="ml-2 text-zinc-500 normal-case font-normal tracking-normal">Board columns: {boardColumnCount}</span>
+            </div>
+
+            {isEndgameMove(selectedMoveType) && (
+              <div className="rounded-2xl border border-amber-600/40 bg-amber-950/20 p-4 space-y-3">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-black">Endgame Challenge Setup</div>
+                <p className="text-[11px] text-zinc-300">Board must be fully exhausted, no active tile can be open, and selected player must be top 2 by score.</p>
+                {!canUseEndgameMoves && <p className="text-[11px] text-red-300 font-bold">{endgameDisabledReason}</p>}
+                {canUseEndgameMoves && !selectedPlayerEligibleForEndgame && <p className="text-[11px] text-red-300 font-bold">{endgameDisabledReason}</p>}
+                <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
+                  <select
+                    value={selectedEndgameCategoryId}
+                    onChange={(e) => setSelectedEndgameCategoryId(e.target.value)}
+                    className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-gold-500"
+                  >
+                    <option value="">Select category</option>
+                    {gameState.categories.map((category) => (
+                      <option key={category.id} value={category.id}>{category.title}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={startEndgameChallenge}
+                    disabled={!canUseEndgameMoves || !selectedPlayerEligibleForEndgame || !selectedEndgameCategoryId || isPreparingEndgameChallenge || activeEndgameChallenge?.status === 'PENDING'}
+                    className="bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black font-black px-4 py-2 rounded-lg text-[11px] uppercase"
+                  >
+                    {isPreparingEndgameChallenge ? 'Generating...' : 'Generate Challenge'}
+                  </button>
+                </div>
+
+                {activeEndgameChallenge && (
+                  <div className="rounded-xl border border-zinc-700 bg-black/40 p-4 space-y-3">
+                    <div className="text-[10px] uppercase tracking-widest text-zinc-400 font-black">Live Challenge</div>
+                    <div className="text-sm text-zinc-100 font-bold">{activeEndgameChallenge.questionText}</div>
+                    <div className="text-[11px] text-zinc-400">Answer: {activeEndgameChallenge.answerText}</div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => resolveEndgameChallenge('SUCCESS')}
+                        disabled={activeEndgameChallenge.status !== 'PENDING'}
+                        className="px-3 py-2 rounded bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white text-[10px] font-black uppercase"
+                      >
+                        Resolve Success
+                      </button>
+                      <button
+                        onClick={() => resolveEndgameChallenge('FAIL')}
+                        disabled={activeEndgameChallenge.status !== 'PENDING'}
+                        className="px-3 py-2 rounded bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-[10px] font-black uppercase"
+                      >
+                        Resolve Fail (Reset to 0)
+                      </button>
+                      <button
+                        onClick={() => setActiveEndgameChallenge((prev) => prev ? { ...prev, status: 'CANCELED' } : prev)}
+                        disabled={activeEndgameChallenge.status !== 'PENDING'}
+                        className="px-3 py-2 rounded bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white text-[10px] font-black uppercase"
+                      >
+                        Cancel Challenge
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="space-y-4">
               {gameState.categories.map((cat) => (
@@ -1324,22 +1635,32 @@ export const DirectorPanel: React.FC<Props> = ({
                       const deployment = currentOverlay.deploymentsByTileId[q.id];
                       const isArmed = deployment?.status === 'ARMED';
                       const isPlayable = !q.isAnswered && !q.isVoided;
+                      const giftTileDisabledReason = isGiftActivatedMove(selectedMoveType)
+                        ? getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, q.id)
+                        : null;
+                      const giftBlocked = !!giftTileDisabledReason;
+                      const tileColumnIndex = getTileColumnIndex(gameState.categories, q.id);
 
                       return (
                         <button
                           key={q.id}
                           aria-label={`Arm ${moveLabels[selectedMoveType]} on ${cat.title} for ${q.points}`}
-                          disabled={!isPlayable || armingTileId === q.id}
+                          disabled={!isPlayable || armingTileId === q.id || !isTileMove(selectedMoveType) || giftBlocked}
                           onClick={() => handleArmMove(q.id)}
-                          className={`rounded-xl border p-4 text-left transition-all ${!isPlayable ? 'cursor-not-allowed border-zinc-800 bg-black/30 text-zinc-600 opacity-50' : isArmed ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-700 bg-zinc-900 text-white hover:border-gold-500 hover:bg-zinc-800'}`}
+                          className={`rounded-xl border p-4 text-left transition-all ${!isPlayable || !isTileMove(selectedMoveType) || giftBlocked ? 'cursor-not-allowed border-zinc-800 bg-black/30 text-zinc-600 opacity-50' : isArmed ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-700 bg-zinc-900 text-white hover:border-gold-500 hover:bg-zinc-800'}`}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-lg font-black">{q.points}</span>
                             {armingTileId === q.id && <Loader2 className="w-4 h-4 animate-spin text-gold-500" />}
                           </div>
+                          <div className="mt-1 text-[9px] uppercase tracking-widest text-zinc-500">Col {tileColumnIndex >= 0 ? tileColumnIndex + 1 : '?'}</div>
                           <div className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
                             {isArmed ? moveLabels[deployment.moveType!] : 'Ready to Arm'}
                           </div>
+                          {isArmed && isGiftActivatedMove(deployment.moveType as SpecialMoveType) && (
+                            <div className="mt-1 inline-flex items-center rounded-full border border-amber-400/50 bg-amber-900/30 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-200">Gift Required</div>
+                          )}
+                          {giftBlocked && <div className="mt-2 text-[10px] font-black text-red-300">{giftTileDisabledReason}</div>}
                         </button>
                       );
                     })}
@@ -1354,42 +1675,90 @@ export const DirectorPanel: React.FC<Props> = ({
         {activeTab === 'MOVES_HELP' && (
           <div className="space-y-6 animate-in fade-in duration-300 max-w-4xl mx-auto">
             <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg">
-              <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
-                <Info className="w-4 h-4" /> How To Play Special Moves
+                <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                  <Info className="w-4 h-4" /> Special Moves Guide
               </h3>
               <p className="text-[11px] text-zinc-300 mt-3 leading-relaxed">
-                Use this flow every round to arm tactical modifiers on question tiles before contestants answer.
+                  This guide explains what each special move does, when it is available, and how directors should resolve outcomes safely.
               </p>
             </div>
 
             <div className="bg-black/40 border border-zinc-800 rounded-2xl p-5 space-y-3">
-              <h4 className="text-[11px] uppercase tracking-widest font-black text-zinc-400">Step-by-step</h4>
+              <h4 className="text-[11px] uppercase tracking-widest font-black text-zinc-400">Activation Flow</h4>
               <ol className="list-decimal ml-5 space-y-2 text-[12px] text-zinc-200 leading-relaxed">
-                <li>Open the <span className="font-black text-gold-500">Moves</span> tab.</li>
-                <li>Select one move type (Double Trouble, Triple Threat, Sabotage, or Mega Steal).</li>
-                <li>Click a live tile (not answered/voided) to arm it.</li>
+                <li>Open the <span className="font-black text-gold-500">Special Moves</span> tab.</li>
+                <li>Select one move type.</li>
+                <li>For tile moves: click a live tile (not answered/voided) to arm it.</li>
+                <li>For wins-or-nothing moves: select an eligible top-2 player, choose category, generate challenge, then resolve outcome once.</li>
                 <li>On the public board, armed tiles show a Zap icon and pulse.</li>
-                <li>Run the question normally; score effects apply automatically on award/steal.</li>
+                <li>Run the question normally; score effects apply automatically on award/return based on move rules.</li>
                 <li>Use <span className="font-black text-red-400">Wipe All Armed Tiles</span> to reset at any time.</li>
               </ol>
             </div>
 
+            <div className="space-y-3">
+              <h4 className="text-[11px] uppercase tracking-widest font-black text-zinc-400">Standard Moves</h4>
+              <div className="grid gap-3 md:grid-cols-2">
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-cyan-300 font-black">Double or Lose</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Eligibility: any active tile. Correct + award = 2x tile points. Wrong/failed return = subtract tile value. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-gold-300 font-black">Triple or Lose</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Eligibility: any active tile. Correct + award = 3x tile points. Wrong/failed return = subtract 130% of tile value (rounded). No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-amber-300 font-black">Double Your Wins or Nothing</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Endgame-only. Board exhausted, no active tile, top-2 player only. AI challenge: correct doubles total score, wrong resets to 0.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-rose-300 font-black">Triple Your Wins or Nothing</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Endgame-only. Board exhausted, no active tile, top-2 player only. AI challenge: correct triples total score, wrong resets to 0.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-emerald-300 font-black">Safe Bet</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Eligibility: any active tile. Correct + award = +50% tile value. Wrong = no penalty. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-violet-300 font-black">Lockout</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Eligibility: any active tile. Correct + award = standard tile value. Wrong = no extra penalty. No steal allowed.</p>
+              </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <h4 className="text-[11px] uppercase tracking-widest font-black text-zinc-400">Gift Activated Special Moves</h4>
+                <span className="inline-flex items-center rounded-full border border-amber-400/50 bg-amber-900/30 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-200">Gift Required</span>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-sky-300 font-black">Super Save</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Gift required. Board min 6 columns and min 6 active tiles. Use only in first 3 columns (never last 3). Correct + award = 3x tile points. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-amber-300 font-black">Golden Gamble</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Gift required. Board min 5 columns and min 5 active tiles. Middle columns only. Correct + award = 225% tile value. Wrong = -50% tile value. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-emerald-300 font-black">Shield Boost</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Gift required. Any active non-final-column tile. Correct + award = 2x tile value. Wrong = no penalty and tile resolves closed. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-rose-300 font-black">Final Shot</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Gift required. Board min 6 columns and min 4 active tiles. Last 2 columns only. Correct + award = 3x tile value. Wrong = subtract tile value. No steal allowed.</p>
+              </div>
+              </div>
+            </div>
+
             <div className="grid gap-3 md:grid-cols-2">
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-widest text-cyan-300 font-black">Double Trouble</div>
-                <p className="text-[11px] text-zinc-300 mt-2">Award/steal resolves at 2x value; fail applies standard penalty path.</p>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-300 font-black">Second Chance</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Concept guide: one retry after first miss, then fail closes the tile with no steal. Use only if enabled in this build.</p>
               </div>
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-widest text-gold-300 font-black">Triple Threat</div>
-                <p className="text-[11px] text-zinc-300 mt-2">Award/steal resolves at 3x value; fail carries stronger downside.</p>
-              </div>
-              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-widest text-red-300 font-black">Sabotage</div>
-                <p className="text-[11px] text-zinc-300 mt-2">Normal upside on success; reduced-value penalty on failure.</p>
-              </div>
-              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-widest text-purple-300 font-black">Mega Steal</div>
-                <p className="text-[11px] text-zinc-300 mt-2">Steal resolves at 2x; direct award is blocked.</p>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-300 font-black">Category Freeze</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Concept guide: category cannot be selected for the next turn/round. Use only if your current show rules enable turn-based restrictions.</p>
               </div>
             </div>
           </div>

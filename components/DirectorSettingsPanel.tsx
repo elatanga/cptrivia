@@ -3,7 +3,7 @@ import { Sliders, RotateCcw, Type, Layout, User } from 'lucide-react';
 import { BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { BOARD_VIEW_SETTINGS_OPTIONS, DEFAULT_BOARD_VIEW_SETTINGS, sanitizeBoardViewSettings, sanitizeBoardViewSettingsPatch } from '../services/boardViewSettings';
-import {QuestionDisplaySettings} from "@/components/QuestionDisplaySettings.tsx";
+import { QuestionDisplaySettings } from './QuestionDisplaySettings';
 
 interface Props {
   settings: BoardViewSettings;

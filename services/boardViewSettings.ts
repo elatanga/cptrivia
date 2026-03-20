@@ -167,6 +167,23 @@ export interface ScoreboardLayoutTokens {
   allowTwoColumn: boolean;
 }
 
+export interface QuestionDisplayLayoutTokens {
+  modalMaxWidthPx: number;
+  modalMaxHeightPx: number;
+  contentMaxWidthPercent: number;
+  contentPaddingPx: number;
+  questionMinFontPx: number;
+  questionMaxFontPx: number;
+  questionClampVw: number;
+  optionMinFontPx: number;
+  optionMaxFontPx: number;
+  optionClampVw: number;
+  answerMinFontPx: number;
+  answerMaxFontPx: number;
+  answerClampVw: number;
+  optionGridClass: string;
+}
+
 const getViewportCompactFactor = (viewportWidth: number) => {
   if (viewportWidth < 768) return 0.86;
   if (viewportWidth < 1024) return 0.93;
@@ -233,6 +250,61 @@ export const getScoreboardLayoutTokens = (
     scoreboardScale: safe.scoreboardScale,
     panelWidthCss,
     allowTwoColumn,
+  };
+};
+
+export const getQuestionDisplayLayoutTokens = (
+  settings?: Partial<BoardViewSettings> | null,
+  optionCount = 0
+): QuestionDisplayLayoutTokens => {
+  const safe = sanitizeBoardViewSettings(settings);
+
+  const modalProfiles: Record<BoardViewSettings['questionModalSize'], { maxWidth: number; maxHeight: number }> = {
+    Small: { maxWidth: 920, maxHeight: 760 },
+    Medium: { maxWidth: 1120, maxHeight: 860 },
+    Large: { maxWidth: 1280, maxHeight: 920 },
+    ExtraLarge: { maxWidth: 1440, maxHeight: 980 },
+  };
+
+  const profile = modalProfiles[safe.questionModalSize] ?? modalProfiles[DEFAULT_BOARD_VIEW_SETTINGS.questionModalSize];
+  const fontScale = clamp(safe.questionFontScale, 0.8, 1.5);
+
+  const questionMinFontPx = clamp(Math.round(20 * fontScale), 16, 42);
+  const questionMaxFontPx = clamp(Math.round(84 * fontScale), 44, 124);
+  const questionClampVw = clamp(Number((4.5 * fontScale).toFixed(2)), 2.8, 6.4);
+
+  const optionMinFontPx = clamp(Math.round(14 * fontScale), 12, 28);
+  const optionMaxFontPx = clamp(Math.round(30 * fontScale), 22, 48);
+  const optionClampVw = clamp(Number((2.2 * fontScale).toFixed(2)), 1.8, 3.8);
+
+  const answerMinFontPx = clamp(Math.round(18 * fontScale), 14, 38);
+  const answerMaxFontPx = clamp(Math.round(62 * fontScale), 34, 98);
+  const answerClampVw = clamp(Number((3.2 * fontScale).toFixed(2)), 2.2, 5.2);
+
+  let optionGridClass = 'grid-cols-1';
+  if (safe.multipleChoiceColumns === '1') {
+    optionGridClass = 'grid-cols-1';
+  } else if (safe.multipleChoiceColumns === '2') {
+    optionGridClass = optionCount > 1 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1';
+  } else if (optionCount >= 2) {
+    optionGridClass = 'grid-cols-1 sm:grid-cols-2';
+  }
+
+  return {
+    modalMaxWidthPx: profile.maxWidth,
+    modalMaxHeightPx: profile.maxHeight,
+    contentMaxWidthPercent: clamp(safe.questionMaxWidthPercent, 60, 100),
+    contentPaddingPx: clamp(safe.questionContentPadding, 4, 24),
+    questionMinFontPx,
+    questionMaxFontPx,
+    questionClampVw,
+    optionMinFontPx,
+    optionMaxFontPx,
+    optionClampVw,
+    answerMinFontPx,
+    answerMaxFontPx,
+    answerClampVw,
+    optionGridClass,
   };
 };
 

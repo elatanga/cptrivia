@@ -1,6 +1,21 @@
 
 const admin = require("firebase-admin");
 
+const ALLOWED_MOVE_TYPES = new Set([
+  'DOUBLE_TROUBLE',
+  'TRIPLE_THREAT',
+  'SABOTAGE',
+  'MEGA_STEAL',
+  'DOUBLE_WINS_OR_NOTHING',
+  'TRIPLE_WINS_OR_NOTHING',
+  'SAFE_BET',
+  'LOCKOUT',
+  'SUPER_SAVE',
+  'GOLDEN_GAMBLE',
+  'SHIELD_BOOST',
+  'FINAL_SHOT'
+]);
+
 /**
  * Structured Logging Helper
  */
@@ -26,6 +41,11 @@ exports.requestArm = async (data, context) => {
   if (!gameId || !tileId || !moveType || !idempotencyKey) {
     logSMS("ARM_REJECTED", { gameId, correlationId, idempotencyKey }, { reason: "MISSING_ARGS" });
     throw new Error("INVALID_ARGUMENT: Missing required fields");
+  }
+
+  if (!ALLOWED_MOVE_TYPES.has(moveType)) {
+    logSMS("ARM_REJECTED", { gameId, correlationId, idempotencyKey }, { reason: "UNSUPPORTED_MOVE_TYPE", moveType });
+    throw new Error("INVALID_ARGUMENT: Unsupported move type");
   }
 
   logSMS("ARM_REQUEST_RECEIVED", { gameId, correlationId, idempotencyKey }, { moveType, tileId });

@@ -21,6 +21,7 @@ import { logger } from './services/logger';
 import { normalizePlayerName } from './services/utils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
+import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specialMoves/logic';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
@@ -151,6 +152,7 @@ const App: React.FC = () => {
   // without capturing questionTimer.remainingSeconds as a dep (which
   // would create a new callback reference every second while running).
   const questionTimerRemainingRef = useRef(questionTimer.remainingSeconds);
+  const resolvingQuestionIdRef = useRef<string | null>(null);
   useEffect(() => {
     questionTimerRemainingRef.current = questionTimer.remainingSeconds;
   }, [questionTimer.remainingSeconds]);
@@ -995,18 +997,35 @@ const App: React.FC = () => {
     const qIdx = activeCat?.questions.findIndex(q => q.id === current.activeQuestionId);
     const activeQ = activeCat?.questions[qIdx];
 
+    if (current.activeQuestionId && resolvingQuestionIdRef.current === current.activeQuestionId) {
+      logger.warn('question_close_deduped', { action, tileId: current.activeQuestionId });
+      return;
+    }
+
     if (!activeCat || !activeQ) {
        saveGameState({ ...current, activeQuestionId: null, activeCategoryId: null });
        return;
     }
 
+    resolvingQuestionIdRef.current = activeQ.id;
+
     const basePoints = (activeQ.isDoubleOrNothing ? activeQ.points * 2 : activeQ.points);
-    const tileMoveType = specialMovesOverlay?.deploymentsByTileId?.[activeQ.id]?.moveType;
-    const points = (action === 'award' || action === 'steal')
+    const tileMoveType = specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType;
+    const stealBlocked = isStealBlockedForMove(tileMoveType);
+    const resolvesAsFail = action === 'return' && doesReturnResolveAsFail(tileMoveType);
+
+    if (action === 'steal' && stealBlocked) {
+      logger.warn('special_move_steal_blocked', { tileId: activeQ.id, moveType: tileMoveType });
+      addToast('error', 'Steal is disabled for this special move.');
+      resolvingQuestionIdRef.current = null;
+      return;
+    }
+
+    const points = (action === 'award' || action === 'steal' || resolvesAsFail)
       ? applySpecialMovesDecorator(basePoints, {
           tileId: activeQ.id,
           moveType: tileMoveType,
-          outcome: action === 'award' ? 'AWARD' : 'STEAL'
+          outcome: action === 'award' ? 'AWARD' : action === 'steal' ? 'STEAL' : 'FAIL'
         })
       : basePoints;
 
@@ -1023,6 +1042,19 @@ const App: React.FC = () => {
        emitGameEvent('TILE_VOIDED', { actor: { role: 'director' }, context: { ...tileCtx, note: 'Question voided by producer' } });
     } else if (action === 'return') {
        emitGameEvent('QUESTION_RETURNED', { actor: { role: 'director' }, context: { ...tileCtx } });
+      if (resolvesAsFail) {
+        const failedPlayer = current.players.find((p) => p.id === current.selectedPlayerId);
+        emitGameEvent('SCORE_ADJUSTED', {
+          actor: { role: 'director' },
+          context: {
+            ...tileCtx,
+            playerName: failedPlayer?.name,
+            playerId: failedPlayer?.id,
+            delta: points,
+            note: `Special move failure (${tileMoveType || 'UNKNOWN_MOVE'})`
+          }
+        });
+      }
     }
 
     const newCategories = current.categories.map(c => {
@@ -1034,8 +1066,8 @@ const App: React.FC = () => {
           return {
             ...q,
             isRevealed: false, 
-            isAnswered: action === 'award' || action === 'steal',
-            isVoided: action === 'void'
+            isAnswered: action === 'award' || action === 'steal' || resolvesAsFail,
+            isVoided: action === 'void' || resolvesAsFail
           };
         })
       };
@@ -1056,6 +1088,11 @@ const App: React.FC = () => {
           return { ...p, score: p.score + points, stealsCount: newStealsCount };
         }
         return p;
+      });
+    } else if (resolvesAsFail && current.selectedPlayerId) {
+      newPlayers = newPlayers.map((p) => {
+        if (p.id !== current.selectedPlayerId) return p;
+        return { ...p, score: p.score + points };
       });
     }
 
@@ -1116,10 +1153,14 @@ const App: React.FC = () => {
     };
     stopQuestionTimer();
     saveGameState(newState);
+    resolvingQuestionIdRef.current = null;
 
     if ((action === 'award' || action === 'steal') && targetPlayerId) {
       const name = newPlayers.find(p => p.id === targetPlayerId)?.name || 'Unknown';
       addToast('success', `${points} Points to ${name} ${action === 'steal' ? '(Steal!)' : ''}`);
+    } else if (resolvesAsFail) {
+      const attemptedName = attemptedPlayer?.name || 'Unknown';
+      addToast('error', `${Math.abs(points)} points lost by ${attemptedName}`);
     }
   };
 
@@ -1334,12 +1375,19 @@ const App: React.FC = () => {
                           <Scoreboard players={gameState.players} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
                         </div>
                         {activeQuestion && activeCategory && (
+                          (() => {
+                            const activeMoveType = specialMovesOverlay?.deploymentsByTileId?.[activeQuestion.id]?.moveType;
+                            const allowSteal = !isStealBlockedForMove(activeMoveType);
+                            return (
                           <QuestionModal 
                             question={activeQuestion} 
                             categoryTitle={activeCategory.title} 
                             players={gameState.players} 
                             selectedPlayerId={gameState.selectedPlayerId} 
                             timer={gameState.timer}
+                            viewSettings={gameState.viewSettings}
+                            allowSteal={allowSteal}
+                            stealDisabledReason={allowSteal ? undefined : 'Steal disabled by active special move'}
                             questionCountdownRemainingSeconds={questionTimer.remainingSeconds}
                             questionCountdownDurationSeconds={questionTimer.durationSeconds}
                             isQuestionCountdownRunning={questionTimer.isRunning && questionTimer.activeQuestionId === activeQuestion.id}
@@ -1364,6 +1412,8 @@ const App: React.FC = () => {
                               emitGameEvent('TIMER_FINISHED', { actor: { role: 'system' }, context: { tileId: activeQuestion.id, points: activeQuestion.points } });
                             }}
                           />
+                            );
+                          })()
                         )}
                       </div>
                     )}
