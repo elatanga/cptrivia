@@ -56,8 +56,15 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     fireEvent.click(tile.closest('.cursor-pointer')!);
 
     expect(screen.getByText(/AI Regen Tile/i)).toBeInTheDocument();
-    expect(screen.getByText('easy')).toBeInTheDocument();
-    expect(screen.getByText('hard')).toBeInTheDocument();
+    
+    // Find difficulty buttons within the modal (not the disabled ones outside)
+    const easyBtns = screen.getAllByText('easy');
+    const hardBtns = screen.getAllByText('hard');
+    // Get the enabled one (the one in the active modal)
+    const easyBtn = easyBtns.find(btn => !btn.classList.contains('opacity-30'));
+    const hardBtn = hardBtns.find(btn => !btn.classList.contains('opacity-30'));
+    expect(easyBtn).toBeInTheDocument();
+    expect(hardBtn).toBeInTheDocument();
   });
 
   it('2) FUNCTIONAL: Regen button calls generateSingleQuestion with selected difficulty', async () => {
@@ -68,9 +75,11 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     const tile = screen.getByText('100');
     fireEvent.click(tile.closest('.cursor-pointer')!);
 
-    // Select 'hard'
-    const hardBtn = screen.getByText('hard');
-    fireEvent.click(hardBtn);
+    // Select 'hard' - get the enabled one
+    const hardBtns = screen.getAllByText('hard');
+    const hardBtn = hardBtns.find(btn => !btn.classList.contains('opacity-30'));
+    expect(hardBtn).toBeDefined();
+    if (hardBtn) fireEvent.click(hardBtn);
 
     // Click Regen
     const regenBtn = screen.getByRole('button', { name: /regen/i });

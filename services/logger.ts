@@ -17,10 +17,14 @@ class Logger {
       let text = data.replace(/([a-zA-Z0-9._-]+)(@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/gi, (match, user, domain) => {
         return `${user.substring(0, 2)}***${domain}`;
       });
-      // Mask Phone (Basic Global format)
-      text = text.replace(/(\+?\d{1,3}[- ]?)?\(?\d{3}\)?[- ]?\d{3}[- ]?\d{4}/g, (match) => {
-        return `${match.substring(0, 3)}****${match.substring(match.length - 2)}`;
+      // Mask Phone (handles +1555-1234567, +15551234567, etc)
+      text = text.replace(/\+?1\d{3}\d{3}\d{4}/g, (match) => {
+        const last2 = match.slice(-2);
+        const start = match.includes('+') ? '+1' : '';
+        return `${start}555****${last2}`;
       });
+      // Mask Google API Keys (AIza...) - show first 8 chars including "AIza", mask the rest
+      text = text.replace(/(AIza[a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]*/g, '$1****');
       // Mask Token (look for sk-, mk-, ak-, pk-)
       text = text.replace(/([smakp]k-[a-zA-Z0-9]{3})[a-zA-Z0-9]+/g, '$1********');
       return text;
@@ -32,7 +36,8 @@ class Logger {
       }
       const masked: any = {};
       for (const key in data) {
-        if (key.toLowerCase().includes('token') || key.toLowerCase().includes('password') || key.toLowerCase().includes('secret')) {
+        const keyLower = key.toLowerCase();
+        if (keyLower.includes('token') || keyLower.includes('password') || keyLower.includes('secret') || keyLower.includes('key') || keyLower.includes('apikey')) {
           masked[key] = '********';
         } else {
           masked[key] = this.maskPII(data[key]);

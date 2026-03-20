@@ -531,12 +531,17 @@ export const DirectorPanel: React.FC<Props> = ({
   const handleRemovePlayer = (id: string) => {
     const p = gameState.players.find(x => x.id === id);
     if (p && confirm(`Permanently remove ${p.name}?`)) {
-      soundService.playClick();
-      logger.info('director_player_update', { playerId: id, field: 'removed' });
-      const nextPlayers = gameState.players.filter(x => x.id !== id);
-      const nextSelection = gameState.selectedPlayerId === id ? (nextPlayers[0]?.id || null) : gameState.selectedPlayerId;
-      onUpdateState({ ...gameState, players: nextPlayers, selectedPlayerId: nextSelection });
-      addToast('info', `Removed ${p.name}`);
+      try {
+        soundService.playClick();
+        logger.info('director_player_update', { playerId: id, field: 'removed' });
+        const nextPlayers = gameState.players.filter(x => x.id !== id);
+        const nextSelection = gameState.selectedPlayerId === id ? (nextPlayers[0]?.id || null) : gameState.selectedPlayerId;
+        onUpdateState({ ...gameState, players: nextPlayers, selectedPlayerId: nextSelection });
+        addToast('info', `Removed ${p.name}`);
+      } catch (error) {
+        logger.error('director_player_removal_failed', { playerId: id, error: String(error) });
+        addToast('error', `Failed to update: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     }
   };
 
