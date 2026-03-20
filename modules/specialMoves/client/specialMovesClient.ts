@@ -94,14 +94,16 @@ class SpecialMovesClient {
   }
 
   private isValidationErrorCode(code: string): boolean {
-    return ['invalid-argument', 'already-exists', 'failed-precondition', 'permission-denied', 'unauthenticated'].includes(code);
+    return ['invalid-argument', 'already-exists', 'failed-precondition', 'unauthenticated'].includes(code);
   }
 
   private shouldFallbackFromFunctions(error: any): boolean {
     const code = this.getErrorCode(error);
     if (!code) return true;
+    // permission-denied should trigger fallback (user doesn't have backend access)
+    // validation errors that don't involve permissions should NOT fallback
     if (this.isValidationErrorCode(code)) return false;
-    return ['internal', 'unavailable', 'deadline-exceeded', 'unknown', 'not-found', 'cancelled', 'resource-exhausted'].includes(code);
+    return ['internal', 'unavailable', 'deadline-exceeded', 'unknown', 'not-found', 'cancelled', 'resource-exhausted', 'permission-denied'].includes(code);
   }
 
   /**
@@ -151,6 +153,14 @@ class SpecialMovesClient {
 
   /**
    * Dispatches a request to arm a specific board tile.
+   * 
+   * FALLBACK BEHAVIOR:
+   * - Attempts to use Cloud Functions if available
+   * - On backend failure (CORS, permission-denied, network error, etc.), automatically falls back to:
+   *   1. Firestore overlay if DB is available
+   *   2. In-memory state if only that is available
+   * - Fallback modes use the same tile state model, so UI remains consistent
+   * - Non-fallback errors (already-armed, invalid-argument, etc.) are thrown
    */
   async requestArmTile(params: RequestArmParams): Promise<{ success: boolean; id: string }> {
     if (!ALLOWED_MOVE_TYPES.includes(params.moveType)) {
@@ -335,6 +345,12 @@ class SpecialMovesClient {
     };
 
     await setDoc(overlayRef, next);
+    logger.info('SMS_FALLBACK_ARM_SUCCESS_OVERLAY', {
+      gameId: params.gameId,
+      tileId: params.tileId,
+      moveType: params.moveType,
+      mode: 'FIRESTORE_FALLBACK'
+    });
     return { success: true, id: params.idempotencyKey };
   }
 
@@ -380,6 +396,12 @@ class SpecialMovesClient {
     };
     this.inMemoryOverlayByGameId.set(params.gameId, next);
     this.notifyInMemorySubscribers(params.gameId, next);
+    logger.info('SMS_FALLBACK_ARM_SUCCESS_MEMORY', {
+      gameId: params.gameId,
+      tileId: params.tileId,
+      moveType: params.moveType,
+      mode: 'MEMORY_FALLBACK'
+    });
     return { success: true, id: params.idempotencyKey };
   }
 
