@@ -6,6 +6,21 @@ import { logger } from '../../../services/logger';
 import { SMSOverlayDoc } from '../firestoreTypes';
 import { SpecialMoveType } from '../../../types';
 
+const ALLOWED_MOVE_TYPES: SpecialMoveType[] = [
+  'DOUBLE_TROUBLE',
+  'TRIPLE_THREAT',
+  'SABOTAGE',
+  'MEGA_STEAL',
+  'DOUBLE_WINS_OR_NOTHING',
+  'TRIPLE_WINS_OR_NOTHING',
+  'SAFE_BET',
+  'LOCKOUT',
+  'SUPER_SAVE',
+  'GOLDEN_GAMBLE',
+  'SHIELD_BOOST',
+  'FINAL_SHOT',
+];
+
 export interface RequestArmParams {
   gameId: string;
   tileId: string;
@@ -73,6 +88,22 @@ class SpecialMovesClient {
     logger.info('SMS_BACKEND_MODE_CHANGED', { backendMode: nextMode });
   }
 
+  private getErrorCode(error: any): string {
+    const raw = String(error?.code || '').toLowerCase();
+    return raw.startsWith('functions/') ? raw.replace('functions/', '') : raw;
+  }
+
+  private isValidationErrorCode(code: string): boolean {
+    return ['invalid-argument', 'already-exists', 'failed-precondition', 'permission-denied', 'unauthenticated'].includes(code);
+  }
+
+  private shouldFallbackFromFunctions(error: any): boolean {
+    const code = this.getErrorCode(error);
+    if (!code) return true;
+    if (this.isValidationErrorCode(code)) return false;
+    return ['internal', 'unavailable', 'deadline-exceeded', 'unknown', 'not-found', 'cancelled', 'resource-exhausted'].includes(code);
+  }
+
   /**
    * Utility: Exponential Backoff Retry
    */
@@ -122,17 +153,47 @@ class SpecialMovesClient {
    * Dispatches a request to arm a specific board tile.
    */
   async requestArmTile(params: RequestArmParams): Promise<{ success: boolean; id: string }> {
+    if (!ALLOWED_MOVE_TYPES.includes(params.moveType)) {
+      throw new Error(`Unsupported special move type: ${params.moveType}`);
+    }
+
     if (functions) {
       this.setBackendMode('FUNCTIONS');
       const call = httpsCallable<RequestArmParams, { success: boolean; id: string }>(functions, 'sms_requestArm');
-      return this.withRetry(
-        async () => {
-          const result = await call(params);
-          return result.data;
-        },
-        'requestArmTile',
-        params
-      );
+      try {
+        return await this.withRetry(
+          async () => {
+            const result = await call(params);
+            return result.data;
+          },
+          'requestArmTile',
+          params
+        );
+      } catch (e: any) {
+        if (!this.shouldFallbackFromFunctions(e)) {
+          throw e;
+        }
+
+        logger.warn('SMS_FUNCTIONS_ARM_FAILED_FALLBACK', {
+          gameId: params.gameId,
+          tileId: params.tileId,
+          moveType: params.moveType,
+          errorCode: this.getErrorCode(e),
+          error: e?.message,
+        });
+
+        if (db) {
+          this.setBackendMode('FIRESTORE_FALLBACK');
+          return this.withRetry(
+            async () => this.fallbackArmViaOverlay(params),
+            'requestArmTileFallbackOverlayAfterFunctionsError',
+            params
+          );
+        }
+
+        this.setBackendMode('MEMORY_FALLBACK');
+        return this.fallbackArmInMemory(params);
+      }
     }
 
     logger.warn('SMS_FUNCTIONS_UNAVAILABLE_FALLBACK_ARM', { gameId: params.gameId, tileId: params.tileId });
@@ -254,6 +315,11 @@ class SpecialMovesClient {
     const currentSnap = await getDoc(overlayRef);
     const current = currentSnap.exists() ? (currentSnap.data() as SMSOverlayDoc) : this.getEmptyOverlay();
 
+    const existing = current.deploymentsByTileId?.[params.tileId];
+    if (existing?.status === 'ARMED') {
+      throw new Error('Tile already armed with a special move.');
+    }
+
     const next: SMSOverlayDoc = {
       deploymentsByTileId: {
         ...(current.deploymentsByTileId || {}),
@@ -295,6 +361,10 @@ class SpecialMovesClient {
   private fallbackArmInMemory(params: RequestArmParams): { success: boolean; id: string } {
     const now = Date.now();
     const current = this.getInMemoryOverlay(params.gameId);
+    const existing = current.deploymentsByTileId?.[params.tileId];
+    if (existing?.status === 'ARMED') {
+      throw new Error('Tile already armed with a special move.');
+    }
     const next: SMSOverlayDoc = {
       deploymentsByTileId: {
         ...(current.deploymentsByTileId || {}),

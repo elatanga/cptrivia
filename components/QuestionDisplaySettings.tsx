@@ -1,7 +1,7 @@
 import React from 'react';
 import { Monitor, Grid3x3, Type, Square } from 'lucide-react';
 import { BoardViewSettings } from '../types';
-import { BOARD_VIEW_SETTINGS_OPTIONS } from '../services/boardViewSettings';
+import { BOARD_VIEW_SETTINGS_OPTIONS, sanitizeBoardViewSettingsPatch } from '../services/boardViewSettings';
 import { soundService } from '../services/soundService';
 
 interface Props {
@@ -12,7 +12,7 @@ interface Props {
 export const QuestionDisplaySettings: React.FC<Props> = ({ settings, onUpdateSettings }) => {
   const handleChange = (key: keyof BoardViewSettings, value: any) => {
     soundService.playClick();
-    onUpdateSettings({ [key]: value });
+    onUpdateSettings(sanitizeBoardViewSettingsPatch({ [key]: value } as Partial<BoardViewSettings>));
   };
 
   return (

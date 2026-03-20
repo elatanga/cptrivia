@@ -27,6 +27,8 @@ export interface Player {
   wildcardsUsed?: number; 
   wildcardActive?: boolean; 
   stealsCount?: number; 
+  specialMovesUsedCount?: number;
+  specialMovesUsedNames?: string[];
 }
 
 export interface GameTimer {
@@ -143,6 +145,8 @@ export interface GameAnalyticsEvent {
     after?: any;
     message?: string;
     note?: string;
+    specialMoveType?: SpecialMoveType;
+    specialMoveName?: string;
   };
 }
 
@@ -404,7 +408,19 @@ export interface GameTemplate {
   lastModified?: string;
 }
 
-export type SpecialMoveType = 'DOUBLE_TROUBLE' | 'TRIPLE_THREAT' | 'SABOTAGE' | 'MEGA_STEAL';
+export type SpecialMoveType =
+  | 'DOUBLE_TROUBLE'
+  | 'TRIPLE_THREAT'
+  | 'SABOTAGE'
+  | 'MEGA_STEAL'
+  | 'DOUBLE_WINS_OR_NOTHING'
+  | 'TRIPLE_WINS_OR_NOTHING'
+  | 'SAFE_BET'
+  | 'LOCKOUT'
+  | 'SUPER_SAVE'
+  | 'GOLDEN_GAMBLE'
+  | 'SHIELD_BOOST'
+  | 'FINAL_SHOT';
 
 export interface SMSDeployment {
   moveType: SpecialMoveType;

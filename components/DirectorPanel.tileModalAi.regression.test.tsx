@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
 import { GameState } from '../types';
@@ -48,6 +48,11 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     vi.stubGlobal('crypto', { randomUUID: () => 'gen-id' });
   });
 
+  const getEditTileModal = () => {
+    const heading = screen.getByRole('heading', { name: /Science \/\/ 100/i });
+    return heading.closest('.max-w-lg') as HTMLElement;
+  };
+
   it('1) RENDERING: Tile modal includes the "AI Regen Tile" section', () => {
     render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
     
@@ -75,15 +80,15 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     const tile = screen.getByText('100');
     fireEvent.click(tile.closest('.cursor-pointer')!);
 
-    // Select 'hard' - get the enabled one
-    const hardBtns = screen.getAllByText('hard');
-    const hardBtn = hardBtns.find(btn => !btn.classList.contains('opacity-30'));
-    expect(hardBtn).toBeDefined();
-    if (hardBtn) fireEvent.click(hardBtn);
+    // Select 'hard' within the active edit-tile modal
+    const hardBtn = within(getEditTileModal()).getByRole('button', { name: 'hard' });
+    fireEvent.click(hardBtn);
 
     // Click Regen
-    const regenBtn = screen.getByRole('button', { name: /regen/i });
-    fireEvent.click(regenBtn);
+    const regenBtn = within(getEditTileModal()).getByRole('button', { name: /^Regen$/i });
+    await act(async () => {
+      fireEvent.click(regenBtn);
+    });
 
     expect(geminiService.generateSingleQuestion).toHaveBeenCalledWith(
       'Regression Show',
@@ -100,7 +105,9 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
     
     fireEvent.click(screen.getByText('100').closest('.cursor-pointer')!);
-    fireEvent.click(screen.getByRole('button', { name: /regen/i }));
+    await act(async () => {
+      fireEvent.click(within(getEditTileModal()).getByRole('button', { name: /^Regen$/i }));
+    });
 
     await waitFor(() => {
       expect(mockOnUpdateState).toHaveBeenCalled();
@@ -119,7 +126,9 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     const { rerender } = render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
     
     fireEvent.click(screen.getByText('100').closest('.cursor-pointer')!);
-    fireEvent.click(screen.getByRole('button', { name: /regen/i }));
+    await act(async () => {
+      fireEvent.click(within(getEditTileModal()).getByRole('button', { name: /^Regen$/i }));
+    });
 
     await waitFor(() => expect(mockOnUpdateState).toHaveBeenCalled());
 
