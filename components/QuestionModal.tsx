@@ -10,6 +10,10 @@ import { AutoFitText } from './AutoFitText';
 const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => void }> = React.memo(({ timer, onTimerEnd }) => {
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const prevTimeLeft = useRef<number | null>(null);
+  // Ref tracks current timeLeft so the paused-state branch can read it
+  // without `timeLeft` being a useEffect dependency (which caused the
+  // interval to be torn-down and re-created on every tick).
+  const timeLeftRef = useRef<number | null>(null);
 
   useEffect(() => {
     let interval: number;
@@ -17,6 +21,7 @@ const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => 
       if (timer.endTime && timer.isRunning) {
         const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
         setTimeLeft(remaining);
+        timeLeftRef.current = remaining;
         if (remaining > 0 && remaining <= 5 && remaining !== prevTimeLeft.current) {
           soundService.playTimerTick();
         }
@@ -25,11 +30,14 @@ const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => 
           if (onTimerEnd) onTimerEnd();
         }
         prevTimeLeft.current = remaining;
-      } else if (timer.endTime && !timer.isRunning && timeLeft === null) {
+      } else if (timer.endTime && !timer.isRunning && timeLeftRef.current === null) {
+        // Paused with an endTime set but no value yet — show the snapshot.
         const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
         setTimeLeft(remaining);
+        timeLeftRef.current = remaining;
       } else if (!timer.endTime) {
         setTimeLeft(null);
+        timeLeftRef.current = null;
         prevTimeLeft.current = null;
       }
     };
@@ -37,7 +45,9 @@ const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => 
     updateTimer();
     interval = window.setInterval(updateTimer, 200);
     return () => clearInterval(interval);
-  }, [timer, timeLeft, onTimerEnd]);
+  // Removed `timeLeft` from deps: it was causing the interval to restart on
+  // every tick. `timeLeftRef` provides the current value without the dep.
+  }, [timer, onTimerEnd]);
 
   if (timeLeft === null) return null;
 
@@ -66,12 +76,13 @@ interface Props {
   onTimerEnd?: () => void;
 }
 
-export const QuestionModal: React.FC<Props> = ({ 
+export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalInner({ 
   question,
   categoryTitle,
   players,
   selectedPlayerId,
   timer,
+  displaySettings,
   questionCountdownRemainingSeconds,
   questionCountdownDurationSeconds,
   isQuestionCountdownRunning,
@@ -80,7 +91,7 @@ export const QuestionModal: React.FC<Props> = ({
   onClose,
   onReveal,
   onTimerEnd
-}) => {
+}) {
   const [showStealSelect, setShowStealSelect] = useState(false);
   const loggedQuestionIdRef = useRef<string | null>(null);
   const loggedDoubleQuestionIdRef = useRef<string | null>(null);
@@ -143,14 +154,14 @@ export const QuestionModal: React.FC<Props> = ({
         minFontSizePx={20}
         maxFontSizePx={84}
         clampVw={4.5}
-        className={`font-roboto-bold text-center transition-all duration-500 max-h-full ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
+        className={`font-roboto-bold text-center transition-[opacity,transform,filter] duration-500 max-h-full ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
         containerClassName="w-full h-full flex items-center justify-center"
       />
     </div>
   ), [question.text, isRevealed]);
 
   const answerContent = useMemo(() => (
-    <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-0">
+    <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-[3.5rem] md:min-h-[5rem]">
       {!isRevealed && answerOptions.length > 0 && (
         <div data-testid="answer-options-grid" className={`w-full grid ${optionGridClass} gap-2 md:gap-3`}>
           {answerOptions.map((option, idx) => (
@@ -443,4 +454,6 @@ export const QuestionModal: React.FC<Props> = ({
       )}
     </div>
   );
-};
+// React.memo: prevents re-renders driven purely by countdown ticks in the parent.
+// question/answer content is further stabilised internally by useMemo.
+});
