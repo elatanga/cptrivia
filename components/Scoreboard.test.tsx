@@ -1,30 +1,22 @@
 
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Scoreboard } from './Scoreboard';
 import { Player, BoardViewSettings } from '../types';
 
-// Fix: Add global declarations for Jest variables
-declare const jest: any;
-declare const describe: any;
-declare const test: any;
-declare const expect: any;
-declare const beforeEach: any;
-declare const global: any;
-declare const require: any;
-
 // Mock services
-jest.mock('../services/soundService', () => ({
+vi.mock('../services/soundService', () => ({
   soundService: {
-    playClick: jest.fn(),
+    playClick: vi.fn(),
   },
 }));
 
-jest.mock('../services/logger', () => ({
+vi.mock('../services/logger', () => ({
   logger: {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
   },
 }));
 
@@ -45,18 +37,18 @@ const mockViewSettings: BoardViewSettings = {
 
 describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1440 });
   });
 
-  test('A) 8-PLAYER GRID: Renders all 8 players in a 2-column grid layout', () => {
+  it('A) 8-PLAYER GRID: Renders all 8 players in a 2-column grid layout', () => {
     render(
       <Scoreboard 
         players={generatePlayers(8)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />
@@ -71,14 +63,14 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
     }
   });
 
-  test('B) NO SCROLL: Enforces overflow-hidden and removes scrollbars via style audit', () => {
+  it('B) NO SCROLL: Enforces overflow-hidden and removes scrollbars via style audit', () => {
     const { container } = render(
       <Scoreboard 
         players={generatePlayers(8)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />
@@ -92,14 +84,14 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
     expect(list).toBeInTheDocument();
   });
 
-  test('C) LAYOUT SWITCHING: 1-column for 4 players, 2-column for 5 players', () => {
+  it('C) LAYOUT SWITCHING: 1-column for 4 players, 2-column for 5 players', () => {
     const { rerender } = render(
       <Scoreboard 
         players={generatePlayers(4)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />
@@ -111,9 +103,9 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
       <Scoreboard 
         players={generatePlayers(5)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />
@@ -122,15 +114,15 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
     expect(screen.getByTestId('scoreboard-root')).toHaveAttribute('data-layout', 'grid-2col');
   });
 
-  test('D) AUDIT LOGGING: Reports layout mode and viewport upon initialization', () => {
-    const { logger } = require('../services/logger');
+  it('D) AUDIT LOGGING: Reports layout mode and viewport upon initialization', async () => {
+    const { logger } = await import('../services/logger');
     render(
       <Scoreboard 
         players={generatePlayers(8)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />

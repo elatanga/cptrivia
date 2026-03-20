@@ -134,6 +134,11 @@ const App: React.FC = () => {
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const specialMovesOverlay = useSpecialMovesOverlay(gameState.isGameStarted ? activeShow?.id : undefined);
+  // Ref keeps the overlay current inside stable callbacks without being a dep.
+  const specialMovesOverlayRef = useRef(specialMovesOverlay);
+  useEffect(() => {
+    specialMovesOverlayRef.current = specialMovesOverlay;
+  }, [specialMovesOverlay]);
   const isBoardComplete = useMemo(() => isTriviaBoardComplete(gameState.categories), [gameState.categories]);
   const celebrationResult = useMemo(() => deriveEndGameCelebrationResult(gameState.players), [gameState.players]);
   const questionTimerDurationRef = useRef(questionTimerDurationSeconds);
@@ -141,6 +146,14 @@ const App: React.FC = () => {
   useEffect(() => {
     questionTimerDurationRef.current = questionTimerDurationSeconds;
   }, [questionTimerDurationSeconds]);
+
+  // Tracks remainingSeconds via ref so stopQuestionTimer can log it
+  // without capturing questionTimer.remainingSeconds as a dep (which
+  // would create a new callback reference every second while running).
+  const questionTimerRemainingRef = useRef(questionTimer.remainingSeconds);
+  useEffect(() => {
+    questionTimerRemainingRef.current = questionTimer.remainingSeconds;
+  }, [questionTimer.remainingSeconds]);
 
   const handleSetQuestionTimerDuration = useCallback((seconds: number) => {
     const resolvedSeconds = resolveQuestionCountdownDuration(seconds);
