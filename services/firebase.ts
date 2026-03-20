@@ -3,29 +3,16 @@ import { getFirestore, Firestore } from 'firebase/firestore';
 import { getFunctions, Functions } from 'firebase/functions';
 import { getAuth, Auth, signInAnonymously } from 'firebase/auth';
 import { logger } from './logger';
-
-// Interface for the runtime configuration object
-interface RuntimeConfig {
-  FIREBASE_API_KEY?: string;
-  FIREBASE_AUTH_DOMAIN?: string;
-  FIREBASE_PROJECT_ID?: string;
-  FIREBASE_STORAGE_BUCKET?: string;
-  FIREBASE_MESSAGING_SENDER_ID?: string;
-  FIREBASE_APP_ID?: string;
-  API_KEY?: string; // Gemini API Key
-  BUILD_VERSION?: string;
-  [key: string]: any;
-}
-
-// Safely access the global runtime config
-const getRuntimeConfig = (): RuntimeConfig => {
-  if (typeof window !== 'undefined' && (window as any).__RUNTIME_CONFIG__) {
-    return (window as any).__RUNTIME_CONFIG__;
-  }
-  return {};
-};
+import {
+  getRuntimeConfig,
+  areAnonymousFirebaseAuthFlowsEnabled,
+  assertRealAuthInDeployedEnv,
+  logRuntimeMode,
+  isDeployedRuntime,
+} from './runtimeConfig';
 
 const runtimeConfig = getRuntimeConfig();
+logRuntimeMode('firebase');
 
 // Define strictly required keys matching server.js
 const requiredKeys = [
@@ -52,6 +39,8 @@ const isInvalid = (val: string | undefined): boolean => {
 // Identify invalid keys
 const missingKeys = requiredKeys.filter(key => isInvalid(runtimeConfig[key]));
 const firebaseConfigError = missingKeys.length > 0;
+
+assertRealAuthInDeployedEnv('firebase.config', !firebaseConfigError);
 
 let app: FirebaseApp | undefined;
 let db: Firestore | undefined;
@@ -97,11 +86,19 @@ if (firebaseConfigError) {
     functions = getFunctions(app);
     auth = getAuth(app);
 
-    // Auto-authenticate anonymously to ensure a valid auth context
-    signInAnonymously(auth).catch((err) => {
-      // Fix: logger.warn expects 1-2 arguments
-      logger.warn('Anonymous Auth Failed', { category: 'AUTH', error: err.message });
-    });
+    if (areAnonymousFirebaseAuthFlowsEnabled()) {
+      signInAnonymously(auth).catch((err) => {
+        logger.warn('[Auth] anonymous auth failed in explicitly enabled local mode', {
+          category: 'AUTH',
+          error: err.message,
+        });
+      });
+    } else if (isDeployedRuntime()) {
+      logger.info('[Auth] anonymous auth disabled in deployed runtime', { category: 'AUTH' });
+    }
+
+    assertRealAuthInDeployedEnv('firebase.functions', Boolean(functions));
+    assertRealAuthInDeployedEnv('firebase.auth', Boolean(auth));
     
   } catch (error: any) {
     // Fix: logger.error expects 1-2 arguments

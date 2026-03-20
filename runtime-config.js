@@ -10,6 +10,8 @@ window.__RUNTIME_CONFIG__ = {
   FIREBASE_MESSAGING_SENDER_ID: "...",
   FIREBASE_APP_ID: "...",
   BUILD_ENV: "production",
-  BUILD_VERSION: "v1"
+  BUILD_VERSION: "v1",
+  ALLOW_LOCAL_MOCKS: "false",
+  ENABLE_FIREBASE_ANON_AUTH: "false"
 };
 

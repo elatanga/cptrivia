@@ -38,6 +38,17 @@ app.get("/runtime-config.js", (req, res) => {
   }
 
   const safe = (v) => String(v || "").replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  const declaredBuildEnv = String(process.env.BUILD_ENV || "production").trim().toLowerCase();
+  const deployedRuntime = ["production", "staging", "test"].includes(declaredBuildEnv);
+  const allowLocalMocks = deployedRuntime ? "false" : String(process.env.ALLOW_LOCAL_MOCKS || "false");
+  const enableFirebaseAnonAuth = deployedRuntime ? "false" : String(process.env.ENABLE_FIREBASE_ANON_AUTH || "false");
+
+  if (deployedRuntime && String(process.env.ALLOW_LOCAL_MOCKS || '').toLowerCase() === 'true') {
+    console.warn("RUNTIME WARNING: ALLOW_LOCAL_MOCKS requested in deployed runtime and has been forced off.");
+  }
+  if (deployedRuntime && String(process.env.ENABLE_FIREBASE_ANON_AUTH || '').toLowerCase() === 'true') {
+    console.warn("RUNTIME WARNING: ENABLE_FIREBASE_ANON_AUTH requested in deployed runtime and has been forced off.");
+  }
 
   const configContent = `
     window.__RUNTIME_CONFIG__ = {
@@ -48,7 +59,10 @@ app.get("/runtime-config.js", (req, res) => {
       FIREBASE_MESSAGING_SENDER_ID: "${safe(process.env.FIREBASE_MESSAGING_SENDER_ID)}",
       FIREBASE_APP_ID: "${safe(process.env.FIREBASE_APP_ID)}",
       API_KEY: "${safe(process.env.API_KEY)}",
-      BUILD_ENV: "${safe(process.env.BUILD_ENV || "production")}"
+      BUILD_ENV: "${safe(process.env.BUILD_ENV || "production")}",
+      BUILD_VERSION: "${safe(process.env.BUILD_VERSION || "unknown")}",
+      ALLOW_LOCAL_MOCKS: "${safe(allowLocalMocks)}",
+      ENABLE_FIREBASE_ANON_AUTH: "${safe(enableFirebaseAnonAuth)}" 
     };
   `;
   res.status(200).send(configContent);

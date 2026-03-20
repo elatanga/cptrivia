@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { AppShell } from './components/AppShell';
 import { ToastContainer } from './components/Toast';
 import { LoginScreen } from './components/LoginScreen';
+import { BootstrapScreen } from './components/BootstrapScreen';
 import { ShowSelection } from './components/ShowSelection';
 import { TemplateDashboard } from './components/TemplateDashboard';
 import { GameBoard } from './components/GameBoard';
@@ -59,7 +60,6 @@ const App: React.FC = () => {
   const [isConfigured, setIsConfigured] = useState(false);
   const [authChecked, setAuthChecked] = useState(false); 
   
-  const [bootstrapToken, setBootstrapToken] = useState<string | null>(null);
 
   const [session, setSession] = useState<{ id: string; username: string; role: UserRole } | null>(null);
   const [activeShow, setActiveShow] = useState<Show | null>(null);
@@ -574,10 +574,9 @@ const App: React.FC = () => {
   useEffect(() => {
     let interval: number;
     if (session?.role === 'MASTER_ADMIN') {
-        const check = () => {
+        const check = async () => {
             try {
-              const reqs = authService.getRequests(session.username);
-              const pending = reqs.filter(r => r.status === 'PENDING').length;
+              const pending = await authService.getPendingRequestCount(session.username);
               setPendingRequests(prev => {
                   if (pending > prev) {
                       soundService.playToast('info');
@@ -589,8 +588,8 @@ const App: React.FC = () => {
               setPendingRequests(0);
             }
         };
-        check(); 
-        interval = window.setInterval(check, 30000); 
+        void check(); 
+        interval = window.setInterval(() => { void check(); }, 30000); 
     } else {
       setPendingRequests(0);
     }
@@ -723,7 +722,16 @@ const App: React.FC = () => {
          setIsConfigured(status.masterReady);
 
          if (status.masterReady) {
-            const storedSessionId = localStorage.getItem('cruzpham_active_session_id');
+            const storedSessionId = localStorage.getItem('cruzpham_active_session_id') || (() => {
+              try {
+                const legacySession = localStorage.getItem('cruzpham_user_session');
+                if (!legacySession) return null;
+                const parsed = JSON.parse(legacySession);
+                return typeof parsed?.id === 'string' ? parsed.id : null;
+              } catch {
+                return null;
+              }
+            })();
             if (storedSessionId) {
                const result = await authService.restoreSession(storedSessionId);
                if (result.success && result.session) {
@@ -741,6 +749,7 @@ const App: React.FC = () => {
                   } catch (e) { logger.warn('hydrateUIStateFailed'); }
                } else {
                  localStorage.removeItem('cruzpham_active_session_id');
+                 localStorage.removeItem('cruzpham_user_session');
                  localStorage.removeItem('cruzpham_ui_state');
                }
             }
@@ -788,18 +797,6 @@ const App: React.FC = () => {
 
   // --- ACTIONS ---
 
-  const handleBootstrap = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const token = await authService.bootstrapMasterAdmin('admin');
-      setBootstrapToken(token);
-      setIsConfigured(true);
-      addToast('success', 'Master Admin Created Successfully');
-    } catch (e: any) {
-      addToast('error', e.message);
-      if (e.code === 'ERR_BOOTSTRAP_COMPLETE') setTimeout(() => window.location.reload(), 2000);
-    }
-  };
 
   const handlePopout = () => {
     const width = 1024;
@@ -1190,23 +1187,7 @@ const App: React.FC = () => {
   if (!isConfigured) return (
     <div className="h-screen w-screen flex items-center justify-center bg-black text-white">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
-      <div className="max-w-md w-full p-8 border border-gold-600 rounded-2xl bg-zinc-900 text-center relative overflow-hidden">
-        <h1 className="text-3xl font-serif text-gold-500 mb-4">SYSTEM BOOTSTRAP</h1>
-        <button onClick={handleBootstrap} className="w-full bg-gold-600 text-black font-bold py-3 rounded uppercase tracking-wider hover:bg-gold-500">Create Master Admin</button>
-      </div>
-    </div>
-  );
-
-  if (bootstrapToken) return (
-    <div className="h-screen w-screen flex items-center justify-center bg-black text-white">
-      <div className="max-w-md w-full p-8 border border-red-600 rounded-2xl bg-zinc-900 text-center">
-         <h1 className="text-3xl font-serif text-red-500 mb-4">MASTER TOKEN GENERATED</h1>
-         <div className="bg-black p-4 rounded border border-zinc-700 flex items-center justify-between mb-8">
-           <code className="text-gold-500 font-mono text-lg">{bootstrapToken}</code>
-           <button onClick={() => navigator.clipboard.writeText(bootstrapToken)} className="text-zinc-500 hover:text-white"><Copy className="w-5 h-5"/></button>
-         </div>
-         <button onClick={() => setBootstrapToken(null)} className="w-full bg-zinc-800 text-white font-bold py-3 rounded uppercase tracking-wider">I have saved it safely</button>
-      </div>
+      <BootstrapScreen onComplete={() => setIsConfigured(true)} addToast={addToast} />
     </div>
   );
 

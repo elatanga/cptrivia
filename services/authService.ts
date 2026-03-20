@@ -2,6 +2,12 @@ import { User, Session, TokenRequest, AuthResponse, AuditLogEntry, UserRole, App
 import { logger } from './logger';
 import { functions as firebaseFunctions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
+import {
+  areLocalMocksExplicitlyEnabled,
+  assertNoMocksInNonDev,
+  assertRealAuthInDeployedEnv,
+  logRuntimeMode,
+} from './runtimeConfig';
 
 const STORAGE_KEYS = {
   USERS: 'cruzpham_db_users',
@@ -55,6 +61,12 @@ type MasterRecoveryIssueShape = {
 type MasterRecoveryResultShape = {
   username: string;
   rawToken: string;
+};
+
+type AdminConsoleSnapshotShape = {
+  users: User[];
+  requests: TokenRequest[];
+  auditLogs: AuditLogEntry[];
 };
 
 type SecurityAuditAction = AuditAction
@@ -180,12 +192,98 @@ async function simulateSmsProvider(to: string, message: string): Promise<{ succe
 class AuthService {
   // In-memory lock to prevent concurrent bootstrap requests (race-condition guard)
   private _bootstrapInProgress = false;
+  private adminConsoleSnapshot: AdminConsoleSnapshotShape = {
+    users: [],
+    requests: [],
+    auditLogs: [],
+  };
 
   constructor() {
-    // No auto-seed. Rely on bootstrap.
+    logRuntimeMode('authService');
   }
 
   // --- PRIVATE HELPERS ---
+
+  private useLocalAuthority(): boolean {
+    return areLocalMocksExplicitlyEnabled();
+  }
+
+  private useAuthoritativeBackend(): boolean {
+    return !this.useLocalAuthority();
+  }
+
+  private assertLocalAuthority(pathLabel: string) {
+    if (this.useAuthoritativeBackend()) {
+      assertNoMocksInNonDev(pathLabel);
+    }
+  }
+
+  private getActiveSessionId(): string | null {
+    try {
+      return localStorage.getItem('cruzpham_active_session_id');
+    } catch {
+      return null;
+    }
+  }
+
+  private requireActiveSessionId(action: string): string {
+    const sessionId = this.getActiveSessionId();
+    if (!sessionId) {
+      throw new AppError('ERR_SESSION_EXPIRED', `${action} requires an active session.`, logger.getCorrelationId());
+    }
+    return sessionId;
+  }
+
+  private requireBackendFunctions(action: string) {
+    assertRealAuthInDeployedEnv(action, Boolean(firebaseFunctions));
+    if (!firebaseFunctions) {
+      logger.error('[RuntimeGuard] authoritative backend unavailable', { action });
+      throw new AppError('ERR_NETWORK', `Authoritative backend unavailable for ${action}.`, logger.getCorrelationId());
+    }
+    return firebaseFunctions;
+  }
+
+  private async callBackend<TResponse>(callableName: string, payload: Record<string, unknown>): Promise<TResponse> {
+    const functions = this.requireBackendFunctions(callableName);
+    logger.info('[Auth] calling authoritative backend', { callableName, source: 'firebase-functions' });
+    const callable = httpsCallable(functions, callableName);
+    const result = await callable({
+      ...payload,
+      correlationId: logger.getCorrelationId(),
+    });
+    return result.data as TResponse;
+  }
+
+  private mapCallableError(error: any, fallbackCode: AppError['code'] = 'ERR_UNKNOWN', fallbackMessage?: string): AppError {
+    if (error instanceof AppError) return error;
+    const backendCode = error?.code || error?.details?.code;
+    const message = error?.message || fallbackMessage || 'Request failed';
+    let code: AppError['code'] = fallbackCode;
+    if (backendCode === 'functions/invalid-argument' || backendCode === 'invalid-argument') code = 'ERR_VALIDATION';
+    else if (backendCode === 'functions/resource-exhausted' || backendCode === 'resource-exhausted') code = 'ERR_RATE_LIMIT';
+    else if (backendCode === 'functions/permission-denied' || backendCode === 'permission-denied') code = 'ERR_FORBIDDEN';
+    else if (backendCode === 'functions/unauthenticated' || backendCode === 'unauthenticated') code = 'ERR_SESSION_EXPIRED';
+    else if (backendCode === 'functions/not-found' || backendCode === 'not-found') code = 'ERR_REQUEST_NOT_FOUND';
+    else if (backendCode === 'functions/already-exists' || backendCode === 'already-exists') code = fallbackCode;
+    else if (backendCode === 'functions/failed-precondition' || backendCode === 'failed-precondition') code = fallbackCode;
+    return new AppError(code, fallbackMessage || message, logger.getCorrelationId());
+  }
+
+  private setAdminConsoleSnapshot(snapshot: AdminConsoleSnapshotShape) {
+    this.adminConsoleSnapshot = snapshot;
+  }
+
+  private upsertSnapshotUser(user: User) {
+    this.adminConsoleSnapshot.users = [user, ...this.adminConsoleSnapshot.users.filter((entry) => entry.username !== user.username)];
+  }
+
+  private removeSnapshotUser(username: string) {
+    this.adminConsoleSnapshot.users = this.adminConsoleSnapshot.users.filter((entry) => entry.username !== username);
+  }
+
+  private upsertSnapshotRequest(request: TokenRequest) {
+    this.adminConsoleSnapshot.requests = [request, ...this.adminConsoleSnapshot.requests.filter((entry) => entry.id !== request.id)];
+  }
 
   private checkUserRateLimit(actorId: string) {
     const now = Date.now();
@@ -214,34 +312,43 @@ class AuthService {
   }
 
   private getUsers(): User[] {
+    this.assertLocalAuthority('authService.local.users.read');
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]'); } catch { return []; }
   }
   private saveUsers(users: User[]) {
+    this.assertLocalAuthority('authService.local.users.write');
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
   }
   private getSessions(): Record<string, Session> {
+    this.assertLocalAuthority('authService.local.sessions.read');
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.SESSIONS) || '{}'); } catch { return {}; }
   }
   private saveSessions(sessions: Record<string, Session>) {
+    this.assertLocalAuthority('authService.local.sessions.write');
     localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
   }
   private readRequests(): TokenRequest[] {
+    this.assertLocalAuthority('authService.local.requests.read');
     try { 
       const reqs = JSON.parse(localStorage.getItem(STORAGE_KEYS.REQUESTS) || '[]'); 
       return reqs.sort((a: TokenRequest, b: TokenRequest) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } catch { return []; }
   }
   private saveRequests(reqs: TokenRequest[]) {
+    this.assertLocalAuthority('authService.local.requests.write');
     localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(reqs));
   }
   private readAuditLogs(): AuditLogEntry[] {
+    this.assertLocalAuthority('authService.local.audit.read');
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.AUDIT) || '[]'); } catch { return []; }
   }
   private saveAuditLog(logs: AuditLogEntry[]) {
+    this.assertLocalAuthority('authService.local.audit.write');
     localStorage.setItem(STORAGE_KEYS.AUDIT, JSON.stringify(logs));
   }
 
   private getBootstrapDocument(): { masterReady?: boolean; createdAt?: string; masterAdminId?: string; masterAdminUsername?: string } | null {
+    this.assertLocalAuthority('authService.local.bootstrap.read');
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.BOOTSTRAP);
       return raw ? JSON.parse(raw) : null;
@@ -251,10 +358,12 @@ class AuthService {
   }
 
   private saveBootstrapDocument(doc: { masterReady: boolean; createdAt: string; masterAdminId: string; masterAdminUsername: string }) {
+    this.assertLocalAuthority('authService.local.bootstrap.write');
     localStorage.setItem(STORAGE_KEYS.BOOTSTRAP, JSON.stringify(doc));
   }
 
   private getRecoveryDocument(): RecoveryRecord | null {
+    this.assertLocalAuthority('authService.local.recovery.read');
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.RECOVERY);
       return raw ? JSON.parse(raw) : null;
@@ -264,6 +373,7 @@ class AuthService {
   }
 
   private saveRecoveryDocument(doc: RecoveryRecord | null) {
+    this.assertLocalAuthority('authService.local.recovery.write');
     if (!doc) {
       localStorage.removeItem(STORAGE_KEYS.RECOVERY);
       return;
@@ -387,10 +497,15 @@ class AuthService {
         }
         return { success: false, error: data?.error || 'Cloud delivery failed' };
       } catch (error: any) {
-        logger.warn('cloudDeliveryFallback', { method, recipient, error: error?.message || String(error) });
+        logger.warn('cloudDeliveryFailed', { method, recipient, error: error?.message || String(error) });
+        if (this.useAuthoritativeBackend()) {
+          logger.error('[RuntimeGuard] backend delivery fallback blocked', { method, recipient });
+          throw this.mapCallableError(error, 'ERR_PROVIDER_DOWN', `${method} delivery unavailable.`);
+        }
       }
     }
 
+    this.assertLocalAuthority(`authService.local.delivery.${method.toLowerCase()}`);
     if (method === 'EMAIL') {
       return simulateEmailProvider(recipient, subject || 'CruzPham Studios', content);
     }
@@ -436,7 +551,8 @@ class AuthService {
   }
 
   public suggestAvailableUsername(preferredUsername: string): string {
-    return this.buildAvailableUsername(preferredUsername);
+    const users = this.useAuthoritativeBackend() ? this.adminConsoleSnapshot.users : this.getUsers();
+    return this.buildAvailableUsername(preferredUsername, users);
   }
 
   private getUserByUsername(username: string, users = this.getUsers()): User | undefined {
@@ -496,6 +612,16 @@ class AuthService {
   // --- BOOTSTRAP SYSTEM ---
 
   async getBootstrapStatus(): Promise<BootstrapStatusShape> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<BootstrapStatusShape>('getSystemStatus', {});
+        logger.info('[Bootstrap] state loaded from systemConfig', result);
+        return result;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_NETWORK', 'Unable to load bootstrap state.');
+      }
+    }
+
     logger.info('bootstrapStatusCheck');
     await new Promise(r => setTimeout(r, 150));
 
@@ -519,6 +645,17 @@ class AuthService {
   }
 
   async bootstrapMasterAdmin(username: string): Promise<string> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const sanitizedUsername = this.sanitizeUsername(username, 'Master Admin username');
+        const result = await this.callBackend<{ token: string }>('bootstrapSystem', { username: sanitizedUsername });
+        logger.info('[Bootstrap] master admin created via backend', { username: sanitizedUsername });
+        return result.token;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_BOOTSTRAP_COMPLETE', 'System already bootstrapped.');
+      }
+    }
+
     const sanitizedUsername = this.sanitizeUsername(username, 'Master Admin username');
     logger.info('bootstrapAttempt', { username: sanitizedUsername });
 
@@ -609,6 +746,16 @@ class AuthService {
   }
 
   async issueMasterRecovery(actorUsername: string): Promise<MasterRecoveryIssueShape> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        return await this.callBackend<MasterRecoveryIssueShape>('issueStudioMasterRecovery', {
+          sessionId: this.requireActiveSessionId('Master recovery issuance'),
+        });
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_FORBIDDEN', 'Unable to issue recovery code.');
+      }
+    }
+
     const users = this.getUsers();
     const actor = this.requireMasterAdmin(actorUsername, 'master recovery issuance', users);
     const master = this.getMasterAdminUser(users);
@@ -636,6 +783,19 @@ class AuthService {
   }
 
   async completeMasterRecovery(username: string, recoveryCode: string): Promise<MasterRecoveryResultShape> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<MasterRecoveryResultShape>('completeStudioMasterRecovery', {
+          username: this.sanitizeUsername(username, 'Master Admin username'),
+          recoveryCode,
+        });
+        localStorage.removeItem('cruzpham_active_session_id');
+        return result;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_RECOVERY_INVALID', 'Invalid or expired recovery code.');
+      }
+    }
+
     const sanitizedUsername = this.sanitizeUsername(username, 'Master Admin username');
     const users = this.getUsers();
     const master = this.getMasterAdminUser(users);
@@ -687,6 +847,22 @@ class AuthService {
   // --- AUTH ---
 
   async login(username: string, token: string): Promise<AuthResponse> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<AuthResponse>('loginWithToken', {
+          username: this.sanitizeUsername(username, 'Username'),
+          token,
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+        });
+        if (result.success && result.session) {
+          localStorage.setItem('cruzpham_active_session_id', result.session.id);
+        }
+        return result;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_INVALID_CREDENTIALS', 'Authentication failed.');
+      }
+    }
+
     await new Promise(r => setTimeout(r, 400)); // Latency
 
     const users = this.getUsers();
@@ -735,6 +911,21 @@ class AuthService {
   }
 
   async logout(sessionId: string): Promise<void> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        await this.callBackend<{ success: boolean }>('logoutStudioSession', { sessionId });
+      } catch (error) {
+        logger.warn('[Auth] logout callable failed; clearing client session anyway', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        if (localStorage.getItem('cruzpham_active_session_id') === sessionId) {
+          localStorage.removeItem('cruzpham_active_session_id');
+        }
+      }
+      return;
+    }
+
     const sessions = this.getSessions();
     if (sessions[sessionId]) {
       delete sessions[sessionId];
@@ -747,6 +938,23 @@ class AuthService {
   }
 
   async restoreSession(sessionId: string): Promise<AuthResponse> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<AuthResponse>('restoreStudioSession', { sessionId });
+        if (result.success && result.session) {
+          localStorage.setItem('cruzpham_active_session_id', result.session.id);
+        } else if (this.getActiveSessionId() === sessionId) {
+          localStorage.removeItem('cruzpham_active_session_id');
+        }
+        return result;
+      } catch (error) {
+        if (this.getActiveSessionId() === sessionId) {
+          localStorage.removeItem('cruzpham_active_session_id');
+        }
+        return { success: false, message: this.mapCallableError(error, 'ERR_SESSION_EXPIRED', 'Session expired.').message, code: 'ERR_SESSION_EXPIRED' };
+      }
+    }
+
     const bsStatus = await this.getBootstrapStatus();
     if (!bsStatus.masterReady) {
       return { success: false, code: 'ERR_UNKNOWN' };
@@ -786,26 +994,85 @@ class AuthService {
   // --- ADMIN USER MANAGEMENT ---
 
   getAllUsers(actorUsername: string): User[] {
+    if (this.useAuthoritativeBackend()) {
+      void actorUsername;
+      return this.adminConsoleSnapshot.users;
+    }
     this.requireMasterAdmin(actorUsername, 'read users');
     return this.getUsers();
   }
 
   getRequests(actorUsername: string): TokenRequest[] {
+    if (this.useAuthoritativeBackend()) {
+      void actorUsername;
+      return this.adminConsoleSnapshot.requests;
+    }
     this.requireMasterAdmin(actorUsername, 'read token requests');
     return this.readRequests();
   }
 
   getAuditLogs(actorUsername: string): AuditLogEntry[] {
+    if (this.useAuthoritativeBackend()) {
+      void actorUsername;
+      return this.adminConsoleSnapshot.auditLogs;
+    }
     this.requireMasterAdmin(actorUsername, 'read audit logs');
     return this.readAuditLogs();
   }
 
+  async loadAdminConsoleSnapshot(actorUsername: string): Promise<AdminConsoleSnapshotShape> {
+    if (this.useAuthoritativeBackend()) {
+      void actorUsername;
+      try {
+        const snapshot = await this.callBackend<AdminConsoleSnapshotShape>('getAdminConsoleSnapshot', {
+          sessionId: this.requireActiveSessionId('Admin console access'),
+        });
+        this.setAdminConsoleSnapshot(snapshot);
+        return snapshot;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_FORBIDDEN', 'Unable to load admin console data.');
+      }
+    }
+
+    const users = this.getAllUsers(actorUsername);
+    const requests = this.getRequests(actorUsername);
+    const auditLogs = this.getAuditLogs(actorUsername);
+    const snapshot = { users, requests, auditLogs };
+    this.setAdminConsoleSnapshot(snapshot);
+    return snapshot;
+  }
+
+  async getPendingRequestCount(actorUsername: string): Promise<number> {
+    if (this.useAuthoritativeBackend()) {
+      const snapshot = await this.loadAdminConsoleSnapshot(actorUsername);
+      return snapshot.requests.filter((request) => request.status === 'PENDING').length;
+    }
+    return this.getRequests(actorUsername).filter((request) => request.status === 'PENDING').length;
+  }
+
   subscribeToRequests(callback: (requests: TokenRequest[]) => void): () => void {
+    if (this.useAuthoritativeBackend()) {
+      callback(this.adminConsoleSnapshot.requests);
+      return () => {};
+    }
     callback(this.readRequests());
     return () => {};
   }
 
   async beginRequestReview(actorUsername: string, reqId: string): Promise<TokenRequest> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const request = await this.callBackend<TokenRequest>('beginStudioRequestReview', {
+          sessionId: this.requireActiveSessionId('Request review'),
+          reqId,
+        });
+        this.upsertSnapshotRequest(request);
+        return request;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_REQUEST_LOCKED', 'Unable to open request review.');
+      }
+    }
+
     const users = this.getUsers();
     const actor = this.requireMasterAdmin(actorUsername, 'review token requests', users);
     const requests = this.readRequests();
@@ -828,6 +1095,21 @@ class AuthService {
   }
 
   async createUser(actorUsername: string, userData: Partial<User> & { profile?: Partial<UserProfile> }, role: UserRole, durationMinutes?: number): Promise<string> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<{ rawToken: string; user: User }>('createStudioUser', {
+          sessionId: this.requireActiveSessionId('User creation'),
+          userData,
+          role,
+          durationMinutes,
+        });
+        this.upsertSnapshotUser(result.user);
+        return result.rawToken;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_FORBIDDEN', 'Unable to create user.');
+      }
+    }
+
     this.checkUserRateLimit(actorUsername);
     const users = this.getUsers();
     const actor = this.requireMasterAdmin(actorUsername, 'create users', users);
@@ -907,6 +1189,19 @@ class AuthService {
   }
 
   async refreshToken(actorUsername: string, targetUsername: string): Promise<string> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<{ rawToken: string; user: User }>('refreshStudioUserToken', {
+          sessionId: this.requireActiveSessionId('Token rotation'),
+          targetUsername,
+        });
+        this.upsertSnapshotUser(result.user);
+        return result.rawToken;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_UNKNOWN', 'Unable to rotate token.');
+      }
+    }
+
     this.checkUserRateLimit(actorUsername);
     const users = this.getUsers();
     const actor = this.requireMasterAdmin(actorUsername, 'refresh user tokens', users);
@@ -939,6 +1234,21 @@ class AuthService {
   }
 
   async sendUserCredentials(actorUsername: string, targetUsername: string, rawToken: string, channels?: DeliveryMethod[]): Promise<{ user: User; delivery: Partial<Record<DeliveryMethod, ChannelDeliveryState>> }> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<{ user: User; delivery: Partial<Record<DeliveryMethod, ChannelDeliveryState>> }>('sendStudioUserCredentials', {
+          sessionId: this.requireActiveSessionId('Credential delivery'),
+          targetUsername,
+          rawToken,
+          channels,
+        });
+        this.upsertSnapshotUser(result.user);
+        return result;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_PROVIDER_DOWN', 'Credential delivery failed.');
+      }
+    }
+
     this.checkUserRateLimit(actorUsername);
     const users = this.getUsers();
     const actor = this.requireMasterAdmin(actorUsername, 'send user credentials', users);
@@ -996,6 +1306,20 @@ class AuthService {
   }
 
   async resendUserCredentials(actorUsername: string, targetUsername: string, channels?: DeliveryMethod[]): Promise<{ rawToken: string; user: User; delivery: Partial<Record<DeliveryMethod, ChannelDeliveryState>> }> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<{ rawToken: string; user: User; delivery: Partial<Record<DeliveryMethod, ChannelDeliveryState>> }>('resendStudioUserCredentials', {
+          sessionId: this.requireActiveSessionId('Credential resend'),
+          targetUsername,
+          channels,
+        });
+        this.upsertSnapshotUser(result.user);
+        return result;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_PROVIDER_DOWN', 'Credential resend failed.');
+      }
+    }
+
     const rawToken = await this.refreshToken(actorUsername, targetUsername);
     const result = await this.sendUserCredentials(actorUsername, targetUsername, rawToken, channels);
     await this.logAction(actorUsername, 'CREDENTIALS_RESENT', `Credential resend triggered for ${targetUsername}.`, { channels: channels || ['SMS', 'EMAIL'] }, targetUsername);
@@ -1003,6 +1327,20 @@ class AuthService {
   }
 
   async toggleAccess(actorUsername: string, targetUsername: string, revoke: boolean) {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<{ user: User }>('toggleStudioUserAccess', {
+          sessionId: this.requireActiveSessionId('Access update'),
+          targetUsername,
+          revoke,
+        });
+        this.upsertSnapshotUser(result.user);
+        return;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_FORBIDDEN', 'Unable to update access.');
+      }
+    }
+
     const users = this.getUsers();
     const actor = this.requireMasterAdmin(actorUsername, 'toggle account access', users);
     const sanitizedTargetUsername = this.sanitizeUsername(targetUsername, 'Target username');
@@ -1034,6 +1372,19 @@ class AuthService {
   }
 
   async deleteUser(actorUsername: string, targetUsername: string) {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        await this.callBackend<{ success: boolean }>('deleteStudioUser', {
+          sessionId: this.requireActiveSessionId('User deletion'),
+          targetUsername,
+        });
+        this.removeSnapshotUser(targetUsername);
+        return;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_FORBIDDEN', 'Unable to delete user.');
+      }
+    }
+
     let users = this.getUsers();
     const actor = this.requireMasterAdmin(actorUsername, 'delete users', users);
     const sanitizedTargetUsername = this.sanitizeUsername(targetUsername, 'Target username');
@@ -1060,6 +1411,21 @@ class AuthService {
   // --- DELIVERY SYSTEM ---
 
   async sendMessage(actorUsername: string, targetUsername: string, method: 'EMAIL' | 'SMS', content: string) {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<{ user: User; deliveryLog: DeliveryLog }>('sendStudioMessage', {
+          sessionId: this.requireActiveSessionId(`${method} delivery`),
+          targetUsername,
+          method,
+          content,
+        });
+        this.upsertSnapshotUser(result.user);
+        return result.deliveryLog;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_PROVIDER_DOWN', 'Message delivery failed.');
+      }
+    }
+
     this.checkUserRateLimit(actorUsername);
     
     const users = this.getUsers();
@@ -1109,6 +1475,14 @@ class AuthService {
   // --- REQUEST MANAGEMENT ---
   
   async submitTokenRequest(data: Omit<TokenRequest, 'id' | 'status' | 'createdAt' | 'updatedAt' | 'approvedAt' | 'rejectedAt' | 'reviewedAt' | 'reviewedBy' | 'rejectionReason' | 'linkedUserId' | 'reviewLockExpiresAt' | 'reviewLockedBy' | 'userId' | 'adminNotifyStatus' | 'userNotifyStatus' | 'adminNotifyError' | 'userNotifyError' | 'delivery'>): Promise<TokenRequest> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        return await this.callBackend<TokenRequest>('submitStudioTokenRequest', { ...data });
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_DUPLICATE_REQUEST', 'Unable to submit access request.');
+      }
+    }
+
     const timestamp = new Date().toISOString();
     const firstName = this.sanitizeOptionalName(data.firstName, 'First name');
     const lastName = this.sanitizeOptionalName(data.lastName, 'Last name');
@@ -1214,12 +1588,42 @@ class AuthService {
   }
 
   async retryAdminNotification(actorUsername: string, reqId: string) {
+      if (this.useAuthoritativeBackend()) {
+        try {
+          await this.callBackend<{ success: boolean; request: TokenRequest }>('retryStudioAdminNotification', {
+            sessionId: this.requireActiveSessionId('Admin notification retry'),
+            reqId,
+          });
+          return;
+        } catch (error) {
+          throw this.mapCallableError(error, 'ERR_PROVIDER_DOWN', 'Unable to retry admin notification.');
+        }
+      }
+
       this.requireMasterAdmin(actorUsername, 'retry admin notification');
       return this.notifyAdmins(reqId);
   }
 
   // APPROVAL WORKFLOW
   async approveRequest(actorUsername: string, reqId: string, customUsernameOrOptions?: string | { username?: string; email?: string; role?: Exclude<UserRole, 'MASTER_ADMIN'>; sendSms?: boolean; sendEmail?: boolean; notes?: string }): Promise<{ rawToken: string, user: User; delivery: Partial<Record<DeliveryMethod, ChannelDeliveryState>> }> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const options = typeof customUsernameOrOptions === 'string'
+          ? { username: customUsernameOrOptions }
+          : (customUsernameOrOptions || {});
+        const result = await this.callBackend<{ rawToken: string; user: User; delivery: Partial<Record<DeliveryMethod, ChannelDeliveryState>>; request: TokenRequest }>('approveStudioRequest', {
+          sessionId: this.requireActiveSessionId('Request approval'),
+          reqId,
+          options,
+        });
+        this.upsertSnapshotUser(result.user);
+        this.upsertSnapshotRequest(result.request);
+        return { rawToken: result.rawToken, user: result.user, delivery: result.delivery };
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_REQUEST_ALREADY_PROCESSED', 'Unable to approve request.');
+      }
+    }
+
     const users = this.getUsers();
     const actor = this.requireMasterAdmin(actorUsername, 'approve requests', users);
 
@@ -1304,6 +1708,20 @@ class AuthService {
 
   // REJECTION WORKFLOW
   async rejectRequest(actorUsername: string, reqId: string, reason?: string) {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const request = await this.callBackend<TokenRequest>('rejectStudioRequest', {
+          sessionId: this.requireActiveSessionId('Request rejection'),
+          reqId,
+          reason,
+        });
+        this.upsertSnapshotRequest(request);
+        return;
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_REQUEST_NOT_FOUND', 'Unable to reject request.');
+      }
+    }
+
     const users = this.getUsers();
     const actor = this.requireMasterAdmin(actorUsername, 'reject requests', users);
 
