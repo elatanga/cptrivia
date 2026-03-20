@@ -1,47 +1,39 @@
 
 import { logger } from './logger';
-
-declare const jest: any;
-declare const describe: any;
-declare const test: any;
-declare const expect: any;
-declare const beforeEach: any;
-declare const afterAll: any;
-// Fix: Declare require for Jest module isolation tests
-declare const require: any;
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 // Mock Logger to prevent noise during test execution
-jest.mock('./logger', () => ({
+vi.mock('./logger', () => ({
   logger: { 
-    info: jest.fn(), 
-    error: jest.fn(), 
-    warn: jest.fn(), 
+    info: vi.fn(), 
+    error: vi.fn(), 
+    warn: vi.fn(), 
     getCorrelationId: () => 'test-id' 
   }
 }));
 
 // Mock Firebase SDKs to prevent network calls/errors during init
-jest.mock('firebase/app', () => ({
-  initializeApp: jest.fn(() => ({ name: '[DEFAULT]' })),
-  getApps: jest.fn(() => []),
-  FirebaseApp: jest.fn()
+vi.mock('firebase/app', () => ({
+  initializeApp: vi.fn(() => ({ name: '[DEFAULT]' })),
+  getApps: vi.fn(() => []),
+  FirebaseApp: vi.fn()
 }));
-jest.mock('firebase/firestore', () => ({
-  getFirestore: jest.fn(() => ({}))
+vi.mock('firebase/firestore', () => ({
+  getFirestore: vi.fn(() => ({}))
 }));
-jest.mock('firebase/functions', () => ({
-  getFunctions: jest.fn(() => ({}))
+vi.mock('firebase/functions', () => ({
+  getFunctions: vi.fn(() => ({}))
 }));
-jest.mock('firebase/auth', () => ({
-  getAuth: jest.fn(() => ({})),
-  signInAnonymously: jest.fn().mockResolvedValue({})
+vi.mock('firebase/auth', () => ({
+  getAuth: vi.fn(() => ({})),
+  signInAnonymously: vi.fn().mockResolvedValue({})
 }));
 
 describe('SYSTEM: Configuration & Initialization', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    jest.resetModules();
+    vi.resetModules();
     process.env = { ...originalEnv };
     (window as any).__RUNTIME_CONFIG__ = undefined;
   });
@@ -50,52 +42,47 @@ describe('SYSTEM: Configuration & Initialization', () => {
     process.env = originalEnv;
   });
 
-  test('FAIL: Reports error when Runtime Config is missing', () => {
-    jest.isolateModules(() => {
-      // Fix: require usage in isolated test
-      const { firebaseConfigError, missingKeys } = require('./firebase');
-      expect(firebaseConfigError).toBe(true);
-      expect(missingKeys).toContain('REACT_APP_FIREBASE_API_KEY');
-      expect(missingKeys).toContain('REACT_APP_FIREBASE_PROJECT_ID');
-    });
+  it('FAIL: Reports error when Runtime Config is missing', async () => {
+    // Clear runtime config and reload
+    delete (window as any).__RUNTIME_CONFIG__;
+    const { firebaseConfigError, missingKeys } = await import('./firebase');
+    expect(firebaseConfigError).toBe(true);
+    expect(missingKeys).toContain('FIREBASE_API_KEY');
+    expect(missingKeys).toContain('FIREBASE_PROJECT_ID');
   });
 
-  test('FAIL: Reports error when keys are placeholders', () => {
+  it('FAIL: Reports error when keys are placeholders', async () => {
     (window as any).__RUNTIME_CONFIG__ = {
-      REACT_APP_FIREBASE_API_KEY: '__REACT_APP_FIREBASE_API_KEY__', // Placeholder
-      REACT_APP_FIREBASE_AUTH_DOMAIN: 'valid-domain',
+      FIREBASE_API_KEY: '__FIREBASE_API_KEY__', // Placeholder
+      FIREBASE_AUTH_DOMAIN: 'valid-domain',
       // ... missing others
     };
 
-    jest.isolateModules(() => {
-      // Fix: require usage in isolated test
-      const { firebaseConfigError, missingKeys } = require('./firebase');
-      expect(firebaseConfigError).toBe(true);
-      expect(missingKeys).toContain('REACT_APP_FIREBASE_API_KEY');
-    });
+    vi.resetModules();
+    const { firebaseConfigError, missingKeys } = await import('./firebase');
+    expect(firebaseConfigError).toBe(true);
+    expect(missingKeys).toContain('FIREBASE_API_KEY');
   });
 
-  test('SUCCESS: Initializes App when config is valid', () => {
+  it('SUCCESS: Initializes App when config is valid', async () => {
     (window as any).__RUNTIME_CONFIG__ = {
-      REACT_APP_FIREBASE_API_KEY: 'AIzaSyTestKey',
-      REACT_APP_FIREBASE_AUTH_DOMAIN: 'test.firebaseapp.com',
-      REACT_APP_FIREBASE_PROJECT_ID: 'test-project',
-      REACT_APP_FIREBASE_STORAGE_BUCKET: 'test.appspot.com',
-      REACT_APP_FIREBASE_MESSAGING_SENDER_ID: '123456789',
-      REACT_APP_FIREBASE_APP_ID: '1:123456789:web:abcdef'
+      FIREBASE_API_KEY: 'AIzaSyTestKey',
+      FIREBASE_AUTH_DOMAIN: 'test.firebaseapp.com',
+      FIREBASE_PROJECT_ID: 'test-project',
+      FIREBASE_STORAGE_BUCKET: 'test.appspot.com',
+      FIREBASE_MESSAGING_SENDER_ID: '123456789',
+      FIREBASE_APP_ID: '1:123456789:web:abcdef'
     };
 
-    jest.isolateModules(() => {
-      // Fix: require usage in isolated test
-      const { firebaseConfigError, app, projectId } = require('./firebase');
-      
-      if (firebaseConfigError) {
-        throw new Error('Expected valid config but got error');
-      }
+    vi.resetModules();
+    const { firebaseConfigError, app, projectId } = await import('./firebase');
+    
+    if (firebaseConfigError) {
+      throw new Error('Expected valid config but got error');
+    }
 
-      expect(firebaseConfigError).toBe(false);
-      expect(app).toBeDefined();
-      expect(projectId).toBe('test-project');
-    });
+    expect(firebaseConfigError).toBe(false);
+    expect(app).toBeDefined();
+    expect(projectId).toBe('test-project');
   });
 });
