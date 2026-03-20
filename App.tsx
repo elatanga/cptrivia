@@ -102,8 +102,9 @@ const App: React.FC = () => {
     events: []
   });
 
-  const [questionTimerEnabled, setQuestionTimerEnabled] = useState(true);
+  const [questionTimerEnabled, setQuestionTimerEnabled] = useState(false);
   const [questionTimerDurationSeconds, setQuestionTimerDurationSeconds] = useState(DEFAULT_QUESTION_TIMER_DURATION_SECONDS);
+  const [sessionTimerEnabled, setSessionTimerEnabled] = useState(false);
 
   const [questionTimer, setQuestionTimer] = useState<QuestionCountdownTimer>({
     durationSeconds: DEFAULT_QUESTION_TIMER_DURATION_SECONDS,
@@ -143,10 +144,20 @@ const App: React.FC = () => {
   const isBoardComplete = useMemo(() => isTriviaBoardComplete(gameState.categories), [gameState.categories]);
   const celebrationResult = useMemo(() => deriveEndGameCelebrationResult(gameState.players), [gameState.players]);
   const questionTimerDurationRef = useRef(questionTimerDurationSeconds);
+  const questionTimerEnabledRef = useRef(questionTimerEnabled);
+  const sessionTimerEnabledRef = useRef(sessionTimerEnabled);
 
   useEffect(() => {
     questionTimerDurationRef.current = questionTimerDurationSeconds;
   }, [questionTimerDurationSeconds]);
+
+  useEffect(() => {
+    questionTimerEnabledRef.current = questionTimerEnabled;
+  }, [questionTimerEnabled]);
+
+  useEffect(() => {
+    sessionTimerEnabledRef.current = sessionTimerEnabled;
+  }, [sessionTimerEnabled]);
 
   // Tracks remainingSeconds via ref so stopQuestionTimer can log it
   // without capturing questionTimer.remainingSeconds as a dep (which
@@ -354,6 +365,11 @@ const App: React.FC = () => {
   }, [deriveTimerAudio]);
 
   const startQuestionTimer = useCallback((questionId: string, durationSeconds?: number) => {
+    if (!questionTimerEnabledRef.current) {
+      logger.info('question_timer_start_blocked_disabled', { questionId });
+      return;
+    }
+
     const selectedDuration = durationSeconds ?? questionTimerDurationRef.current;
     const resolvedDuration = resolveQuestionCountdownDuration(selectedDuration);
     if (resolvedDuration !== Number(selectedDuration)) {
@@ -383,6 +399,10 @@ const App: React.FC = () => {
   }, []);
 
   const restartQuestionTimer = useCallback(() => {
+    if (!questionTimerEnabledRef.current) {
+      logger.info('question_timer_restart_blocked_disabled');
+      return;
+    }
     const questionId = gameStateRef.current.activeQuestionId;
     if (!questionId) return;
     logger.info('question_timer_restart', {
@@ -404,6 +424,37 @@ const App: React.FC = () => {
       endsAt: null,
     }));
   }, [questionTimer.remainingSeconds]);
+
+  const handleToggleQuestionTimerEnabled = useCallback((enabled: boolean) => {
+    const safeEnabled = enabled === true;
+    setQuestionTimerEnabled(safeEnabled);
+    if (!safeEnabled) {
+      setQuestionTimer((prev) => ({
+        ...prev,
+        remainingSeconds: 0,
+        isRunning: false,
+        isStopped: true,
+        startedAt: null,
+        endsAt: null,
+        activeQuestionId: null,
+      }));
+    }
+  }, []);
+
+  const handleToggleSessionTimerEnabled = useCallback((enabled: boolean) => {
+    const safeEnabled = enabled === true;
+    setSessionTimerEnabled(safeEnabled);
+    if (!safeEnabled) {
+      setSessionTimer((prev) => ({
+        ...prev,
+        remainingSeconds: 0,
+        isRunning: false,
+        isStopped: true,
+        startedAt: null,
+        endsAt: null,
+      }));
+    }
+  }, []);
 
   const setTimerSoundEnabled = useCallback((enabled: boolean) => {
     const svc = soundService as any;
@@ -491,10 +542,32 @@ const App: React.FC = () => {
       try {
         const payload = JSON.parse(e.newValue);
         const nextDuration = resolveQuestionCountdownDuration(payload.questionTimerDurationSeconds);
-        setQuestionTimerEnabled(payload.questionTimerEnabled !== false);
+        const nextQuestionEnabled = payload.questionTimerEnabled === true;
+        const nextSessionEnabled = payload.sessionTimerEnabled === true;
+        setQuestionTimerEnabled(nextQuestionEnabled);
+        setSessionTimerEnabled(nextSessionEnabled);
         setQuestionTimerDurationSeconds(nextDuration);
-        if (payload.questionTimer) setQuestionTimer(payload.questionTimer);
-        if (payload.sessionTimer) setSessionTimer(payload.sessionTimer);
+        if (payload.questionTimer) {
+          setQuestionTimer(nextQuestionEnabled ? payload.questionTimer : {
+            ...payload.questionTimer,
+            remainingSeconds: 0,
+            isRunning: false,
+            isStopped: true,
+            startedAt: null,
+            endsAt: null,
+            activeQuestionId: null,
+          });
+        }
+        if (payload.sessionTimer) {
+          setSessionTimer(nextSessionEnabled ? payload.sessionTimer : {
+            ...payload.sessionTimer,
+            remainingSeconds: 0,
+            isRunning: false,
+            isStopped: true,
+            startedAt: null,
+            endsAt: null,
+          });
+        }
       } catch (error: any) {
         logger.warn('timer_state_hydration_failed', { message: error?.message });
       }
@@ -510,12 +583,13 @@ const App: React.FC = () => {
       TIMER_STATE_STORAGE_KEY,
       JSON.stringify({
         questionTimerEnabled,
+        sessionTimerEnabled,
         questionTimerDurationSeconds,
         questionTimer,
         sessionTimer,
       })
     );
-  }, [questionTimerEnabled, questionTimerDurationSeconds, questionTimer, sessionTimer]);
+  }, [questionTimerEnabled, sessionTimerEnabled, questionTimerDurationSeconds, questionTimer, sessionTimer]);
 
   // UI State Persistence Effect
   useEffect(() => {
@@ -614,6 +688,18 @@ const App: React.FC = () => {
       let sessionExpired = false;
 
       setQuestionTimer((prev) => {
+        if (!questionTimerEnabledRef.current) {
+          if (!prev.isRunning && prev.isStopped && !prev.endsAt && prev.remainingSeconds === 0) return prev;
+          return {
+            ...prev,
+            remainingSeconds: 0,
+            isRunning: false,
+            isStopped: true,
+            startedAt: null,
+            endsAt: null,
+            activeQuestionId: null,
+          };
+        }
         if (!prev.isRunning || !prev.endsAt) return prev;
         const nextRemaining = Math.max(0, Math.ceil((prev.endsAt - now) / 1000));
         if (nextRemaining === prev.remainingSeconds) return prev;
@@ -634,6 +720,17 @@ const App: React.FC = () => {
       });
 
       setSessionTimer((prev) => {
+        if (!sessionTimerEnabledRef.current) {
+          if (!prev.isRunning && prev.isStopped && !prev.endsAt && prev.remainingSeconds === 0) return prev;
+          return {
+            ...prev,
+            remainingSeconds: 0,
+            isRunning: false,
+            isStopped: true,
+            startedAt: null,
+            endsAt: null,
+          };
+        }
         if (!prev.isRunning || prev.isStopped || !prev.endsAt || !gameStateRef.current.isGameStarted) return prev;
         const nextRemaining = Math.max(0, Math.ceil((prev.endsAt - now) / 1000));
         if (nextRemaining === prev.remainingSeconds) return prev;
@@ -661,6 +758,12 @@ const App: React.FC = () => {
   }, [canPlayTimerAudio, timerAudio.tickSoundEnabled, timerAudio.endSoundEnabled]);
 
   const handleStartSessionTimer = (preset: '15m' | '30m' | '1h' | '1h30m' | '2h') => {
+    if (!sessionTimerEnabledRef.current) {
+      logger.info('session_timer_start_blocked_disabled', { preset });
+      addToast('info', 'Enable Session Game Timer first.');
+      return;
+    }
+
     const duration = getPresetDuration(preset);
     const now = Date.now();
     const newTimer: SessionGameTimer = {
@@ -682,6 +785,8 @@ const App: React.FC = () => {
   };
 
   const handlePauseSessionTimer = () => {
+    if (!sessionTimerEnabledRef.current) return;
+
     setSessionTimer((prev) => {
       if (!prev.remainingSeconds) return prev;
       if (prev.isRunning) {
@@ -774,10 +879,32 @@ const App: React.FC = () => {
            try {
              const timerState = JSON.parse(savedTimerState);
              const resolvedDuration = resolveQuestionCountdownDuration(timerState.questionTimerDurationSeconds);
-             setQuestionTimerEnabled(timerState.questionTimerEnabled !== false);
+             const nextQuestionEnabled = timerState.questionTimerEnabled === true;
+             const nextSessionEnabled = timerState.sessionTimerEnabled === true;
+             setQuestionTimerEnabled(nextQuestionEnabled);
+             setSessionTimerEnabled(nextSessionEnabled);
              setQuestionTimerDurationSeconds(resolvedDuration);
-             if (timerState.questionTimer) setQuestionTimer(timerState.questionTimer);
-             if (timerState.sessionTimer) setSessionTimer(timerState.sessionTimer);
+             if (timerState.questionTimer) {
+               setQuestionTimer(nextQuestionEnabled ? timerState.questionTimer : {
+                 ...timerState.questionTimer,
+                 remainingSeconds: 0,
+                 isRunning: false,
+                 isStopped: true,
+                 startedAt: null,
+                 endsAt: null,
+                 activeQuestionId: null,
+               });
+             }
+             if (timerState.sessionTimer) {
+               setSessionTimer(nextSessionEnabled ? timerState.sessionTimer : {
+                 ...timerState.sessionTimer,
+                 remainingSeconds: 0,
+                 isRunning: false,
+                 isStopped: true,
+                 startedAt: null,
+                 endsAt: null,
+               });
+             }
            } catch (error: any) {
              logger.warn('timer_state_restore_failed', { message: error?.message });
            }
@@ -896,7 +1023,7 @@ const App: React.FC = () => {
       timerEnabled: timerEnabledFromTemplate,
     });
 
-    setQuestionTimerEnabled(timerEnabledFromTemplate);
+    handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
 
     const newState: GameState = {
       ...gameState,
@@ -1261,7 +1388,7 @@ const App: React.FC = () => {
           questionTimer={questionTimer}
           questionTimerEnabled={questionTimerEnabled}
           questionTimerDurationSeconds={questionTimerDurationSeconds}
-          onQuestionTimerToggle={setQuestionTimerEnabled}
+          onQuestionTimerToggle={handleToggleQuestionTimerEnabled}
           onQuestionTimerDurationChange={handleSetQuestionTimerDuration}
           onQuestionTimerRestart={() => {
             restartQuestionTimer();
@@ -1272,6 +1399,8 @@ const App: React.FC = () => {
             emitGameEvent('QUESTION_COUNTDOWN_STOPPED', { actor: { role: 'director' }, context: { note: 'Question countdown stopped' } });
           }}
           sessionTimer={sessionTimer}
+          sessionTimerEnabled={sessionTimerEnabled}
+          onSessionTimerToggle={handleToggleSessionTimerEnabled}
           onSessionTimerStart={handleStartSessionTimer}
           onSessionTimerPause={handlePauseSessionTimer}
           onSessionTimerReset={handleResetSessionTimer}
@@ -1433,7 +1562,7 @@ const App: React.FC = () => {
                      questionTimer={questionTimer}
                      questionTimerEnabled={questionTimerEnabled}
                      questionTimerDurationSeconds={questionTimerDurationSeconds}
-                     onQuestionTimerToggle={setQuestionTimerEnabled}
+                     onQuestionTimerToggle={handleToggleQuestionTimerEnabled}
                      onQuestionTimerDurationChange={handleSetQuestionTimerDuration}
                      onQuestionTimerRestart={() => {
                        restartQuestionTimer();
@@ -1444,6 +1573,8 @@ const App: React.FC = () => {
                        emitGameEvent('QUESTION_COUNTDOWN_STOPPED', { actor: { role: 'director' }, context: { note: 'Question countdown stopped' } });
                      }}
                      sessionTimer={sessionTimer}
+                     sessionTimerEnabled={sessionTimerEnabled}
+                     onSessionTimerToggle={handleToggleSessionTimerEnabled}
                      onSessionTimerStart={handleStartSessionTimer}
                      onSessionTimerPause={handlePauseSessionTimer}
                      onSessionTimerReset={handleResetSessionTimer}

@@ -34,6 +34,8 @@ interface Props {
   onQuestionTimerRestart?: () => void;
   onQuestionTimerStop?: () => void;
   sessionTimer?: SessionGameTimer;
+  sessionTimerEnabled?: boolean;
+  onSessionTimerToggle?: (enabled: boolean) => void;
   onSessionTimerStart?: (preset: '15m' | '30m' | '1h' | '1h30m' | '2h') => void;
   onSessionTimerPause?: () => void;
   onSessionTimerReset?: () => void;
@@ -63,6 +65,8 @@ export const DirectorPanel: React.FC<Props> = ({
   onQuestionTimerRestart,
   onQuestionTimerStop,
   sessionTimer,
+  sessionTimerEnabled,
+  onSessionTimerToggle,
   onSessionTimerStart,
   onSessionTimerPause,
   onSessionTimerReset,
@@ -262,6 +266,37 @@ export const DirectorPanel: React.FC<Props> = ({
     return false;
   };
 
+  const isGameplayAuditEvent = (event: GameAnalyticsEvent) => {
+    return [
+      'TILE_OPENED',
+      'ANSWER_REVEALED',
+      'POINTS_AWARDED',
+      'POINTS_STOLEN',
+      'TILE_VOIDED',
+      'QUESTION_RETURNED',
+      'SCORE_ADJUSTED',
+      'WILDCARD_USED',
+      'SPECIAL_MOVE_ARMED',
+      'SPECIAL_MOVE_ARMORY_CLEARED',
+      'AI_TILE_REPLACE_APPLIED',
+      'AI_CATEGORY_REPLACE_APPLIED',
+      'AI_BOARD_REGEN_APPLIED',
+      'SESSION_ENDED',
+    ].includes(event.type);
+  };
+
+  const getAuditBadge = (event: GameAnalyticsEvent) => {
+    if (event.type === 'POINTS_AWARDED') return { label: 'CORRECT', classes: 'text-emerald-200 border-emerald-500/40 bg-emerald-900/30' };
+    if (event.type === 'POINTS_STOLEN') return { label: 'STOLEN', classes: 'text-violet-200 border-violet-500/40 bg-violet-900/30' };
+    if (event.type === 'TILE_VOIDED') return { label: 'VOID', classes: 'text-amber-200 border-amber-500/40 bg-amber-900/30' };
+    if (event.type === 'QUESTION_RETURNED') return { label: 'FAILED', classes: 'text-rose-200 border-rose-500/40 bg-rose-900/30' };
+    if (event.type === 'SPECIAL_MOVE_ARMED' || event.type === 'SPECIAL_MOVE_ARMORY_CLEARED') return { label: 'SPECIAL MOVE', classes: 'text-cyan-200 border-cyan-500/40 bg-cyan-900/30' };
+    if (event.type === 'SESSION_ENDED') return { label: 'ENDGAME', classes: 'text-fuchsia-200 border-fuchsia-500/40 bg-fuchsia-900/30' };
+    if (event.type.startsWith('AI_')) return { label: 'BOARD UPDATE', classes: 'text-sky-200 border-sky-500/40 bg-sky-900/30' };
+    if (event.type === 'SCORE_ADJUSTED') return { label: 'SCORE', classes: 'text-gold-200 border-gold-500/40 bg-gold-900/30' };
+    return { label: 'PLAY', classes: 'text-zinc-200 border-zinc-600 bg-zinc-800/60' };
+  };
+
   const getEventChannel = (event: GameAnalyticsEvent): LogChannel => {
     if (event.type.startsWith('AI_')) return 'AI';
     if (event.type.startsWith('SPECIAL_MOVE')) return 'SPECIAL_MOVES';
@@ -371,16 +406,26 @@ export const DirectorPanel: React.FC<Props> = ({
   }, [gameState.events]);
 
   const auditEvents = useMemo(() => {
-    const ordered = [...(gameState.events || [])].sort((a, b) => a.ts - b.ts);
+    const ordered = [...(gameState.events || [])]
+      .filter((event): event is GameAnalyticsEvent => !!event && typeof event.type === 'string')
+      .sort((a, b) => {
+        if (a.ts !== b.ts) return a.ts - b.ts;
+        return String(a.id || '').localeCompare(String(b.id || ''));
+      });
     const pendingByTileId = new Map<string, PendingPlayContext>();
+    const dedupe = new Set<string>();
     let selectedPlayerName: string | undefined;
     const summaries: Array<{
       id: string;
+      ts: number;
       iso: string;
       type: AnalyticsEventType;
       channel: LogChannel;
       event: GameAnalyticsEvent;
       sentence: string;
+      badgeLabel: string;
+      badgeClasses: string;
+      detail: string;
     }> = [];
 
     ordered.forEach((event) => {
@@ -400,31 +445,54 @@ export const DirectorPanel: React.FC<Props> = ({
         });
       }
 
-      if (!isFinalOutcomeEvent(event)) return;
+      if (!isGameplayAuditEvent(event)) return;
+
+      const dedupeKey = event.id || `${event.type}_${event.ts}_${c.tileId || ''}_${c.playerId || ''}_${c.playerName || ''}_${c.categoryName || ''}`;
+      if (dedupe.has(dedupeKey)) return;
+      dedupe.add(dedupeKey);
 
       const pendingPlay = c.tileId ? pendingByTileId.get(c.tileId) : undefined;
+      const badge = getAuditBadge(event);
+      const safePlayer = c.playerName || event.actor?.playerName || pendingPlay?.openerName || 'Host';
+      const safeCategory = c.categoryName || pendingPlay?.categoryName || 'Board';
+      const safePoints = typeof c.points === 'number' ? c.points : pendingPlay?.points;
+      const delta = typeof c.delta === 'number' ? c.delta : undefined;
       summaries.push({
-        id: event.id,
+        id: event.id || dedupeKey,
+        ts: Number.isFinite(event.ts) ? event.ts : Date.parse(event.iso || '') || 0,
         iso: event.iso,
         type: event.type,
         channel: getEventChannel(event),
         event,
-        sentence: formatFinalOutcomeSentence(event, pendingPlay),
+        sentence: isFinalOutcomeEvent(event) ? formatFinalOutcomeSentence(event, pendingPlay) : formatEventSentence(event),
+        badgeLabel: badge.label,
+        badgeClasses: badge.classes,
+        detail: `${safePlayer} • ${safeCategory}${typeof safePoints === 'number' ? ` • ${pointsLabel(safePoints)}` : ''}${typeof delta === 'number' ? ` • ${delta >= 0 ? '+' : ''}${delta}` : ''}`,
       });
 
-      if (c.tileId) {
+      if (c.tileId && isFinalOutcomeEvent(event)) {
         pendingByTileId.delete(c.tileId);
       }
     });
 
-    const latestTwelve = summaries.slice(-12);
+    const latestTwelve = [...summaries]
+      .sort((a, b) => {
+        if (a.ts !== b.ts) return b.ts - a.ts;
+        return b.id.localeCompare(a.id);
+      })
+      .slice(0, 12);
+
     return latestTwelve.map((event) => ({
       id: event.id,
       iso: event.iso,
+      ts: event.ts,
       type: event.type,
       channel: event.channel,
       event: event.event,
       sentence: event.sentence,
+      badgeLabel: event.badgeLabel,
+      badgeClasses: event.badgeClasses,
+      detail: event.detail,
     }));
   }, [gameState.events]);
 
@@ -451,7 +519,6 @@ export const DirectorPanel: React.FC<Props> = ({
   };
 
   const filteredHistoryLogs = useMemo(() => filterLogEntries(fullHistoryLogs), [fullHistoryLogs, logQuery, eventTypeFilter, channelFilter, keyOnlyFilter, sortOrder]);
-  const filteredAuditEvents = useMemo(() => filterLogEntries(auditEvents), [auditEvents, logQuery, eventTypeFilter, channelFilter, keyOnlyFilter, sortOrder]);
 
   const clearLogFilters = () => {
     setLogQuery('');
@@ -504,6 +571,7 @@ export const DirectorPanel: React.FC<Props> = ({
     [gameState.categories]
   );
   const hasActiveTile = !!gameState.activeCategoryId && !!gameState.activeQuestionId;
+  const isSessionTimerFeatureEnabled = sessionTimerEnabled ?? true;
   const rankedPlayers = useMemo(
     () => [...gameState.players].sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
@@ -824,6 +892,20 @@ export const DirectorPanel: React.FC<Props> = ({
       return;
     }
 
+    const tile = gameState.categories
+      .flatMap((category) => category.questions.map((question) => ({ category, question })))
+      .find((entry) => entry.question.id === tileId);
+
+    if (!tile) {
+      addToast('error', 'Unable to find that tile. Please try again.');
+      return;
+    }
+
+    if (!isTileActive(tile.question)) {
+      addToast('error', 'Special moves can only be armed on active tiles.');
+      return;
+    }
+
     const existingDeployment = currentOverlay.deploymentsByTileId?.[tileId];
     if (existingDeployment?.status === 'ARMED') {
       addToast('error', 'Tile already armed with a special move.');
@@ -852,7 +934,6 @@ export const DirectorPanel: React.FC<Props> = ({
       });
 
       logger.info('director_special_move_armed', { gameId, tileId, moveType: selectedMoveType });
-      const tile = gameState.categories.flatMap((category) => category.questions.map((question) => ({ category, question }))).find((entry) => entry.question.id === tileId);
       emitGameEvent('SPECIAL_MOVE_ARMED', {
         actor: { role: 'director' },
         context: {
@@ -1362,14 +1443,16 @@ export const DirectorPanel: React.FC<Props> = ({
                 <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-4">Question Countdown Timer</div>
                 <div className="space-y-4">
                   <div className="flex items-center justify-between gap-3 bg-black/40 border border-zinc-800 rounded-lg px-3 py-2">
-                    <span className="text-[11px] uppercase tracking-wider font-black text-zinc-300">Auto-start on tile open</span>
+                    <span className="text-[11px] uppercase tracking-wider font-black text-zinc-300">Question countdown enabled</span>
                     <button
+                      data-testid="question-countdown-toggle"
                       onClick={() => onQuestionTimerToggle && onQuestionTimerToggle(!questionTimerEnabled)}
                       className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-widest ${questionTimerEnabled ? 'bg-cyan-600 text-black' : 'bg-zinc-700 text-zinc-200'}`}
                     >
                       {questionTimerEnabled ? 'On' : 'Off'}
                     </button>
                   </div>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wide">Countdown is opt-in and stays off until manually enabled.</p>
                   <div className="flex gap-2 flex-wrap">
                     {[5, 7, 8, 10, 15].map((duration) => (
                       <button
@@ -1419,6 +1502,17 @@ export const DirectorPanel: React.FC<Props> = ({
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5">
                 <div className="text-[10px] uppercase tracking-widest font-black text-purple-300 mb-4">Session Game Timer</div>
                 <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-3 bg-black/40 border border-zinc-800 rounded-lg px-3 py-2">
+                    <span className="text-[11px] uppercase tracking-wider font-black text-zinc-300">Session timer enabled</span>
+                    <button
+                      data-testid="session-game-timer-toggle"
+                      onClick={() => onSessionTimerToggle && onSessionTimerToggle(!isSessionTimerFeatureEnabled)}
+                      className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-widest ${isSessionTimerFeatureEnabled ? 'bg-purple-600 text-white' : 'bg-zinc-700 text-zinc-200'}`}
+                    >
+                      {isSessionTimerFeatureEnabled ? 'On' : 'Off'}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wide">Session timer controls stay idle while disabled.</p>
                   {!sessionTimer?.remainingSeconds ? (
                     <div className="flex gap-2 flex-wrap">
                       {(['15m', '30m', '1h', '1h30m', '2h'] as const).map((preset) => (
@@ -1428,6 +1522,7 @@ export const DirectorPanel: React.FC<Props> = ({
                             if (onSessionTimerStart) onSessionTimerStart(preset);
                             addToast('success', `Game timer started: ${preset}`);
                           }}
+                          disabled={!isSessionTimerFeatureEnabled}
                           className="px-4 py-2 rounded-lg font-black text-[11px] uppercase tracking-widest transition-all bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
                         >
                           {preset}
@@ -1448,6 +1543,7 @@ export const DirectorPanel: React.FC<Props> = ({
                             if (onSessionTimerPause) onSessionTimerPause();
                             addToast('info', `Game timer ${sessionTimer.isStopped ? 'resumed' : 'paused'}.`);
                           }}
+                          disabled={!isSessionTimerFeatureEnabled}
                           className="flex-1 px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-black rounded-lg uppercase transition-colors flex items-center justify-center gap-2"
                         >
                           {sessionTimer.isStopped ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
@@ -1458,6 +1554,7 @@ export const DirectorPanel: React.FC<Props> = ({
                             if (onSessionTimerReset) onSessionTimerReset();
                             addToast('info', 'Game timer reset.');
                           }}
+                          disabled={!isSessionTimerFeatureEnabled}
                           className="flex-1 px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-[11px] font-black rounded-lg uppercase transition-colors flex items-center justify-center gap-2"
                         >
                           <RotateCcw className="w-3 h-3" /> Reset
@@ -1887,13 +1984,17 @@ export const DirectorPanel: React.FC<Props> = ({
 
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-4">
-                <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-3">Audit (Last 12 Final Outcomes)</div>
+                <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-3">Audit (Last 12 Gameplay Highlights)</div>
                 <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-2 custom-scrollbar" data-testid="audit-log-list">
-                  {filteredAuditEvents.length === 0 && <div className="text-[11px] text-zinc-500">No key activity logged yet.</div>}
-                  {filteredAuditEvents.map((entry) => (
+                  {auditEvents.length === 0 && <div className="text-[11px] text-zinc-500">No gameplay highlights yet. Play a tile to start the reel.</div>}
+                  {auditEvents.map((entry) => (
                     <div key={entry.id} className="rounded-lg border border-zinc-800 bg-black/30 p-3">
-                      <div className="text-[10px] text-zinc-500 font-mono">{new Date(entry.iso).toLocaleTimeString()}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[10px] text-zinc-500 font-mono">{new Date(entry.iso || entry.ts).toLocaleTimeString()}</div>
+                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${entry.badgeClasses}`}>{entry.badgeLabel}</span>
+                      </div>
                       <div className="text-[12px] text-zinc-200 mt-1 leading-relaxed">{entry.sentence}</div>
+                      <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-1">{entry.detail}</div>
                     </div>
                   ))}
                 </div>
