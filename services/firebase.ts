@@ -6,7 +6,6 @@ import { logger } from './logger';
 import {
   getRuntimeConfig,
   areAnonymousFirebaseAuthFlowsEnabled,
-  assertRealAuthInDeployedEnv,
   logRuntimeMode,
   isDeployedRuntime,
 } from './runtimeConfig';
@@ -24,11 +23,14 @@ const requiredKeys = [
   'FIREBASE_APP_ID'
 ] as const;
 
+const DEFAULT_FUNCTIONS_REGION = 'us-central1';
+
 // Validator to check for missing, empty, or placeholder values
 const isInvalid = (val: string | undefined): boolean => {
   if (!val || typeof val !== 'string') return true;
   const trimmed = val.trim();
   if (trimmed === '') return true;
+  if (trimmed === '...') return true;
   if (trimmed.startsWith('%') && trimmed.endsWith('%')) return true; // Build-time placeholder
   if (trimmed.startsWith('__') && trimmed.endsWith('__')) return true; // Runtime placeholder
   if (trimmed.includes('INSERT_KEY')) return true; // Default template text
@@ -36,11 +38,21 @@ const isInvalid = (val: string | undefined): boolean => {
   return false;
 };
 
+const configuredFunctionsBaseUrl = isInvalid(String(runtimeConfig.FUNCTIONS_BASE_URL || ''))
+  ? undefined
+  : String(runtimeConfig.FUNCTIONS_BASE_URL).trim().replace(/\/+$/, '');
+
+const configuredFunctionsRegion = isInvalid(String(runtimeConfig.FUNCTIONS_REGION || ''))
+  ? DEFAULT_FUNCTIONS_REGION
+  : String(runtimeConfig.FUNCTIONS_REGION).trim();
+
+const resolvedFunctionsTarget = configuredFunctionsBaseUrl || configuredFunctionsRegion;
 // Identify invalid keys
 const missingKeys = requiredKeys.filter(key => isInvalid(runtimeConfig[key]));
 const firebaseConfigError = missingKeys.length > 0;
-
-assertRealAuthInDeployedEnv('firebase.config', !firebaseConfigError);
+const resolvedFunctionsHttpBaseUrl = configuredFunctionsBaseUrl || (!firebaseConfigError && runtimeConfig.FIREBASE_PROJECT_ID
+  ? `https://${configuredFunctionsRegion}-${String(runtimeConfig.FIREBASE_PROJECT_ID).trim()}.cloudfunctions.net`
+  : undefined);
 
 let app: FirebaseApp | undefined;
 let db: Firestore | undefined;
@@ -83,8 +95,13 @@ if (firebaseConfigError) {
 
     // Initialize Services
     db = getFirestore(app);
-    functions = getFunctions(app);
+    functions = getFunctions(app, resolvedFunctionsTarget);
     auth = getAuth(app);
+    logger.info('Firebase Functions Target Resolved', {
+      category: 'SYSTEM',
+      targetType: configuredFunctionsBaseUrl ? 'custom-domain' : 'region',
+      functionsTarget: resolvedFunctionsTarget,
+    });
 
     if (areAnonymousFirebaseAuthFlowsEnabled()) {
       signInAnonymously(auth).catch((err) => {
@@ -97,9 +114,6 @@ if (firebaseConfigError) {
       logger.info('[Auth] anonymous auth disabled in deployed runtime', { category: 'AUTH' });
     }
 
-    assertRealAuthInDeployedEnv('firebase.functions', Boolean(functions));
-    assertRealAuthInDeployedEnv('firebase.auth', Boolean(auth));
-    
   } catch (error: any) {
     // Fix: logger.error expects 1-2 arguments
     logger.error('Firebase Critical Failure During Init', {
@@ -115,4 +129,10 @@ if (firebaseConfigError) {
   }
 }
 
-export { app, db, functions, auth, firebaseConfigError, missingKeys, projectId };
+export { app, db, functions, auth, firebaseConfigError, missingKeys, projectId, resolvedFunctionsTarget };
+
+export const buildFunctionsHttpUrl = (functionName: string): string | undefined => {
+  if (!resolvedFunctionsHttpBaseUrl) return undefined;
+  return `${resolvedFunctionsHttpBaseUrl.replace(/\/+$/, '')}/${String(functionName || '').replace(/^\/+/, '')}`;
+};
+

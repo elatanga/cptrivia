@@ -59,6 +59,7 @@ const App: React.FC = () => {
   // App Boot State
   const [isConfigured, setIsConfigured] = useState(false);
   const [authChecked, setAuthChecked] = useState(false); 
+  const [systemStatusError, setSystemStatusError] = useState<string | null>(null);
   
 
   const [session, setSession] = useState<{ id: string; username: string; role: UserRole } | null>(null);
@@ -706,6 +707,96 @@ const App: React.FC = () => {
     });
   };
 
+  const initializeApp = useCallback(async () => {
+     setAuthChecked(false);
+     setSystemStatusError(null);
+     try {
+       const status = await authService.getBootstrapStatus();
+       setIsConfigured(status.masterReady);
+
+       if (!status.masterReady) {
+         logger.warn('bootstrap_visible_backend_uninitialized', {
+           bootstrapCompleted: status.bootstrapCompleted ?? false,
+           initializedAt: status.initializedAt ?? null,
+         });
+       } else {
+         logger.info('bootstrap_suppressed_backend_initialized', {
+           bootstrapCompleted: status.bootstrapCompleted ?? true,
+           initializedAt: status.initializedAt ?? null,
+         });
+
+         const storedSessionId = localStorage.getItem('cruzpham_active_session_id') || (() => {
+           try {
+             const legacySession = localStorage.getItem('cruzpham_user_session');
+             if (!legacySession) return null;
+             const parsed = JSON.parse(legacySession);
+             return typeof parsed?.id === 'string' ? parsed.id : null;
+           } catch {
+             return null;
+           }
+         })();
+         if (storedSessionId) {
+           const result = await authService.restoreSession(storedSessionId);
+           if (result.success && result.session) {
+             setSession({ id: result.session.id, username: result.session.username, role: result.session.role });
+             try {
+               const uiStateRaw = localStorage.getItem('cruzpham_ui_state');
+               if (uiStateRaw) {
+                 const uiState = JSON.parse(uiStateRaw);
+                 if (uiState.activeShowId) {
+                   const restoredShow = dataService.getShowById(uiState.activeShowId);
+                   if (restoredShow) setActiveShow(restoredShow);
+                 }
+                 if (uiState.viewMode) setViewMode(uiState.viewMode);
+               }
+             } catch (e) { logger.warn('hydrateUIStateFailed'); }
+           } else {
+             localStorage.removeItem('cruzpham_active_session_id');
+             localStorage.removeItem('cruzpham_user_session');
+             localStorage.removeItem('cruzpham_ui_state');
+           }
+         }
+       }
+       
+       const savedState = localStorage.getItem('cruzpham_gamestate');
+       if (savedState) {
+         const parsed = JSON.parse(savedState);
+         parsed.viewSettings = sanitizeBoardViewSettings(parsed.viewSettings);
+         
+         if (!parsed.lastPlays) parsed.lastPlays = [];
+         if (!parsed.events) parsed.events = [];
+         
+         setGameState(parsed);
+         if (parsed.showTitle) {
+            setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: parsed.showTitle, createdAt: '' });
+         }
+       }
+
+       const savedTimerState = localStorage.getItem(TIMER_STATE_STORAGE_KEY);
+       if (savedTimerState) {
+         try {
+           const timerState = JSON.parse(savedTimerState);
+           const resolvedDuration = resolveQuestionCountdownDuration(timerState.questionTimerDurationSeconds);
+           setQuestionTimerEnabled(timerState.questionTimerEnabled !== false);
+           setQuestionTimerDurationSeconds(resolvedDuration);
+           if (timerState.questionTimer) setQuestionTimer(timerState.questionTimer);
+           if (timerState.sessionTimer) setSessionTimer(timerState.sessionTimer);
+         } catch (error: any) {
+           logger.warn('timer_state_restore_failed', { message: error?.message });
+         }
+       }
+     } catch (e: any) {
+       logger.error('bootstrap_suppressed_status_unknown', {
+         message: e?.message,
+         code: e?.code,
+       });
+       setSystemStatusError('Unable to verify system status. Please try again or contact support.');
+       console.error('System Initialization Failed', e);
+     } finally {
+       setAuthChecked(true);
+     }
+  }, []);
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('view') === 'director') {
@@ -715,80 +806,9 @@ const App: React.FC = () => {
     }
 
     window.addEventListener('storage', handleStorageChange);
-
-    const initializeApp = async () => {
-       try {
-         const status = await authService.getBootstrapStatus();
-         setIsConfigured(status.masterReady);
-
-         if (status.masterReady) {
-            const storedSessionId = localStorage.getItem('cruzpham_active_session_id') || (() => {
-              try {
-                const legacySession = localStorage.getItem('cruzpham_user_session');
-                if (!legacySession) return null;
-                const parsed = JSON.parse(legacySession);
-                return typeof parsed?.id === 'string' ? parsed.id : null;
-              } catch {
-                return null;
-              }
-            })();
-            if (storedSessionId) {
-               const result = await authService.restoreSession(storedSessionId);
-               if (result.success && result.session) {
-                  setSession({ id: result.session.id, username: result.session.username, role: result.session.role });
-                  try {
-                    const uiStateRaw = localStorage.getItem('cruzpham_ui_state');
-                    if (uiStateRaw) {
-                      const uiState = JSON.parse(uiStateRaw);
-                      if (uiState.activeShowId) {
-                        const restoredShow = dataService.getShowById(uiState.activeShowId);
-                        if (restoredShow) setActiveShow(restoredShow);
-                      }
-                      if (uiState.viewMode) setViewMode(uiState.viewMode);
-                    }
-                  } catch (e) { logger.warn('hydrateUIStateFailed'); }
-               } else {
-                 localStorage.removeItem('cruzpham_active_session_id');
-                 localStorage.removeItem('cruzpham_user_session');
-                 localStorage.removeItem('cruzpham_ui_state');
-               }
-            }
-         }
-         
-         const savedState = localStorage.getItem('cruzpham_gamestate');
-         if (savedState) {
-           const parsed = JSON.parse(savedState);
-           parsed.viewSettings = sanitizeBoardViewSettings(parsed.viewSettings);
-           
-           if (!parsed.lastPlays) parsed.lastPlays = [];
-           if (!parsed.events) parsed.events = [];
-           
-           setGameState(parsed);
-           if (parsed.showTitle && !activeShow) {
-              setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: parsed.showTitle, createdAt: '' });
-           }
-         }
-
-         const savedTimerState = localStorage.getItem(TIMER_STATE_STORAGE_KEY);
-         if (savedTimerState) {
-           try {
-             const timerState = JSON.parse(savedTimerState);
-             const resolvedDuration = resolveQuestionCountdownDuration(timerState.questionTimerDurationSeconds);
-             setQuestionTimerEnabled(timerState.questionTimerEnabled !== false);
-             setQuestionTimerDurationSeconds(resolvedDuration);
-             if (timerState.questionTimer) setQuestionTimer(timerState.questionTimer);
-             if (timerState.sessionTimer) setSessionTimer(timerState.sessionTimer);
-           } catch (error: any) {
-             logger.warn('timer_state_restore_failed', { message: error?.message });
-           }
-         }
-       } catch (e) {
-         console.error("System Initialization Failed", e);
-       } finally { setAuthChecked(true); }
-    };
     initializeApp();
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
+  }, [handleStorageChange, initializeApp]);
 
   const addToast = (type: ToastMessage['type'], message: string) => {
     setToasts(prev => [...prev, { id: Math.random().toString(), type, message }]);
@@ -1180,6 +1200,26 @@ const App: React.FC = () => {
       <div className="flex flex-col items-center gap-4">
          <Loader2 className="w-12 h-12 text-gold-500 animate-spin" />
          <p className="text-zinc-500 text-sm uppercase tracking-widest font-bold">Loading Studio...</p>
+      </div>
+    </div>
+  );
+
+  if (systemStatusError) return (
+    <div className="h-screen w-screen flex items-center justify-center bg-black text-white px-4">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <div className="w-full max-w-lg bg-zinc-900 border border-red-900/60 rounded-2xl p-8 shadow-2xl text-center">
+        <p className="text-[10px] uppercase tracking-[0.3em] font-black text-red-400">System Initialization Error</p>
+        <h2 className="mt-4 text-3xl font-serif text-white">Unable to Verify Studio Status</h2>
+        <p className="mt-4 text-sm text-zinc-300 leading-relaxed">{systemStatusError}</p>
+        <p className="mt-2 text-xs text-zinc-500">Bootstrap is hidden until the authoritative backend confirms that the system is uninitialized.</p>
+        <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
+          <button onClick={() => { void initializeApp(); }} className="px-5 py-3 rounded-xl bg-gold-600 hover:bg-gold-500 text-black font-black uppercase tracking-[0.2em] text-xs">
+            Retry Status Check
+          </button>
+          <a href="mailto:support@cruzpham.com" className="px-5 py-3 rounded-xl border border-zinc-700 hover:border-zinc-500 text-zinc-300 font-black uppercase tracking-[0.2em] text-xs">
+            Contact Support
+          </a>
+        </div>
       </div>
     </div>
   );
