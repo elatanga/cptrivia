@@ -22,6 +22,7 @@ import { normalizePlayerName } from './services/utils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
 import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specialMoves/logic';
+import { deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
@@ -90,6 +91,11 @@ const getQuestionModalSpecialMoveModel = (moveType?: SpecialMoveType): QuestionM
     };
   }
   return { moveType, ...details };
+};
+
+const getSpecialMoveDisplayName = (moveType?: SpecialMoveType): string | undefined => {
+  if (!moveType) return undefined;
+  return getQuestionModalSpecialMoveModel(moveType)?.displayTitle || moveType.replace(/_/g, ' ');
 };
 
 const App: React.FC = () => {
@@ -174,6 +180,7 @@ const App: React.FC = () => {
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const specialMovesOverlay = useSpecialMovesOverlay(gameState.isGameStarted ? activeShow?.id : undefined);
+  const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
   // Ref keeps the overlay current inside stable callbacks without being a dep.
   const specialMovesOverlayRef = useRef(specialMovesOverlay);
   useEffect(() => {
@@ -920,6 +927,12 @@ const App: React.FC = () => {
          if (savedState) {
            const parsed = JSON.parse(savedState);
            parsed.viewSettings = sanitizeBoardViewSettings(parsed.viewSettings);
+           parsed.players = (parsed.players || []).map((p: Player) => ({
+             ...p,
+             stealsCount: Number(p?.stealsCount || 0),
+             specialMovesUsedCount: Number(p?.specialMovesUsedCount || 0),
+             specialMovesUsedNames: Array.isArray(p?.specialMovesUsedNames) ? p.specialMovesUsedNames : [],
+           }));
            
            if (!parsed.lastPlays) parsed.lastPlays = [];
            if (!parsed.events) parsed.events = [];
@@ -1062,12 +1075,12 @@ const App: React.FC = () => {
     const timerEnabledFromTemplate = resolveTemplateTimerEnabled(template, questionTimerEnabled);
 
     const initPlayers: Player[] = (template.config.playerNames || []).slice(0, Math.max(0, targetPlayerCount)).map(name => ({
-      id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0
+      id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: []
     }));
 
     if (initPlayers.length === 0 && targetPlayerCount > 0) {
       for (let i = 0; i < targetPlayerCount; i++) {
-        initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0 });
+        initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] });
       }
     }
 
@@ -1222,6 +1235,8 @@ const App: React.FC = () => {
           outcome: action === 'award' ? 'AWARD' : action === 'steal' ? 'STEAL' : 'FAIL'
         })
       : basePoints;
+    const specialMoveName = getSpecialMoveDisplayName(tileMoveType);
+    const shouldTrackSpecialMoveUsage = Boolean(tileMoveType) && (action === 'award' || action === 'steal' || resolvesAsFail);
 
     // "LAST 4 PLAYS" REAL-TIME LOG (RING BUFFER)
     const newCategories = current.categories.map(c => {
@@ -1250,16 +1265,35 @@ const App: React.FC = () => {
         if (p.id === targetPlayerId) {
           const isSteal = action === 'steal';
           const newStealsCount = isSteal ? (p.stealsCount || 0) + 1 : (p.stealsCount || 0);
+          const nextSpecialMovesUsedCount = shouldTrackSpecialMoveUsage ? (p.specialMovesUsedCount || 0) + 1 : (p.specialMovesUsedCount || 0);
+          const nextSpecialMovesUsedNames = shouldTrackSpecialMoveUsage && specialMoveName
+            ? [...(Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []), specialMoveName]
+            : (Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []);
           if (isSteal) stealerPlayerName = p.name;
           else awardedPlayerName = p.name;
-          return { ...p, score: p.score + points, stealsCount: newStealsCount };
+          return {
+            ...p,
+            score: p.score + points,
+            stealsCount: newStealsCount,
+            specialMovesUsedCount: nextSpecialMovesUsedCount,
+            specialMovesUsedNames: nextSpecialMovesUsedNames,
+          };
         }
         return p;
       });
     } else if (resolvesAsFail && current.selectedPlayerId) {
       newPlayers = newPlayers.map((p) => {
         if (p.id !== current.selectedPlayerId) return p;
-        return { ...p, score: p.score + points };
+        const nextSpecialMovesUsedCount = shouldTrackSpecialMoveUsage ? (p.specialMovesUsedCount || 0) + 1 : (p.specialMovesUsedCount || 0);
+        const nextSpecialMovesUsedNames = shouldTrackSpecialMoveUsage && specialMoveName
+          ? [...(Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []), specialMoveName]
+          : (Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []);
+        return {
+          ...p,
+          score: p.score + points,
+          specialMovesUsedCount: nextSpecialMovesUsedCount,
+          specialMovesUsedNames: nextSpecialMovesUsedNames,
+        };
       });
     }
 
@@ -1327,7 +1361,15 @@ const App: React.FC = () => {
     resolvingQuestionIdRef.current = null;
 
     // LOG ANALYTICS (CANONICAL BUS) — after saveGameState so prev is fresh
-    const tileCtx = { tileId: activeQ.id, categoryName: activeCat.title, points: activeQ.points, categoryIndex: catIdx, rowIndex: qIdx };
+    const tileCtx = {
+      tileId: activeQ.id,
+      categoryName: activeCat.title,
+      points: activeQ.points,
+      categoryIndex: catIdx,
+      rowIndex: qIdx,
+      specialMoveType: tileMoveType,
+      specialMoveName,
+    };
     if (action === 'award' && targetPlayerId) {
        const p = current.players.find(pl => pl.id === targetPlayerId);
        emitGameEvent('POINTS_AWARDED', { actor: { role: 'director' }, context: { ...tileCtx, playerName: p?.name, delta: points } });
@@ -1383,7 +1425,17 @@ const App: React.FC = () => {
       uniqueName = `${finalName} ${count}`;
       count++;
     }
-    const newPlayer: Player = { id: crypto.randomUUID(), name: uniqueName, score: 0, color: '#fff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0 };
+    const newPlayer: Player = {
+      id: crypto.randomUUID(),
+      name: uniqueName,
+      score: 0,
+      color: '#fff',
+      wildcardsUsed: 0,
+      wildcardActive: false,
+      stealsCount: 0,
+      specialMovesUsedCount: 0,
+      specialMovesUsedNames: [],
+    };
     
     emitGameEvent('PLAYER_ADDED', {
       actor: { role: 'director' },
@@ -1570,7 +1622,7 @@ const App: React.FC = () => {
                             <button onClick={() => { soundService.playClick(); setShowEndGameConfirm(true); }} type="button" className="text-[10px] md:text-xs uppercase text-red-500 hover:text-red-600 font-bold tracking-wider flex items-center gap-2"><Power className="w-3 h-3" /> End Show</button>
                             <button onClick={() => setViewMode('DIRECTOR')} className="text-[10px] md:text-xs uppercase font-bold text-zinc-500 hover:text-zinc-800 flex items-center gap-2 px-3 py-1.5 rounded transition-colors"><Grid className="w-3 h-3" /> Director</button>
                           </div>
-                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
+                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
                         </div>
                         <div className="order-1 md:order-2 flex-none h-auto lg:h-full w-full md:w-auto relative z-30">
                           <Scoreboard players={gameState.players} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
