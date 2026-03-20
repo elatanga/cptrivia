@@ -45,6 +45,13 @@ export interface BoardViewSettings {
   scoreboardScale: number; // Width multiplier (0.8 - 1.4)
   tilePaddingScale: number; // Spacing multiplier (0.5 - 1.5)
   
+  // Question Modal Display Settings
+  questionModalSize: 'Small' | 'Medium' | 'Large' | 'ExtraLarge'; // Modal size preset
+  questionMaxWidthPercent: number; // Max content width (60-100% of modal)
+  questionFontScale: number; // Font size multiplier (0.8 - 1.5)
+  questionContentPadding: number; // Padding around question (4-24px)
+  multipleChoiceColumns: 'auto' | '1' | '2'; // Grid column mode
+  
   // Metadata
   updatedAt: string;
 }
