@@ -82,6 +82,7 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
   players,
   selectedPlayerId,
   timer,
+  displaySettings,
   questionCountdownRemainingSeconds,
   questionCountdownDurationSeconds,
   isQuestionCountdownRunning,
@@ -90,7 +91,7 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
   onClose,
   onReveal,
   onTimerEnd
-) {
+}) {
   const [showStealSelect, setShowStealSelect] = useState(false);
   const loggedQuestionIdRef = useRef<string | null>(null);
   const loggedDoubleQuestionIdRef = useRef<string | null>(null);
