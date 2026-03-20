@@ -270,22 +270,20 @@ class AuthService {
     logger.info('system_status_fetch_requested', {
       transport: 'http',
       endpoint,
+      method: 'GET',
     });
 
     let response: Response;
     try {
       response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Correlation-ID': correlationId,
-        },
-        body: JSON.stringify({ correlationId }),
+        method: 'GET',
+        cache: 'no-store',
       });
     } catch (error: any) {
       logger.error('system_status_fetch_failed', {
         transport: 'http',
         endpoint,
+        method: 'GET',
         message: error?.message,
       });
       throw new AppError('ERR_NETWORK', 'Unable to load bootstrap state.', correlationId);
@@ -295,6 +293,7 @@ class AuthService {
       logger.error('system_status_fetch_failed', {
         transport: 'http',
         endpoint,
+        method: 'GET',
         status: response.status,
         statusText: response.statusText,
       });
@@ -308,6 +307,7 @@ class AuthService {
       logger.error('system_status_fetch_failed', {
         transport: 'http',
         endpoint,
+        method: 'GET',
         message: error?.message || 'Invalid JSON response',
       });
       throw new AppError('ERR_NETWORK', 'Unable to load bootstrap state.', correlationId);
@@ -317,6 +317,7 @@ class AuthService {
     logger.info('system_status_fetch_succeeded', {
       transport: 'http',
       endpoint,
+      method: 'GET',
       bootstrapCompleted: normalized.bootstrapCompleted,
       masterReady: normalized.masterReady,
       initializedAt: normalized.initializedAt,
