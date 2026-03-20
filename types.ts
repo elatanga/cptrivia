@@ -258,7 +258,10 @@ export type ErrorCode =
   | 'ERR_RECOVERY_INVALID';
 
 export interface BootstrapStatus {
+  bootstrapCompleted?: boolean;
   masterReady: boolean;
+  masterAdminUserId?: string | null;
+  initializedAt?: string | null;
   masterAdminUsername?: string;
   recoveryArmed?: boolean;
   recoveryExpiresAt?: string | null;

@@ -33,6 +33,10 @@ const REQUEST_REVIEW_LOCK_MS = 2 * 60 * 1000;
 const REQUEST_DEDUP_WINDOW_MS = 5 * 60 * 1000;
 const DELIVERY_COOLDOWN_MS = 60 * 1000;
 const DELIVERY_METHODS = new Set(['EMAIL', 'SMS']);
+const DEFAULT_FUNCTIONS_REGION = 'us-central1';
+const FIREBASE_PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || (admin.app().options && admin.app().options.projectId) || '';
+const EXTRA_ALLOWED_APP_ORIGINS = (process.env.ALLOWED_APP_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean);
+const ALLOW_LOCALHOST_CORS = String(process.env.ALLOW_LOCALHOST_CORS || '').trim().toLowerCase() === 'true';
 
 const configRef = db.collection('system_bootstrap').doc('config');
 const recoveryRef = db.collection('system_bootstrap').doc('recovery');
@@ -82,6 +86,64 @@ const normalizeToken = (token) => String(token || '').trim().replace(/[\s-]/g, '
 const hashToken = (token) => crypto.createHash('sha256').update(normalizeToken(token)).digest('hex');
 const generateSecret = (prefix, bytes = 24) => `${prefix}-${crypto.randomBytes(bytes).toString('hex')}`;
 const nowIso = () => new Date().toISOString();
+
+const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const getAllowedAppOrigins = () => {
+  const origins = new Set(EXTRA_ALLOWED_APP_ORIGINS);
+  if (FIREBASE_PROJECT_ID) {
+    origins.add(`https://${FIREBASE_PROJECT_ID}.web.app`);
+    origins.add(`https://${FIREBASE_PROJECT_ID}.firebaseapp.com`);
+  }
+  return origins;
+};
+
+const hostedOriginMatchers = FIREBASE_PROJECT_ID ? [
+  new RegExp(`^https://${escapeRegExp(FIREBASE_PROJECT_ID)}(?:--[a-z0-9-]+)?\\.web\\.app$`, 'i'),
+  new RegExp(`^https://${escapeRegExp(FIREBASE_PROJECT_ID)}(?:--[a-z0-9-]+)?\\.firebaseapp\\.com$`, 'i'),
+] : [];
+
+const localhostOriginMatchers = [
+  /^http:\/\/localhost(?::\d+)?$/i,
+  /^http:\/\/127\.0\.0\.1(?::\d+)?$/i,
+  /^http:\/\/\[::1\](?::\d+)?$/i,
+];
+
+const isAllowedCorsOrigin = (origin) => {
+  if (!origin) return true;
+  const normalizedOrigin = String(origin).trim();
+  if (!normalizedOrigin) return true;
+  if (getAllowedAppOrigins().has(normalizedOrigin)) return true;
+  if (hostedOriginMatchers.some((matcher) => matcher.test(normalizedOrigin))) return true;
+  if (ALLOW_LOCALHOST_CORS && localhostOriginMatchers.some((matcher) => matcher.test(normalizedOrigin))) return true;
+  return false;
+};
+
+const setCorsHeaders = (req, res, origin) => {
+  const requestedHeaders = req.get('Access-Control-Request-Headers');
+  const allowHeaders = requestedHeaders || 'Content-Type, Authorization, X-Firebase-AppCheck, X-Correlation-ID, X-Requested-With, X-Client-Version, X-Firebase-GMPID';
+  res.set('Vary', 'Origin, Access-Control-Request-Headers');
+  if (origin && isAllowedCorsOrigin(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+  }
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', allowHeaders);
+  res.set('Access-Control-Max-Age', '3600');
+  res.set('Cache-Control', 'no-store');
+};
+
+const getCorrelationIdFromHttpRequest = (req) => {
+  const body = req && req.body;
+  if (typeof body === 'string') {
+    try {
+      const parsed = JSON.parse(body);
+      return parsed && (parsed.correlationId || (parsed.data && parsed.data.correlationId));
+    } catch {
+      return req.get('X-Correlation-ID') || undefined;
+    }
+  }
+  return (body && (body.correlationId || (body.data && body.data.correlationId))) || req.get('X-Correlation-ID') || undefined;
+};
 
 const toIso = (value) => {
   if (!value) return null;
@@ -189,11 +251,15 @@ const getBootstrapState = async () => {
   const [configSnap, recoverySnap] = await Promise.all([configRef.get(), recoveryRef.get()]);
   const config = configSnap.exists ? configSnap.data() : {};
   const recovery = recoverySnap.exists ? recoverySnap.data() : null;
+  const bootstrapCompleted = Boolean(config.bootstrapCompleted || config.masterReady || config.masterAdminUserId);
   return {
-    masterReady: Boolean(config.bootstrapCompleted || config.masterReady || config.masterAdminUserId),
+    bootstrapCompleted,
+    masterReady: bootstrapCompleted,
+    masterAdminUserId: config.masterAdminUserId || null,
     masterAdminUsername: config.masterAdminUsername || null,
     recoveryArmed: Boolean(recovery && (!recovery.expiresAt || new Date(toIso(recovery.expiresAt)).getTime() > Date.now())),
     recoveryExpiresAt: recovery ? toIso(recovery.expiresAt) : null,
+    initializedAt: config.bootstrapCompletedAt ? toIso(config.bootstrapCompletedAt) : null,
     bootstrapCompletedAt: config.bootstrapCompletedAt ? toIso(config.bootstrapCompletedAt) : null,
   };
 };
@@ -530,11 +596,60 @@ const handleNewRequestNotification = async (requestData, correlationId) => {
   }
 };
 
-exports.getSystemStatus = functions.https.onCall(async (data) => {
-  const correlationId = data && data.correlationId;
-  const state = await getBootstrapState();
-  log('INFO', 'BOOTSTRAP', 'Bootstrap state loaded from persistent backend config', correlationId, state);
-  return state;
+exports.getSystemStatus = functions.region(DEFAULT_FUNCTIONS_REGION).https.onRequest(async (req, res) => {
+  const origin = req.get('Origin') || '';
+  const correlationId = getCorrelationIdFromHttpRequest(req);
+  setCorsHeaders(req, res, origin);
+
+  if (req.method === 'OPTIONS') {
+    log('INFO', 'CORS', 'Handled system status preflight request', correlationId, {
+      origin: origin || 'none',
+      allowed: isAllowedCorsOrigin(origin),
+    });
+    res.status(204).send('');
+    return;
+  }
+
+  if (!isAllowedCorsOrigin(origin)) {
+    log('WARNING', 'SECURITY', 'Blocked system status request from disallowed origin', correlationId, {
+      origin: origin || 'none',
+      method: req.method,
+    });
+    res.status(403).json({ error: 'Origin not allowed' });
+    return;
+  }
+
+  if (!['GET', 'POST'].includes(req.method)) {
+    log('WARNING', 'BOOTSTRAP', 'Rejected system status request with invalid method', correlationId, {
+      origin: origin || 'none',
+      method: req.method,
+    });
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  try {
+    const state = await getBootstrapState();
+    log('INFO', 'BOOTSTRAP', 'Bootstrap state loaded from persistent backend config', correlationId, {
+      origin: origin || 'none',
+      method: req.method,
+      bootstrapCompleted: state.bootstrapCompleted,
+      masterAdminUserId: state.masterAdminUserId,
+      initializedAt: state.initializedAt,
+    });
+    res.status(200).json({
+      ...state,
+      data: state,
+      result: state,
+    });
+  } catch (error) {
+    log('ERROR', 'BOOTSTRAP', 'Failed to load bootstrap state', correlationId, {
+      origin: origin || 'none',
+      method: req.method,
+      error,
+    });
+    res.status(500).json({ error: 'Unable to load system status' });
+  }
 });
 
 exports.bootstrapSystem = functions.https.onCall(async (data) => {

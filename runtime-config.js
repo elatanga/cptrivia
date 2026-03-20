@@ -9,6 +9,8 @@ window.__RUNTIME_CONFIG__ = {
   FIREBASE_STORAGE_BUCKET: "...",
   FIREBASE_MESSAGING_SENDER_ID: "...",
   FIREBASE_APP_ID: "...",
+  FUNCTIONS_REGION: "us-central1",
+  FUNCTIONS_BASE_URL: "",
   BUILD_ENV: "production",
   BUILD_VERSION: "v1",
   ALLOW_LOCAL_MOCKS: "false",

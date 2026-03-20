@@ -42,6 +42,8 @@ app.get("/runtime-config.js", (req, res) => {
   const deployedRuntime = ["production", "staging", "test"].includes(declaredBuildEnv);
   const allowLocalMocks = deployedRuntime ? "false" : String(process.env.ALLOW_LOCAL_MOCKS || "false");
   const enableFirebaseAnonAuth = deployedRuntime ? "false" : String(process.env.ENABLE_FIREBASE_ANON_AUTH || "false");
+  const functionsRegion = String(process.env.FUNCTIONS_REGION || "us-central1");
+  const functionsBaseUrl = String(process.env.FUNCTIONS_BASE_URL || "");
 
   if (deployedRuntime && String(process.env.ALLOW_LOCAL_MOCKS || '').toLowerCase() === 'true') {
     console.warn("RUNTIME WARNING: ALLOW_LOCAL_MOCKS requested in deployed runtime and has been forced off.");
@@ -58,6 +60,8 @@ app.get("/runtime-config.js", (req, res) => {
       FIREBASE_STORAGE_BUCKET: "${safe(process.env.FIREBASE_STORAGE_BUCKET)}",
       FIREBASE_MESSAGING_SENDER_ID: "${safe(process.env.FIREBASE_MESSAGING_SENDER_ID)}",
       FIREBASE_APP_ID: "${safe(process.env.FIREBASE_APP_ID)}",
+      FUNCTIONS_REGION: "${safe(functionsRegion)}",
+      FUNCTIONS_BASE_URL: "${safe(functionsBaseUrl)}",
       API_KEY: "${safe(process.env.API_KEY)}",
       BUILD_ENV: "${safe(process.env.BUILD_ENV || "production")}",
       BUILD_VERSION: "${safe(process.env.BUILD_VERSION || "unknown")}",

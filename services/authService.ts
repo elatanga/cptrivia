@@ -1,6 +1,6 @@
 import { User, Session, TokenRequest, AuthResponse, AuditLogEntry, UserRole, AppError, AuditAction, DeliveryLog, UserSource, UserProfile, DeliveryMethod, ChannelDeliveryState, UserStatus } from '../types';
 import { logger } from './logger';
-import { functions as firebaseFunctions } from './firebase';
+import { buildFunctionsHttpUrl, functions as firebaseFunctions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
 import {
   areLocalMocksExplicitlyEnabled,
@@ -46,7 +46,10 @@ interface RecoveryRecord {
 }
 
 type BootstrapStatusShape = {
+  bootstrapCompleted?: boolean;
   masterReady: boolean;
+  masterAdminUserId?: string | null;
+  initializedAt?: string | null;
   masterAdminUsername?: string;
   recoveryArmed?: boolean;
   recoveryExpiresAt?: string | null;
@@ -252,6 +255,86 @@ class AuthService {
       correlationId: logger.getCorrelationId(),
     });
     return result.data as TResponse;
+  }
+
+  private async fetchBootstrapStatusFromBackend(): Promise<BootstrapStatusShape> {
+    const endpoint = buildFunctionsHttpUrl('getSystemStatus');
+    if (!endpoint) {
+      logger.error('[Bootstrap] system status endpoint unavailable', {
+        transport: 'http',
+      });
+      throw new AppError('ERR_NETWORK', 'Authoritative system status endpoint unavailable.', logger.getCorrelationId());
+    }
+
+    const correlationId = logger.getCorrelationId();
+    logger.info('system_status_fetch_requested', {
+      transport: 'http',
+      endpoint,
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Correlation-ID': correlationId,
+        },
+        body: JSON.stringify({ correlationId }),
+      });
+    } catch (error: any) {
+      logger.error('system_status_fetch_failed', {
+        transport: 'http',
+        endpoint,
+        message: error?.message,
+      });
+      throw new AppError('ERR_NETWORK', 'Unable to load bootstrap state.', correlationId);
+    }
+
+    if (!response.ok) {
+      logger.error('system_status_fetch_failed', {
+        transport: 'http',
+        endpoint,
+        status: response.status,
+        statusText: response.statusText,
+      });
+      throw new AppError('ERR_NETWORK', 'Unable to load bootstrap state.', correlationId);
+    }
+
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch (error: any) {
+      logger.error('system_status_fetch_failed', {
+        transport: 'http',
+        endpoint,
+        message: error?.message || 'Invalid JSON response',
+      });
+      throw new AppError('ERR_NETWORK', 'Unable to load bootstrap state.', correlationId);
+    }
+
+    const normalized = this.normalizeBootstrapStatus(payload?.data || payload?.result || payload);
+    logger.info('system_status_fetch_succeeded', {
+      transport: 'http',
+      endpoint,
+      bootstrapCompleted: normalized.bootstrapCompleted,
+      masterReady: normalized.masterReady,
+      initializedAt: normalized.initializedAt,
+    });
+    return normalized;
+  }
+
+  private normalizeBootstrapStatus(status: Partial<BootstrapStatusShape> | null | undefined): BootstrapStatusShape {
+    const bootstrapCompleted = Boolean(status?.bootstrapCompleted ?? status?.masterReady);
+    return {
+      bootstrapCompleted,
+      masterReady: bootstrapCompleted,
+      masterAdminUserId: status?.masterAdminUserId ?? null,
+      initializedAt: status?.initializedAt ?? null,
+      masterAdminUsername: status?.masterAdminUsername,
+      recoveryArmed: status?.recoveryArmed,
+      recoveryExpiresAt: status?.recoveryExpiresAt ?? null,
+    };
   }
 
   private mapCallableError(error: any, fallbackCode: AppError['code'] = 'ERR_UNKNOWN', fallbackMessage?: string): AppError {
@@ -614,10 +697,9 @@ class AuthService {
   async getBootstrapStatus(): Promise<BootstrapStatusShape> {
     if (this.useAuthoritativeBackend()) {
       try {
-        const result = await this.callBackend<BootstrapStatusShape>('getSystemStatus', {});
-        logger.info('[Bootstrap] state loaded from systemConfig', result);
-        return result;
+        return await this.fetchBootstrapStatusFromBackend();
       } catch (error) {
+        if (error instanceof AppError) throw error;
         throw this.mapCallableError(error, 'ERR_NETWORK', 'Unable to load bootstrap state.');
       }
     }
@@ -636,12 +718,12 @@ class AuthService {
 
     const activeRecoveryDoc = this.getRecoveryDocument();
 
-    return {
+    return this.normalizeBootstrapStatus({
       masterReady: Boolean(bootstrapDoc?.masterReady || masterUser),
       masterAdminUsername: masterUser?.username || bootstrapDoc?.masterAdminUsername,
       recoveryArmed: Boolean(activeRecoveryDoc),
       recoveryExpiresAt: activeRecoveryDoc?.expiresAt || null,
-    };
+    });
   }
 
   async bootstrapMasterAdmin(username: string): Promise<string> {

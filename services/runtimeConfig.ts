@@ -15,6 +15,8 @@ export interface RuntimeConfigShape {
   FIREBASE_STORAGE_BUCKET?: string;
   FIREBASE_MESSAGING_SENDER_ID?: string;
   FIREBASE_APP_ID?: string;
+  FUNCTIONS_REGION?: string;
+  FUNCTIONS_BASE_URL?: string;
   API_KEY?: string;
   BUILD_ENV?: string;
   BUILD_VERSION?: string;
