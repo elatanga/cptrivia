@@ -101,6 +101,8 @@ const getAllowedAppOrigins = () => {
 const hostedOriginMatchers = FIREBASE_PROJECT_ID ? [
   new RegExp(`^https://${escapeRegExp(FIREBASE_PROJECT_ID)}(?:--[a-z0-9-]+)?\\.web\\.app$`, 'i'),
   new RegExp(`^https://${escapeRegExp(FIREBASE_PROJECT_ID)}(?:--[a-z0-9-]+)?\\.firebaseapp\\.com$`, 'i'),
+  new RegExp(`^https://[a-z0-9-]+--${escapeRegExp(FIREBASE_PROJECT_ID)}\.[a-z0-9-]+\.hosted\.app$`, 'i'),
+  new RegExp(`^https://${escapeRegExp(FIREBASE_PROJECT_ID)}\.[a-z0-9-]+\.hosted\.app$`, 'i'),
 ] : [];
 
 const localhostOriginMatchers = [
@@ -121,12 +123,12 @@ const isAllowedCorsOrigin = (origin) => {
 
 const setCorsHeaders = (req, res, origin) => {
   const requestedHeaders = req.get('Access-Control-Request-Headers');
-  const allowHeaders = requestedHeaders || 'Content-Type, Authorization, X-Firebase-AppCheck, X-Correlation-ID, X-Requested-With, X-Client-Version, X-Firebase-GMPID';
+  const allowHeaders = requestedHeaders || 'Content-Type, Authorization, X-Firebase-AppCheck, X-Requested-With, X-Client-Version, X-Firebase-GMPID';
   res.set('Vary', 'Origin, Access-Control-Request-Headers');
   if (origin && isAllowedCorsOrigin(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
   }
-  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.set('Access-Control-Allow-Headers', allowHeaders);
   res.set('Access-Control-Max-Age', '3600');
   res.set('Cache-Control', 'no-store');
@@ -619,7 +621,7 @@ exports.getSystemStatus = functions.region(DEFAULT_FUNCTIONS_REGION).https.onReq
     return;
   }
 
-  if (!['GET', 'POST'].includes(req.method)) {
+  if (req.method !== 'GET') {
     log('WARNING', 'BOOTSTRAP', 'Rejected system status request with invalid method', correlationId, {
       origin: origin || 'none',
       method: req.method,
@@ -638,6 +640,8 @@ exports.getSystemStatus = functions.region(DEFAULT_FUNCTIONS_REGION).https.onReq
       initializedAt: state.initializedAt,
     });
     res.status(200).json({
+      ok: true,
+      initialized: state.bootstrapCompleted,
       ...state,
       data: state,
       result: state,
