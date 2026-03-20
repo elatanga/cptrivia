@@ -49,14 +49,15 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
   const [rejectReason, setRejectReason] = useState('');
 
   useEffect(() => {
-    refreshData();
+    void refreshData();
   }, [activeTab]);
 
-  const refreshData = () => {
+  const refreshData = async () => {
     try {
-      setUsers(authService.getAllUsers(currentUser));
-      setRequests(authService.getRequests(currentUser));
-      setAuditLogs(authService.getAuditLogs(currentUser));
+      const snapshot = await authService.loadAdminConsoleSnapshot(currentUser);
+      setUsers(snapshot.users);
+      setRequests(snapshot.requests);
+      setAuditLogs(snapshot.auditLogs);
       setAccessDenied(false);
     } catch (e: any) {
       setAccessDenied(true);
@@ -97,7 +98,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
       
       setIsCreating(false);
       setNewUser(buildEmptyUserForm());
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', e.message);
     }
@@ -108,7 +109,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
     try {
       await authService.retryAdminNotification(currentUser, reqId);
       addToast('success', 'Notification retry initiated.');
-      refreshData();
+      await refreshData();
     } catch (e) {
       addToast('error', 'Retry failed');
     } finally {
@@ -159,7 +160,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
       addToast('success', 'Request Approved & User Created');
       setApprovingReq(null);
       setApprovalForm({ username: '', role: 'PRODUCER', email: '', notes: '', sendSms: true, sendEmail: false });
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', e.message);
     } finally {
@@ -175,7 +176,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
       addToast('info', 'Request rejected.');
       setRejectingReq(null);
       setRejectReason('');
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', e.message || 'Reject failed');
     } finally {
@@ -204,7 +205,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
         await authService.deleteUser(currentUser, username);
         addToast('info', 'User deleted.');
       }
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', e.message);
     } finally {
@@ -218,7 +219,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
     try {
       await authService.sendMessage(currentUser, targetUsername, method, msg);
       addToast('success', `${method} sent successfully.`);
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', `Send failed: ${e.message}`);
     } finally {
@@ -232,7 +233,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
       const result = await authService.resendUserCredentials(currentUser, targetUsername, [method]);
       setCredentialModal({ username: targetUsername, token: result.rawToken, delivery: result.delivery });
       addToast('success', `${method} credentials issued.`);
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', e.message || 'Credential resend failed');
     } finally {

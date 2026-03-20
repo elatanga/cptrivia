@@ -57,14 +57,17 @@ describe('SYSTEM: Critical Flow Automations', () => {
       id: 'REQ-123',
       firstName: 'Flow', lastName: 'Test', tiktokHandle: 'flow', preferredUsername: 'flowuser', phoneE164: '+15551112222',
       status: 'PENDING', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      notify: { emailStatus: 'PENDING', smsStatus: 'PENDING', attempts: 0 }
-    });
+      adminNotifyStatus: 'PENDING', userNotifyStatus: 'PENDING', delivery: {}
+    } as any);
 
     render(<App />);
-    
+
+    // Wait for app to finish initializing past the loading screen
+    await waitFor(() => screen.getByText(/Get Token/i));
+
     // 1. Open Modal
-    fireEvent.click(screen.getByText(/Request Access Token/i));
-    
+    fireEvent.click(screen.getByText(/Get Token/i));
+
     // 2. Fill Data
     fireEvent.change(screen.getByText(/First Name/i).nextSibling as HTMLInputElement, { target: { value: 'Flow' } });
     fireEvent.change(screen.getByText(/Last Name/i).nextSibling as HTMLInputElement, { target: { value: 'Test' } });
@@ -86,18 +89,19 @@ describe('SYSTEM: Critical Flow Automations', () => {
     });
 
     // 5. Assert Service Call (Persistence check)
-    expect(mockRequestSubmit).toHaveBeenCalledWith({
+    expect(mockRequestSubmit).toHaveBeenCalledWith(expect.objectContaining({
       firstName: 'Flow',
       lastName: 'Test',
       tiktokHandle: 'flow',
       preferredUsername: 'flowuser',
       phoneE164: '+15551112222'
-    });
+    }));
   });
 
   // --- FLOW 4: Admin Approval -> Token Generation ---
   test('FLOW: Admin can approve request and generate token', async () => {
     // Setup Admin Session
+    localStorage.setItem('cruzpham_active_session_id', 'admin-sess');
     jest.spyOn(authService, 'restoreSession').mockResolvedValue({ 
       success: true, 
       session: { id: 'admin-sess', username: 'admin', role: 'MASTER_ADMIN', createdAt: Date.now(), userAgent: 'test' } 
@@ -106,40 +110,50 @@ describe('SYSTEM: Critical Flow Automations', () => {
     // Setup Pending Request
     const pendingReq: any = {
       id: 'REQ-PENDING', firstName: 'Pending', lastName: 'User', tiktokHandle: 'p', preferredUsername: 'pending_guy', phoneE164: '+111', 
-      status: 'PENDING', createdAt: new Date().toISOString()
+      status: 'PENDING', createdAt: new Date().toISOString(), delivery: {}
     };
-    
-    // Mock Subscription to return the request
-    jest.spyOn(authService, 'subscribeToRequests').mockImplementation((cb) => {
-      cb([pendingReq]);
-      return () => {};
-    });
+
+    // Mock admin data access (requires MASTER_ADMIN)
+    const adminUser = {
+      id: 'admin-id', username: 'admin', role: 'MASTER_ADMIN', status: 'ACTIVE',
+      tokenHash: 'hash', profile: { source: 'MANUAL_CREATE' }, createdAt: '', updatedAt: ''
+    } as any;
+    jest.spyOn(authService, 'loadAdminConsoleSnapshot').mockResolvedValue({
+      users: [adminUser],
+      requests: [pendingReq],
+      auditLogs: []
+    } as any);
+    jest.spyOn(authService, 'beginRequestReview').mockResolvedValue(pendingReq);
+    jest.spyOn(authService, 'suggestAvailableUsername').mockReturnValue('pending_guy');
+    jest.spyOn(authService, 'getPendingRequestCount').mockResolvedValue(1);
 
     // Mock Approval Action
     const mockApprove = jest.spyOn(authService, 'approveRequest').mockResolvedValue({
       rawToken: 'pk-newtoken123',
+      delivery: {},
       user: { id: 'u1', username: 'pending_guy', role: 'PRODUCER', status: 'ACTIVE', tokenHash: 'hash', profile: { source: 'REQUEST_APPROVAL' }, createdAt: '', updatedAt: '' }
-    });
+    } as any);
 
     render(<App />);
     
-    // 1. Go to Admin -> Inbox
-    await waitFor(() => screen.getByText(/Admin Console/i)); // Footer button
-    fireEvent.click(screen.getByText(/Admin Console/i));
+    // 1. Wait for authenticated dashboard shell, then go to Admin Console
+    const adminConsoleButton = await screen.findByRole('button', { name: /Admin Console/i });
+    fireEvent.click(adminConsoleButton);
     
     const inboxTab = screen.getByText('INBOX');
     fireEvent.click(inboxTab);
 
     // 2. See Request
-    await waitFor(() => screen.getByText('pending_guy'));
-    expect(screen.getByText('REQ-PENDING', { exact: false })).toBeInTheDocument(); // ID might not be shown textually in card, but name is
+    await screen.findByText(/Pending Requests \(1\)/i);
+    expect(screen.getByText(/Pending User/i)).toBeInTheDocument();
+    expect(screen.getByText(/@pending_guy/i)).toBeInTheDocument();
 
     // 3. Approve
     fireEvent.click(screen.getByText(/Review & Approve/i));
     
     // 4. Confirm Modal
     await waitFor(() => screen.getByText(/Confirm Approval/i));
-    fireEvent.click(screen.getByText(/Create User & Send Token/i));
+    fireEvent.click(screen.getByText(/Approve & Provision/i));
 
     // 5. Verify Success & Token Display
     await waitFor(() => {
@@ -148,7 +162,7 @@ describe('SYSTEM: Critical Flow Automations', () => {
     });
 
     // 6. Assert Backend Call
-    expect(mockApprove).toHaveBeenCalledWith('admin', 'REQ-PENDING', 'pending_guy');
+    expect(mockApprove).toHaveBeenCalledWith('admin', 'REQ-PENDING', expect.objectContaining({ username: 'pending_guy' }));
   });
 
   // --- FLOW 5: Session Restore on Refresh ---
@@ -176,7 +190,7 @@ describe('SYSTEM: Critical Flow Automations', () => {
     expect(screen.getByText('restored_user')).toBeInTheDocument();
 
     // 6. Verify Service Call
-    expect(mockRestore).toHaveBeenCalledWith('restored_user');
+    expect(mockRestore).toHaveBeenCalledWith('sess-123');
   });
 
   test('FAIL: Session is cleared if revoked on server', async () => {
