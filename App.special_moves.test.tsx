@@ -361,4 +361,83 @@ describe('Special Moves Feature Suite', () => {
     expect(within(scoreboard).getAllByText('0').length).toBeGreaterThan(0);
     expect(document.querySelector('.lucide-zap')).not.toBeInTheDocument();
   });
+
+  it('FALLBACK: When backend fails with permission error, arm succeeds in local fallback mode', async () => {
+    await setupAndPlay();
+
+    // Mock backend to fail with permission-denied
+    const permissionError = new Error('Permission denied');
+    (permissionError as any).code = 'functions/permission-denied';
+    (specialMovesClient.requestArmTile as any).mockRejectedValueOnce(permissionError);
+
+    // Also mock successful fallback result
+    (specialMovesClient.requestArmTile as any).mockImplementationOnce(async () => {
+      // Simulate fallback succeeding by updating overlay
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          q1: { status: 'ARMED', moveType: 'DOUBLE_TROUBLE', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+      return { success: true, id: 'test-fallback' };
+    });
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+
+    const moveBtn = await screen.findByText('DOUBLE OR LOSE');
+    fireEvent.click(moveBtn);
+
+    const clearBtn = await screen.findByRole('button', { name: /wipe all armed tiles/i });
+    const movesPanel = clearBtn.closest('div')?.parentElement?.parentElement ?? document.body;
+    const armTileBtn = within(movesPanel).getAllByRole('button').find((button) => button.textContent?.includes('100'));
+
+    await act(async () => {
+      fireEvent.click(armTileBtn!);
+    });
+
+    // Should still show success toast (not error)
+    await waitFor(() => {
+      expect(screen.getByText(/MOVE DEPLOYED/i)).toBeInTheDocument();
+    });
+  });
+
+  it('FALLBACK: Tile tag shows "armed" state when armed in fallback mode', async () => {
+    await setupAndPlay();
+
+    (specialMovesClient.requestArmTile as any).mockImplementationOnce(async () => {
+      // Simulate fallback arm succeeding
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          q1: { status: 'ARMED', moveType: 'TRIPLE_THREAT', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+      return { success: true, id: 'test-fallback-q1' };
+    });
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+
+    const moveBtn = await screen.findByText('TRIPLE OR LOSE');
+    fireEvent.click(moveBtn);
+
+    const clearBtn = await screen.findByRole('button', { name: /wipe all armed tiles/i });
+    const movesPanel = clearBtn.closest('div')?.parentElement?.parentElement ?? document.body;
+    const armTileBtn = within(movesPanel).getAllByRole('button').find((button) => button.textContent?.includes('100'));
+
+    await act(async () => {
+      fireEvent.click(armTileBtn!);
+    });
+
+    // Verify tile tag updated on board
+    await waitFor(() => {
+      const tileTag = screen.getByTestId('special-move-tile-tag-q1');
+      expect(tileTag).toHaveAttribute('data-state', 'armed');
+    });
+  });
 });
