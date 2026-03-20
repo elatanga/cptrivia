@@ -88,6 +88,35 @@ export const DirectorPanel: React.FC<Props> = ({
     status: 'PENDING' | 'RESOLVED' | 'CANCELED';
   };
 
+  type AuditEntry = {
+    id: string;
+    ts: number;
+    iso: string;
+    type: AnalyticsEventType;
+    channel: LogChannel;
+    event: GameAnalyticsEvent;
+    sentence: string;
+    badgeLabel: 'AWARDED' | 'STOLEN' | 'VOIDED' | 'RETURNED' | 'PLAY';
+    badgeClasses: string;
+    detail: string;
+  };
+
+  type HistoryEntry = {
+    id: string;
+    iso: string;
+    type: AnalyticsEventType;
+    channel: LogChannel;
+    event: GameAnalyticsEvent;
+    sentence: string;
+    headline: string;
+    description: string;
+    metadataLine: string;
+    actorLabel: string;
+    outcomeLabel: string;
+    specialMoveLabel: string;
+    searchText: string;
+  };
+
   const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'SOUND_BOARD' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
   const [editingQuestion, setEditingQuestion] = useState<{cIdx: number, qIdx: number} | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -103,7 +132,8 @@ export const DirectorPanel: React.FC<Props> = ({
   const [selectedEndgameCategoryId, setSelectedEndgameCategoryId] = useState<string>('');
   const [isPreparingEndgameChallenge, setIsPreparingEndgameChallenge] = useState(false);
   const [activeEndgameChallenge, setActiveEndgameChallenge] = useState<EndgameChallenge | null>(null);
-  
+  const [selectedAuditDetail, setSelectedAuditDetail] = useState<AuditEntry | null>(null);
+
   // Per-tile AI state
   const [tileAiDifficulty, setTileAiDifficulty] = useState<Difficulty>("mixed");
   const [tileAiLoading, setTileAiLoading] = useState(false);
@@ -208,6 +238,18 @@ export const DirectorPanel: React.FC<Props> = ({
     const match = note.match(/^stolen from\s+(.+)$/i);
     return match?.[1]?.trim() || '';
   };
+  const maskSafeText = (value: unknown) => {
+    const raw = value === null || value === undefined ? '' : String(value);
+    const masked = typeof (logger as any).maskPII === 'function' ? (logger as any).maskPII(raw) : raw;
+    return typeof masked === 'string' ? masked.replace(/\s+/g, ' ').trim() : String(masked || '');
+  };
+  const firstNonEmpty = (...values: unknown[]) => {
+    for (const value of values) {
+      const next = maskSafeText(value);
+      if (next) return next;
+    }
+    return '';
+  };
   const includesDoubleOrNothing = (value: unknown) => typeof value === 'string' && /double\s*or\s*nothing/i.test(value);
   const isDoubleOrNothingEvent = (event: GameAnalyticsEvent) => {
     const c = event.context || {};
@@ -266,35 +308,49 @@ export const DirectorPanel: React.FC<Props> = ({
     return false;
   };
 
-  const isGameplayAuditEvent = (event: GameAnalyticsEvent) => {
-    return [
-      'TILE_OPENED',
-      'ANSWER_REVEALED',
-      'POINTS_AWARDED',
-      'POINTS_STOLEN',
-      'TILE_VOIDED',
-      'QUESTION_RETURNED',
-      'SCORE_ADJUSTED',
-      'WILDCARD_USED',
-      'SPECIAL_MOVE_ARMED',
-      'SPECIAL_MOVE_ARMORY_CLEARED',
-      'AI_TILE_REPLACE_APPLIED',
-      'AI_CATEGORY_REPLACE_APPLIED',
-      'AI_BOARD_REGEN_APPLIED',
-      'SESSION_ENDED',
-    ].includes(event.type);
+  const isGameplayAuditEvent = (event: GameAnalyticsEvent) => [
+    'TILE_OPENED',
+    'POINTS_AWARDED',
+    'POINTS_STOLEN',
+    'TILE_VOIDED',
+    'QUESTION_RETURNED',
+  ].includes(event.type);
+
+  const getAuditBadge = (event: GameAnalyticsEvent): { label: AuditEntry['badgeLabel']; classes: string } => {
+    if (event.type === 'POINTS_AWARDED') return { label: 'AWARDED', classes: 'text-emerald-200 border-emerald-500/40 bg-emerald-900/30' };
+    if (event.type === 'POINTS_STOLEN') return { label: 'STOLEN', classes: 'text-violet-200 border-violet-500/40 bg-violet-900/30' };
+    if (event.type === 'TILE_VOIDED') return { label: 'VOIDED', classes: 'text-amber-200 border-amber-500/40 bg-amber-900/30' };
+    if (event.type === 'QUESTION_RETURNED') return { label: 'RETURNED', classes: 'text-rose-200 border-rose-500/40 bg-rose-900/30' };
+    return { label: 'PLAY', classes: 'text-zinc-200 border-zinc-600 bg-zinc-800/60' };
   };
 
-  const getAuditBadge = (event: GameAnalyticsEvent) => {
-    if (event.type === 'POINTS_AWARDED') return { label: 'CORRECT', classes: 'text-emerald-200 border-emerald-500/40 bg-emerald-900/30' };
-    if (event.type === 'POINTS_STOLEN') return { label: 'STOLEN', classes: 'text-violet-200 border-violet-500/40 bg-violet-900/30' };
-    if (event.type === 'TILE_VOIDED') return { label: 'VOID', classes: 'text-amber-200 border-amber-500/40 bg-amber-900/30' };
-    if (event.type === 'QUESTION_RETURNED') return { label: 'FAILED', classes: 'text-rose-200 border-rose-500/40 bg-rose-900/30' };
-    if (event.type === 'SPECIAL_MOVE_ARMED' || event.type === 'SPECIAL_MOVE_ARMORY_CLEARED') return { label: 'SPECIAL MOVE', classes: 'text-cyan-200 border-cyan-500/40 bg-cyan-900/30' };
-    if (event.type === 'SESSION_ENDED') return { label: 'ENDGAME', classes: 'text-fuchsia-200 border-fuchsia-500/40 bg-fuchsia-900/30' };
-    if (event.type.startsWith('AI_')) return { label: 'BOARD UPDATE', classes: 'text-sky-200 border-sky-500/40 bg-sky-900/30' };
-    if (event.type === 'SCORE_ADJUSTED') return { label: 'SCORE', classes: 'text-gold-200 border-gold-500/40 bg-gold-900/30' };
-    return { label: 'PLAY', classes: 'text-zinc-200 border-zinc-600 bg-zinc-800/60' };
+  const formatAuditPlaySentence = (event: GameAnalyticsEvent, pendingPlay?: PendingPlayContext) => {
+    const c = event.context || {};
+    const player = normalizeName(c.playerName || event.actor?.playerName || pendingPlay?.openerName);
+    const category = c.categoryName || pendingPlay?.categoryName || 'Unknown Category';
+    const points = typeof c.points === 'number' ? c.points : pendingPlay?.points;
+    const moveType = typeof c.note === 'string' && /double|triple|safe bet|lockout|super save|golden gamble|shield boost|final shot/i.test(c.note)
+      ? c.note
+      : undefined;
+
+    if (event.type === 'TILE_OPENED') {
+      return `${player} stepped up for ${category} at ${pointsLabel(points)}.`;
+    }
+    if (event.type === 'POINTS_AWARDED') {
+      const delta = typeof c.delta === 'number' ? c.delta : points;
+      return `${player} answered ${category} for ${pointsLabel(points)} and was awarded ${pointsLabel(delta)}${moveType ? ` under ${moveType}` : ''}.`;
+    }
+    if (event.type === 'POINTS_STOLEN') {
+      const victim = extractStealVictim(c.note);
+      return `${player} stole ${category} for ${pointsLabel(points)}${victim ? ` from ${victim}` : ''}.`;
+    }
+    if (event.type === 'TILE_VOIDED') {
+      return `${player} missed ${category} for ${pointsLabel(points)}. The tile was voided.`;
+    }
+    if (event.type === 'QUESTION_RETURNED') {
+      return `${player}'s play on ${category} for ${pointsLabel(points)} was returned to the board.`;
+    }
+    return formatFinalOutcomeSentence(event, pendingPlay);
   };
 
   const getEventChannel = (event: GameAnalyticsEvent): LogChannel => {
@@ -307,6 +363,49 @@ export const DirectorPanel: React.FC<Props> = ({
       return 'BOARD';
     }
     return 'SYSTEM';
+  };
+
+  const getSafeHistoryContext = (event: GameAnalyticsEvent) => {
+    const c = event.context || {};
+    const playerName = firstNonEmpty(c.playerName, event.actor?.playerName, 'Host');
+    const categoryName = firstNonEmpty(c.categoryName, 'Board');
+    const points = typeof c.points === 'number' ? c.points : undefined;
+    const delta = typeof c.delta === 'number' ? c.delta : undefined;
+    const note = firstNonEmpty(c.note);
+    const message = firstNonEmpty(c.message);
+    const outcome = event.type === 'POINTS_AWARDED'
+      ? 'AWARDED'
+      : event.type === 'POINTS_STOLEN'
+        ? 'STOLEN'
+        : event.type === 'TILE_VOIDED'
+          ? 'VOIDED'
+          : event.type === 'QUESTION_RETURNED'
+            ? 'RETURNED'
+            : event.type.includes('FAILED')
+              ? 'FAILED'
+              : event.type.includes('START')
+                ? 'STARTED'
+                : event.type.includes('STOP') || event.type.includes('PAUSE')
+                  ? 'STOPPED'
+                  : 'UPDATED';
+
+    const specialMove = firstNonEmpty(
+      c.note && /double|triple|safe bet|lockout|super save|golden gamble|shield boost|final shot/i.test(String(c.note)) ? c.note : '',
+      c.after && typeof c.after === 'object' ? (c.after as any).moveType : '',
+      c.before && typeof c.before === 'object' ? (c.before as any).moveType : ''
+    );
+
+    return {
+      actorLabel: firstNonEmpty(event.actor?.role, 'system').toUpperCase(),
+      playerName,
+      categoryName,
+      points,
+      delta,
+      outcome,
+      specialMove,
+      note,
+      message,
+    };
   };
 
   const formatEventSentence = (event: GameAnalyticsEvent): string => {
@@ -393,19 +492,58 @@ export const DirectorPanel: React.FC<Props> = ({
     }
   };
 
-  const fullHistoryLogs = useMemo(() => {
+  const fullHistoryLogs = useMemo<HistoryEntry[]>(() => {
     const events = [...(gameState.events || [])].sort((a, b) => a.ts - b.ts);
     return events.map((event) => ({
-      id: event.id,
+      id: event.id || `${event.type}_${event.ts}`,
       iso: event.iso,
       type: event.type,
       channel: getEventChannel(event),
       event,
-      sentence: formatEventSentence(event)
+      sentence: formatEventSentence(event),
+      headline: (() => {
+        const safe = getSafeHistoryContext(event);
+        if (event.type === 'POINTS_AWARDED') return `${safe.playerName} was awarded points`;
+        if (event.type === 'POINTS_STOLEN') return `${safe.playerName} stole the tile`;
+        if (event.type === 'TILE_VOIDED') return `Tile in ${safe.categoryName} was voided`;
+        if (event.type === 'QUESTION_RETURNED') return `Tile in ${safe.categoryName} returned to board`;
+        if (event.type === 'SPECIAL_MOVE_ARMED') return `Special move armed on ${safe.categoryName}`;
+        return `${sentenceCase(event.type)} event`;
+      })(),
+      description: (() => {
+        const safe = getSafeHistoryContext(event);
+        const pointDetail = typeof safe.points === 'number' ? ` (${pointsLabel(safe.points)})` : '';
+        const deltaDetail = typeof safe.delta === 'number' ? ` Score impact: ${safe.delta >= 0 ? '+' : ''}${safe.delta}.` : '';
+        const moveDetail = safe.specialMove ? ` Special move: ${safe.specialMove}.` : '';
+        const noteDetail = safe.note ? ` Note: ${safe.note}.` : '';
+        return `${maskSafeText(formatEventSentence(event))}${pointDetail}.${deltaDetail}${moveDetail}${noteDetail}`.replace(/\.+/g, '.').trim();
+      })(),
+      metadataLine: (() => {
+        const safe = getSafeHistoryContext(event);
+        return [
+          safe.actorLabel,
+          safe.playerName,
+          safe.categoryName,
+          typeof safe.points === 'number' ? pointsLabel(safe.points).toUpperCase() : '',
+          safe.outcome,
+          safe.specialMove ? `MOVE: ${safe.specialMove.toUpperCase()}` : '',
+        ].filter(Boolean).join(' • ');
+      })(),
+      actorLabel: getSafeHistoryContext(event).actorLabel,
+      outcomeLabel: getSafeHistoryContext(event).outcome,
+      specialMoveLabel: getSafeHistoryContext(event).specialMove,
+      searchText: [
+        maskSafeText(formatEventSentence(event)),
+        maskSafeText(getSafeHistoryContext(event).playerName),
+        maskSafeText(getSafeHistoryContext(event).categoryName),
+        maskSafeText(getSafeHistoryContext(event).note),
+        maskSafeText(getSafeHistoryContext(event).message),
+        maskSafeText(getSafeHistoryContext(event).specialMove),
+      ].join(' ').toLowerCase(),
     }));
   }, [gameState.events]);
 
-  const auditEvents = useMemo(() => {
+  const auditEvents = useMemo<AuditEntry[]>(() => {
     const ordered = [...(gameState.events || [])]
       .filter((event): event is GameAnalyticsEvent => !!event && typeof event.type === 'string')
       .sort((a, b) => {
@@ -415,18 +553,7 @@ export const DirectorPanel: React.FC<Props> = ({
     const pendingByTileId = new Map<string, PendingPlayContext>();
     const dedupe = new Set<string>();
     let selectedPlayerName: string | undefined;
-    const summaries: Array<{
-      id: string;
-      ts: number;
-      iso: string;
-      type: AnalyticsEventType;
-      channel: LogChannel;
-      event: GameAnalyticsEvent;
-      sentence: string;
-      badgeLabel: string;
-      badgeClasses: string;
-      detail: string;
-    }> = [];
+    const summaries: AuditEntry[] = [];
 
     ordered.forEach((event) => {
       const c = event.context || {};
@@ -453,8 +580,8 @@ export const DirectorPanel: React.FC<Props> = ({
 
       const pendingPlay = c.tileId ? pendingByTileId.get(c.tileId) : undefined;
       const badge = getAuditBadge(event);
-      const safePlayer = c.playerName || event.actor?.playerName || pendingPlay?.openerName || 'Host';
-      const safeCategory = c.categoryName || pendingPlay?.categoryName || 'Board';
+      const safePlayer = normalizeName(c.playerName || event.actor?.playerName || pendingPlay?.openerName);
+      const safeCategory = c.categoryName || pendingPlay?.categoryName || 'Unknown Category';
       const safePoints = typeof c.points === 'number' ? c.points : pendingPlay?.points;
       const delta = typeof c.delta === 'number' ? c.delta : undefined;
       summaries.push({
@@ -464,10 +591,10 @@ export const DirectorPanel: React.FC<Props> = ({
         type: event.type,
         channel: getEventChannel(event),
         event,
-        sentence: isFinalOutcomeEvent(event) ? formatFinalOutcomeSentence(event, pendingPlay) : formatEventSentence(event),
+        sentence: formatAuditPlaySentence(event, pendingPlay),
         badgeLabel: badge.label,
         badgeClasses: badge.classes,
-        detail: `${safePlayer} • ${safeCategory}${typeof safePoints === 'number' ? ` • ${pointsLabel(safePoints)}` : ''}${typeof delta === 'number' ? ` • ${delta >= 0 ? '+' : ''}${delta}` : ''}`,
+        detail: `${safePlayer} • ${safeCategory}${typeof safePoints === 'number' ? ` • ${pointsLabel(safePoints)}` : ''}${typeof delta === 'number' ? ` • ${delta >= 0 ? '+' : ''}${delta} points` : ''}`,
       });
 
       if (c.tileId && isFinalOutcomeEvent(event)) {
@@ -496,7 +623,7 @@ export const DirectorPanel: React.FC<Props> = ({
     }));
   }, [gameState.events]);
 
-  const filterLogEntries = <T extends { sentence: string; type: AnalyticsEventType; channel: LogChannel; event: GameAnalyticsEvent }>(entries: T[]) => {
+  const filterLogEntries = <T extends { sentence: string; type: AnalyticsEventType; channel: LogChannel; event: GameAnalyticsEvent; searchText?: string }>(entries: T[]) => {
     const normalizedQuery = logQuery.trim().toLowerCase();
     const filtered = entries.filter((entry) => {
       if (eventTypeFilter !== 'ALL' && entry.type !== eventTypeFilter) return false;
@@ -504,7 +631,7 @@ export const DirectorPanel: React.FC<Props> = ({
       if (keyOnlyFilter && !isKeyActivityEvent(entry.event)) return false;
       if (!normalizedQuery) return true;
 
-      const haystack = [
+      const haystack = entry.searchText || [
         entry.sentence,
         sentenceCase(entry.type),
         entry.event.context?.playerName || '',
@@ -528,20 +655,48 @@ export const DirectorPanel: React.FC<Props> = ({
     setSortOrder('NEWEST');
   };
 
-  const downloadLogs = (entries: Array<{ iso: string; sentence: string }>, filenamePrefix: string) => {
+  const downloadLogs = (entries: HistoryEntry[], filenamePrefix: string) => {
     try {
-      const lines = entries.map((entry) => `[${entry.iso}] ${entry.sentence}`);
-      const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+      const snapshot = [...entries];
+      const escapeCsv = (value: unknown) => {
+        const text = maskSafeText(value).replace(/\r?\n|\r/g, ' ');
+        return `"${text.replace(/"/g, '""')}"`;
+      };
+      const headers = [
+        'timestamp',
+        'event_type',
+        'channel',
+        'actor',
+        'headline',
+        'description',
+        'metadata',
+        'outcome',
+        'special_move',
+      ];
+      const rows = snapshot.map((entry) => [
+        entry.iso,
+        entry.type,
+        entry.channel,
+        entry.actorLabel,
+        entry.headline,
+        entry.description,
+        entry.metadataLine,
+        entry.outcomeLabel,
+        entry.specialMoveLabel,
+      ].map(escapeCsv).join(','));
+
+      const csv = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       const url = window.URL.createObjectURL(blob);
-      const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 16);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `${filenamePrefix}-${stamp}.txt`;
+      anchor.download = `${filenamePrefix}-${stamp}.csv`;
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
       window.URL.revokeObjectURL(url);
-      addToast('success', 'Logs downloaded.');
+      addToast('success', snapshot.length ? 'Logs exported as CSV.' : 'No logs to export.');
     } catch (e: any) {
       logger.error('director_log_download_failed', { error: e.message });
       addToast('error', 'Failed to download logs.');
@@ -1991,7 +2146,16 @@ export const DirectorPanel: React.FC<Props> = ({
                     <div key={entry.id} className="rounded-lg border border-zinc-800 bg-black/30 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-[10px] text-zinc-500 font-mono">{new Date(entry.iso || entry.ts).toLocaleTimeString()}</div>
-                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${entry.badgeClasses}`}>{entry.badgeLabel}</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${entry.badgeClasses}`}>{entry.badgeLabel}</span>
+                          <button
+                            aria-label="Open play details"
+                            onClick={() => setSelectedAuditDetail(entry)}
+                            className="inline-flex items-center rounded-full border border-cyan-500/50 bg-cyan-900/30 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-cyan-200 hover:bg-cyan-800/40"
+                          >
+                            PLAY
+                          </button>
+                        </div>
                       </div>
                       <div className="text-[12px] text-zinc-200 mt-1 leading-relaxed">{entry.sentence}</div>
                       <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-1">{entry.detail}</div>
@@ -2006,13 +2170,51 @@ export const DirectorPanel: React.FC<Props> = ({
                   {filteredHistoryLogs.length === 0 && <div className="text-[11px] text-zinc-500">No events captured yet.</div>}
                   {filteredHistoryLogs.map((entry) => (
                     <div key={entry.id} className="rounded-lg border border-zinc-800 bg-black/30 p-3">
-                      <div className="text-[10px] text-zinc-500 font-mono">{entry.iso} • {sentenceCase(entry.type)}</div>
-                      <div className="text-[12px] text-zinc-100 mt-1 leading-relaxed">{entry.sentence}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[10px] text-zinc-500 font-mono">{entry.iso}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-zinc-300">{sentenceCase(entry.type)}</span>
+                          <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-zinc-300">{entry.channel}</span>
+                        </div>
+                      </div>
+                      <div className="text-[12px] text-zinc-100 mt-1 font-bold">{entry.headline}</div>
+                      <div className="text-[12px] text-zinc-200 mt-1 leading-relaxed">{entry.description}</div>
+                      <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-1">{entry.metadataLine}</div>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
+
+            {selectedAuditDetail && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" onClick={() => setSelectedAuditDetail(null)}>
+                <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="audit-detail-modal">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300">Play Event Details</div>
+                      <div className="mt-1 text-sm text-zinc-100 leading-relaxed">{selectedAuditDetail.sentence}</div>
+                    </div>
+                    <button
+                      aria-label="Close play details"
+                      onClick={() => setSelectedAuditDetail(null)}
+                      className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] font-bold uppercase text-zinc-300 hover:text-white"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="mt-4 space-y-2 text-[11px] text-zinc-300">
+                    <div><span className="text-zinc-500 uppercase tracking-wide">Time:</span> {new Date(selectedAuditDetail.iso || selectedAuditDetail.ts).toLocaleTimeString()}</div>
+                    <div><span className="text-zinc-500 uppercase tracking-wide">Outcome:</span> {selectedAuditDetail.badgeLabel}</div>
+                    <div><span className="text-zinc-500 uppercase tracking-wide">Type:</span> {sentenceCase(selectedAuditDetail.type)}</div>
+                    <div><span className="text-zinc-500 uppercase tracking-wide">Summary:</span> {selectedAuditDetail.detail}</div>
+                    {selectedAuditDetail.event.context?.note && (
+                      <div><span className="text-zinc-500 uppercase tracking-wide">Notes:</span> {selectedAuditDetail.event.context.note}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -185,10 +185,15 @@ describe('DirectorPanel: Settings & Category Regen', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /logs & audit/i }));
 
-    expect(screen.getAllByText(/Player 13 played Art for 100 points -> points awarded to Player 13\./i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Player 13 answered Art for 100 points and was awarded 100 points\./i).length).toBeGreaterThan(0);
 
     const auditList = screen.getByTestId('audit-log-list');
     expect(auditList.children.length).toBe(12);
+
+    fireEvent.click(screen.getAllByRole('button', { name: /open play details/i })[0]);
+    expect(screen.getByTestId('audit-detail-modal')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /close play details/i }));
+    expect(screen.queryByTestId('audit-detail-modal')).not.toBeInTheDocument();
 
     // Search filter narrows results
     fireEvent.change(screen.getByLabelText(/log search/i), { target: { value: 'player 13' } });
