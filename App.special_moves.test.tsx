@@ -174,8 +174,12 @@ describe('Special Moves Feature Suite', () => {
       });
     });
 
+    const armedTag = await screen.findByTestId(`special-move-tile-tag-${firstTileId}`);
+    expect(armedTag).toHaveTextContent('SPECIAL MOVE!');
+    expect(armedTag).toHaveAttribute('data-state', 'armed');
+
     // Verify the board tile shows the Zap icon
-    const tile = screen.getAllByRole('button').find(b => b.textContent === '100');
+    const tile = armedTag.closest('button');
     expect(tile?.querySelector('.lucide-zap')).toBeInTheDocument();
     expect(tile).toHaveClass('animate-pulse');
   });
@@ -197,7 +201,7 @@ describe('Special Moves Feature Suite', () => {
       });
     });
 
-    const boardTile = screen.getAllByRole('button').find((b) => b.textContent === '100');
+    const boardTile = (await screen.findByTestId(`special-move-tile-tag-${firstTileId}`)).closest('button');
     expect(boardTile).toBeTruthy();
     fireEvent.click(boardTile!);
 
@@ -228,7 +232,7 @@ describe('Special Moves Feature Suite', () => {
       });
     });
 
-    const boardTile = screen.getAllByRole('button').find((b) => b.textContent === '100');
+    const boardTile = screen.getAllByRole('button').find((b) => (b.textContent || '').includes('100'));
     expect(boardTile).toBeTruthy();
     fireEvent.click(boardTile!);
 
@@ -253,7 +257,7 @@ describe('Special Moves Feature Suite', () => {
       });
     });
 
-    const boardTile = screen.getAllByRole('button').find((b) => b.textContent === '100');
+    const boardTile = (await screen.findByTestId(`special-move-tile-tag-${firstTileId}`)).closest('button');
     expect(boardTile).toBeTruthy();
     fireEvent.click(boardTile!);
     await screen.findByTestId('reveal-root');
@@ -284,6 +288,51 @@ describe('Special Moves Feature Suite', () => {
       const nextState = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
       expect(nextState.players?.[0]?.score).toBeLessThan(0);
     });
+  });
+
+  it('B5) PLAYER COUNTERS: Resolved special move increments player usage count and stores move name', async () => {
+    await setupAndPlay();
+
+    const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+    const firstTileId = state.categories[0].questions[0].id;
+
+    await act(async () => {
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          [firstTileId]: { status: 'ARMED', moveType: 'DOUBLE_TROUBLE', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+    });
+
+    const boardTile = (await screen.findByTestId(`special-move-tile-tag-${firstTileId}`)).closest('button');
+    expect(boardTile).toBeTruthy();
+    fireEvent.click(boardTile!);
+    await screen.findByTestId('reveal-root');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /return/i }));
+    });
+
+    await waitFor(() => {
+      const nextState = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+      const p1 = nextState.players?.[0];
+      expect(p1?.specialMovesUsedCount).toBe(1);
+      expect(p1?.specialMovesUsedNames).toContain('DOUBLE OR LOSE');
+      expect(p1?.score).toBeLessThan(0);
+    });
+
+    const resolvedTag = await screen.findByTestId(`special-move-tile-tag-${firstTileId}`);
+    expect(resolvedTag).toHaveTextContent('SPECIAL MOVE!');
+    expect(resolvedTag).toHaveAttribute('data-state', 'resolved');
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+    const directorResolvedTag = await screen.findByTestId(`special-move-director-tag-${firstTileId}`);
+    expect(directorResolvedTag).toHaveTextContent('SPECIAL MOVE!');
+    expect(directorResolvedTag).toHaveAttribute('data-state', 'resolved');
   });
 
   it('C) CLEAR ARMORY: Director can wipe all armed moves', async () => {

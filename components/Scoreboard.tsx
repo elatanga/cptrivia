@@ -95,6 +95,7 @@ export const Scoreboard: React.FC<Props> = ({
             const isSelected = p.id === selectedPlayerId;
             const displayName = (p.name || "").toUpperCase();
             const stealsCount = p.stealsCount || 0;
+            const specialMovesUsedCount = p.specialMovesUsedCount || 0;
 
             return (
               <div 
@@ -112,7 +113,12 @@ export const Scoreboard: React.FC<Props> = ({
                     </span>
                     {stealsCount > 0 && (
                       <span className="bg-purple-900/40 border border-purple-500/30 text-purple-400 font-black px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ fontSize: 'var(--badge-font-px)' }}>
-                        STEALS: {stealsCount}
+                        S {stealsCount}
+                      </span>
+                    )}
+                    {specialMovesUsedCount > 0 && (
+                      <span className="bg-red-900/40 border border-red-500/30 text-red-300 font-black px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ fontSize: 'var(--badge-font-px)' }} title={(p.specialMovesUsedNames || []).join(', ')}>
+                        SM {specialMovesUsedCount}
                       </span>
                     )}
                   </div>

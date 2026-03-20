@@ -14,6 +14,7 @@ import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
+import { deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState } from '../modules/specialMoves/tileTagState';
 
 interface Props {
   gameState: GameState;
@@ -329,9 +330,9 @@ export const DirectorPanel: React.FC<Props> = ({
     const player = normalizeName(c.playerName || event.actor?.playerName || pendingPlay?.openerName);
     const category = c.categoryName || pendingPlay?.categoryName || 'Unknown Category';
     const points = typeof c.points === 'number' ? c.points : pendingPlay?.points;
-    const moveType = typeof c.note === 'string' && /double|triple|safe bet|lockout|super save|golden gamble|shield boost|final shot/i.test(c.note)
-      ? c.note
-      : undefined;
+    const moveType = firstNonEmpty(c.specialMoveName, c.specialMoveType,
+      typeof c.note === 'string' && /double|triple|safe bet|lockout|super save|golden gamble|shield boost|final shot/i.test(c.note) ? c.note : ''
+    );
 
     if (event.type === 'TILE_OPENED') {
       return `${player} stepped up for ${category} at ${pointsLabel(points)}.`;
@@ -390,6 +391,8 @@ export const DirectorPanel: React.FC<Props> = ({
                   : 'UPDATED';
 
     const specialMove = firstNonEmpty(
+      c.specialMoveName,
+      c.specialMoveType,
       c.note && /double|triple|safe bet|lockout|super save|golden gamble|shield boost|final shot/i.test(String(c.note)) ? c.note : '',
       c.after && typeof c.after === 'object' ? (c.after as any).moveType : '',
       c.before && typeof c.before === 'object' ? (c.before as any).moveType : ''
@@ -425,13 +428,13 @@ export const DirectorPanel: React.FC<Props> = ({
       case 'ANSWER_REVEALED':
         return `Answer reveal is up for ${categoryName} (${pointsLabel(points)}).`;
       case 'POINTS_AWARDED':
-        return `${playerName} hit ${categoryName} for ${pointsLabel(delta || points)}. Crowd goes wild.`;
+        return `${playerName} hit ${categoryName} for ${pointsLabel(delta || points)}${c.specialMoveName ? ` using ${c.specialMoveName}` : ''}. Crowd goes wild.`;
       case 'POINTS_STOLEN':
-        return `${playerName} stole ${pointsLabel(delta || points)} in ${categoryName}${extractStealVictim(c.note) ? ` from ${extractStealVictim(c.note)}` : ''}. Huge swing.`;
+        return `${playerName} stole ${pointsLabel(delta || points)} in ${categoryName}${extractStealVictim(c.note) ? ` from ${extractStealVictim(c.note)}` : ''}${c.specialMoveName ? ` using ${c.specialMoveName}` : ''}. Huge swing.`;
       case 'TILE_VOIDED':
         return `${categoryName} for ${pointsLabel(points)} was ruled void. Next play.`;
       case 'QUESTION_RETURNED':
-        return `${categoryName} for ${pointsLabel(points)} was sent back to the board.`;
+        return `${categoryName} for ${pointsLabel(points)} was sent back to the board${c.specialMoveName ? ` under ${c.specialMoveName}` : ''}.`;
       case 'QUESTION_EDITED':
         return `A board tile was edited in ${categoryName}.`;
       case 'AI_TILE_REPLACE_START':
@@ -709,6 +712,7 @@ export const DirectorPanel: React.FC<Props> = ({
     updatedAt: Date.now(),
     version: 1
   };
+  const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
 
   const isEndgameMove = (moveType: SpecialMoveType) => moveType === 'DOUBLE_WINS_OR_NOTHING' || moveType === 'TRIPLE_WINS_OR_NOTHING';
   const isTileMove = (moveType: SpecialMoveType) => !isEndgameMove(moveType);
@@ -982,7 +986,9 @@ export const DirectorPanel: React.FC<Props> = ({
       color: '#fff',
       wildcardsUsed: 0,
       wildcardActive: false,
-      stealsCount: 0
+      stealsCount: 0,
+      specialMovesUsedCount: 0,
+      specialMovesUsedNames: []
     };
     
     onUpdateState({ 
@@ -1502,6 +1508,7 @@ export const DirectorPanel: React.FC<Props> = ({
                     <th className="p-5 border-b border-zinc-800">Live Score</th>
                     <th className="p-5 border-b border-zinc-800">Wildcards</th>
                     <th className="p-5 border-b border-zinc-800">Steals</th>
+                    <th className="p-5 border-b border-zinc-800">Special Moves</th>
                     <th className="p-5 border-b border-zinc-800 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -1558,6 +1565,12 @@ export const DirectorPanel: React.FC<Props> = ({
                           <span className="font-mono font-black text-sm">{p.stealsCount || 0}</span>
                         </div>
                       </td>
+                      <td className="p-5">
+                        <div className="flex items-center gap-2 text-red-400" title={(p.specialMovesUsedNames || []).join(', ')}>
+                          <Sparkles className="w-4 h-4" />
+                          <span className="font-mono font-black text-sm">{p.specialMovesUsedCount || 0}</span>
+                        </div>
+                      </td>
                       <td className="p-5 text-right">
                         <button 
                           /* Fix: Replace undefined 'id' with 'p.id' */
@@ -1572,7 +1585,7 @@ export const DirectorPanel: React.FC<Props> = ({
                   ))}
                   {(!gameState.players || gameState.players.length === 0) && (
                     <tr>
-                      <td colSpan={5} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
+                      <td colSpan={6} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
                         No contestants registered for this session
                       </td>
                     </tr>
@@ -1914,6 +1927,7 @@ export const DirectorPanel: React.FC<Props> = ({
                     {cat.questions.map((q) => {
                       const deployment = currentOverlay.deploymentsByTileId[q.id];
                       const isArmed = deployment?.status === 'ARMED';
+                      const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, resolvedSpecialMoveTileIds.has(q.id));
                       const isPlayable = !q.isAnswered && !q.isVoided;
                       const giftTileDisabledReason = isGiftActivatedMove(selectedMoveType)
                         ? getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, q.id)
@@ -1934,6 +1948,17 @@ export const DirectorPanel: React.FC<Props> = ({
                             {armingTileId === q.id && <Loader2 className="w-4 h-4 animate-spin text-gold-500" />}
                           </div>
                           <div className="mt-1 text-[9px] uppercase tracking-widest text-zinc-500">Col {tileColumnIndex >= 0 ? tileColumnIndex + 1 : '?'}</div>
+                          {specialMoveTagState !== 'none' && (
+                            <div
+                              data-testid={`special-move-director-tag-${q.id}`}
+                              data-state={specialMoveTagState}
+                              className={`mt-2 inline-flex items-center rounded border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${specialMoveTagState === 'armed'
+                                ? 'bg-red-700/90 border-red-400/70 text-red-100'
+                                : 'bg-zinc-800/90 border-zinc-500/60 text-zinc-300 grayscale'}`}
+                            >
+                              SPECIAL MOVE!
+                            </div>
+                          )}
                           <div className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
                             {isArmed ? moveLabels[deployment.moveType!] : 'Ready to Arm'}
                           </div>

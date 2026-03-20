@@ -27,6 +27,8 @@ export interface Player {
   wildcardsUsed?: number; 
   wildcardActive?: boolean; 
   stealsCount?: number; 
+  specialMovesUsedCount?: number;
+  specialMovesUsedNames?: string[];
 }
 
 export interface GameTimer {
@@ -143,6 +145,8 @@ export interface GameAnalyticsEvent {
     after?: any;
     message?: string;
     note?: string;
+    specialMoveType?: SpecialMoveType;
+    specialMoveName?: string;
   };
 }
 
