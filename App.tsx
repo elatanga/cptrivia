@@ -25,6 +25,7 @@ import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecora
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
+import { firebaseConfigError, missingKeys } from './services/firebase';
 
 const QUESTION_TIMER_DURATION_OPTIONS = [5, 7, 8, 10, 15] as const;
 const DEFAULT_QUESTION_TIMER_DURATION_SECONDS = 10;

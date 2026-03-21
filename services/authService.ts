@@ -208,7 +208,10 @@ class AuthService {
   // --- PRIVATE HELPERS ---
 
   private useLocalAuthority(): boolean {
-    return areLocalMocksExplicitlyEnabled();
+    // Also use local authority when Firebase Functions are unavailable (e.g. missing/placeholder config).
+    // This prevents a hard "System Initialization Error" screen when runtime-config.js has not yet
+    // been populated with real credentials - the app gracefully falls back to localStorage-based auth.
+    return areLocalMocksExplicitlyEnabled() || !firebaseFunctions;
   }
 
   private useAuthoritativeBackend(): boolean {
