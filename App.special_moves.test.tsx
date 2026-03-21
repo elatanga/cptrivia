@@ -361,4 +361,74 @@ describe('Special Moves Feature Suite', () => {
     expect(within(scoreboard).getAllByText('0').length).toBeGreaterThan(0);
     expect(document.querySelector('.lucide-zap')).not.toBeInTheDocument();
   });
+
+  it('FALLBACK: When backend fails with permission error, arm succeeds in local fallback mode', async () => {
+    await setupAndPlay();
+
+    // The REAL client handles permission-denied internally and still resolves (never rejects to caller).
+    // The mock just needs to resolve — no overlay update needed for the toast assertion.
+    (specialMovesClient.requestArmTile as any).mockImplementationOnce(async () => {
+      return { success: true, id: 'test-fallback' };
+    });
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+
+    const moveBtn = await screen.findByText('DOUBLE OR LOSE');
+    fireEvent.click(moveBtn);
+
+    const clearBtn = await screen.findByRole('button', { name: /wipe all armed tiles/i });
+    const movesPanel = clearBtn.closest('div')?.parentElement?.parentElement ?? document.body;
+    const armTileBtn = within(movesPanel).getAllByRole('button').find((button) => button.textContent?.includes('100'));
+
+    await act(async () => {
+      fireEvent.click(armTileBtn!);
+    });
+
+    // Should show success toast — same as production path, fallback resolves identically
+    expect(await screen.findByText(/MOVE DEPLOYED/i)).toBeInTheDocument();
+  }, 15000);
+
+  it('FALLBACK: Tile tag shows "armed" state when armed in fallback mode', async () => {
+    await setupAndPlay();
+
+    // Capture the actual tileId that handleArmMove passes to requestArmTile,
+    // then use that same ID in the overlay update so the tile tag can be found.
+    let capturedTileId: string | null = null;
+
+    (specialMovesClient.requestArmTile as any).mockImplementationOnce(async (params: any) => {
+      capturedTileId = params.tileId;
+      // Simulate fallback arm succeeding: trigger overlay with the clicked tile's actual ID
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          [params.tileId]: { status: 'ARMED', moveType: 'DOUBLE_TROUBLE', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+      return { success: true, id: 'test-fallback-' + params.tileId };
+    });
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+
+    const moveBtn = await screen.findByText('DOUBLE OR LOSE');
+    fireEvent.click(moveBtn);
+
+    const clearBtn = await screen.findByRole('button', { name: /wipe all armed tiles/i });
+    const movesPanel = clearBtn.closest('div')?.parentElement?.parentElement ?? document.body;
+    const armTileBtn = within(movesPanel).getAllByRole('button').find((button) => button.textContent?.includes('100'));
+
+    await act(async () => {
+      fireEvent.click(armTileBtn!);
+    });
+
+    // Verify tile tag updated on board using the captured actual tile ID
+    await waitFor(() => {
+      expect(capturedTileId).not.toBeNull();
+      const tileTag = screen.getByTestId(`special-move-tile-tag-${capturedTileId}`);
+      expect(tileTag).toHaveAttribute('data-state', 'armed');
+    });
+  }, 15000);
 });

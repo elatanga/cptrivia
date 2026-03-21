@@ -94,14 +94,16 @@ class SpecialMovesClient {
   }
 
   private isValidationErrorCode(code: string): boolean {
-    return ['invalid-argument', 'already-exists', 'failed-precondition', 'permission-denied', 'unauthenticated'].includes(code);
+    return ['invalid-argument', 'already-exists', 'failed-precondition', 'unauthenticated'].includes(code);
   }
 
   private shouldFallbackFromFunctions(error: any): boolean {
     const code = this.getErrorCode(error);
     if (!code) return true;
+    // permission-denied should trigger fallback (user doesn't have backend access)
+    // validation errors that don't involve permissions should NOT fallback
     if (this.isValidationErrorCode(code)) return false;
-    return ['internal', 'unavailable', 'deadline-exceeded', 'unknown', 'not-found', 'cancelled', 'resource-exhausted'].includes(code);
+    return ['internal', 'unavailable', 'deadline-exceeded', 'unknown', 'not-found', 'cancelled', 'resource-exhausted', 'permission-denied'].includes(code);
   }
 
   /**
@@ -151,6 +153,14 @@ class SpecialMovesClient {
 
   /**
    * Dispatches a request to arm a specific board tile.
+   * 
+   * FALLBACK BEHAVIOR:
+   * - Attempts to use Cloud Functions if available
+   * - On backend failure (CORS, permission-denied, network error, etc.), automatically falls back to:
+   *   1. Firestore overlay if DB is available
+   *   2. In-memory state if only that is available
+   * - Fallback modes use the same tile state model, so UI remains consistent
+   * - Non-fallback errors (already-armed, invalid-argument, etc.) are thrown
    */
   async requestArmTile(params: RequestArmParams): Promise<{ success: boolean; id: string }> {
     if (!ALLOWED_MOVE_TYPES.includes(params.moveType)) {
@@ -184,11 +194,20 @@ class SpecialMovesClient {
 
         if (db) {
           this.setBackendMode('FIRESTORE_FALLBACK');
-          return this.withRetry(
-            async () => this.fallbackArmViaOverlay(params),
-            'requestArmTileFallbackOverlayAfterFunctionsError',
-            params
-          );
+          try {
+            return await this.withRetry(
+              async () => this.fallbackArmViaOverlay(params),
+              'requestArmTileFallbackOverlayAfterFunctionsError',
+              params
+            );
+          } catch (firestoreErr: any) {
+            // Firestore also failed — cascade to in-memory so game is never blocked
+            logger.warn('SMS_FIRESTORE_ARM_FAILED_CASCADE_MEMORY', {
+              gameId: params.gameId,
+              tileId: params.tileId,
+              error: firestoreErr?.message,
+            });
+          }
         }
 
         this.setBackendMode('MEMORY_FALLBACK');
@@ -200,11 +219,20 @@ class SpecialMovesClient {
 
     if (db) {
       this.setBackendMode('FIRESTORE_FALLBACK');
-      return this.withRetry(
-        async () => this.fallbackArmViaOverlay(params),
-        'requestArmTileFallbackOverlay',
-        params
-      );
+      try {
+        return await this.withRetry(
+          async () => this.fallbackArmViaOverlay(params),
+          'requestArmTileFallbackOverlay',
+          params
+        );
+      } catch (firestoreErr: any) {
+        // Firestore also failed — cascade to in-memory
+        logger.warn('SMS_FIRESTORE_ARM_FAILED_CASCADE_MEMORY', {
+          gameId: params.gameId,
+          tileId: params.tileId,
+          error: firestoreErr?.message,
+        });
+      }
     }
 
     this.setBackendMode('MEMORY_FALLBACK');
@@ -213,30 +241,49 @@ class SpecialMovesClient {
 
   /**
    * Command: Wipe all currently armed tiles.
+   * Uses the same Functions → Firestore → Memory fallback hierarchy as requestArmTile.
    */
   async clearArmory(params: ClearArmoryParams): Promise<{ success: boolean; clearedCount: number }> {
     if (functions) {
       this.setBackendMode('FUNCTIONS');
       const call = httpsCallable<ClearArmoryParams, { success: boolean; clearedCount: number }>(functions, 'sms_clearArmory');
-      return this.withRetry(
-        async () => {
-          const result = await call(params);
-          return result.data;
-        },
-        'clearArmory',
-        params
-      );
+      try {
+        return await this.withRetry(
+          async () => {
+            const result = await call(params);
+            return result.data;
+          },
+          'clearArmory',
+          params
+        );
+      } catch (e: any) {
+        if (!this.shouldFallbackFromFunctions(e)) {
+          throw e;
+        }
+        logger.warn('SMS_FUNCTIONS_CLEAR_FAILED_FALLBACK', {
+          gameId: params.gameId,
+          errorCode: this.getErrorCode(e),
+          error: e?.message,
+        });
+      }
+    } else {
+      logger.warn('SMS_FUNCTIONS_UNAVAILABLE_FALLBACK_CLEAR', { gameId: params.gameId });
     }
-
-    logger.warn('SMS_FUNCTIONS_UNAVAILABLE_FALLBACK_CLEAR', { gameId: params.gameId });
 
     if (db) {
       this.setBackendMode('FIRESTORE_FALLBACK');
-      return this.withRetry(
-        async () => this.fallbackClearViaOverlay(params),
-        'clearArmoryFallbackOverlay',
-        params
-      );
+      try {
+        return await this.withRetry(
+          async () => this.fallbackClearViaOverlay(params),
+          'clearArmoryFallbackOverlay',
+          params
+        );
+      } catch (firestoreErr: any) {
+        logger.warn('SMS_FIRESTORE_CLEAR_FAILED_CASCADE_MEMORY', {
+          gameId: params.gameId,
+          error: firestoreErr?.message,
+        });
+      }
     }
 
     this.setBackendMode('MEMORY_FALLBACK');
@@ -245,6 +292,8 @@ class SpecialMovesClient {
 
   /**
    * Subscribes to the board projection overlay.
+   * If Firestore is unavailable or the snapshot errors, automatically falls back to
+   * in-memory subscriptions so that subsequent in-memory arm operations still update the UI.
    */
   subscribeOverlay({ gameId, onOverlay, onError }: SubscribeParams) {
     if (!db) {
@@ -268,7 +317,7 @@ class SpecialMovesClient {
 
     logger.info('SMS_OVERLAY_SUBSCRIPTION_START', { gameId });
 
-    return onSnapshot(docRef, {
+    const firestoreUnsub = onSnapshot(docRef, {
       next: (snap) => {
         if (snap.exists()) {
           onOverlay(snap.data() as SMSOverlayDoc);
@@ -277,11 +326,27 @@ class SpecialMovesClient {
         }
       },
       error: (err) => {
-        logger.error('SMS_CLIENT_SNAPSHOT_ERROR', { gameId, error: err.message });
-        onOverlay(this.getEmptyOverlay());
+        // Firestore snapshot died — switch to in-memory subscription so the UI
+        // stays live when arms happen via the memory fallback path.
+        logger.warn('SMS_CLIENT_SNAPSHOT_FALLBACK_MEMORY', { gameId, error: err.message });
+        this.setBackendMode('MEMORY_FALLBACK');
+        const subscribers = this.inMemorySubscribers.get(gameId) || new Set<(overlay: SMSOverlayDoc) => void>();
+        subscribers.add(onOverlay);
+        this.inMemorySubscribers.set(gameId, subscribers);
+        onOverlay(this.getInMemoryOverlay(gameId));
         if (onError) onError(err);
       }
     });
+
+    // Return cleanup that handles both Firestore and any memory fallback subscriber
+    return () => {
+      firestoreUnsub();
+      const existing = this.inMemorySubscribers.get(gameId);
+      if (existing) {
+        existing.delete(onOverlay);
+        if (existing.size === 0) this.inMemorySubscribers.delete(gameId);
+      }
+    };
   }
 
   private getEmptyOverlay(): SMSOverlayDoc {
@@ -335,6 +400,12 @@ class SpecialMovesClient {
     };
 
     await setDoc(overlayRef, next);
+    logger.info('SMS_FALLBACK_ARM_SUCCESS_OVERLAY', {
+      gameId: params.gameId,
+      tileId: params.tileId,
+      moveType: params.moveType,
+      mode: 'FIRESTORE_FALLBACK'
+    });
     return { success: true, id: params.idempotencyKey };
   }
 
@@ -380,6 +451,12 @@ class SpecialMovesClient {
     };
     this.inMemoryOverlayByGameId.set(params.gameId, next);
     this.notifyInMemorySubscribers(params.gameId, next);
+    logger.info('SMS_FALLBACK_ARM_SUCCESS_MEMORY', {
+      gameId: params.gameId,
+      tileId: params.tileId,
+      moveType: params.moveType,
+      mode: 'MEMORY_FALLBACK'
+    });
     return { success: true, id: params.idempotencyKey };
   }
 

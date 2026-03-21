@@ -155,7 +155,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
           </React.Fragment>
       ))}
     </div>
-  ), [categories, colCount, rowCount, overlay, layoutTokens.categoryLineClamp]);
+  ), [categories, colCount, rowCount, overlay, resolvedSpecialMoveTileIds, layoutTokens.categoryLineClamp]);
 
   return (
     <div 
