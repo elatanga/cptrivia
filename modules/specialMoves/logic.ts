@@ -3,8 +3,31 @@ import { SMSType, SMSResolution } from './types';
 
 const roundScore = (value: number) => Math.round(value);
 
+const VALID_SMS_TYPES = new Set<SMSType>([
+  'DOUBLE_TROUBLE',
+  'TRIPLE_THREAT',
+  'SABOTAGE',
+  'MEGA_STEAL',
+  'DOUBLE_WINS_OR_NOTHING',
+  'TRIPLE_WINS_OR_NOTHING',
+  'SAFE_BET',
+  'LOCKOUT',
+  'SUPER_SAVE',
+  'GOLDEN_GAMBLE',
+  'SHIELD_BOOST',
+  'FINAL_SHOT',
+]);
+
+export const normalizeSpecialMoveType = (moveType?: unknown): SMSType | undefined => {
+  if (typeof moveType !== 'string') return undefined;
+  const normalized = moveType.trim().toUpperCase();
+  if (!normalized) return undefined;
+  return VALID_SMS_TYPES.has(normalized as SMSType) ? (normalized as SMSType) : undefined;
+};
+
 export const isStealBlockedForMove = (moveType?: SMSType): boolean => {
-  if (!moveType) return false;
+  const normalizedMoveType = normalizeSpecialMoveType(moveType);
+  if (!normalizedMoveType) return false;
   return [
     'DOUBLE_TROUBLE',
     'TRIPLE_THREAT',
@@ -18,11 +41,12 @@ export const isStealBlockedForMove = (moveType?: SMSType): boolean => {
     'FINAL_SHOT',
     'DOUBLE_WINS_OR_NOTHING',
     'TRIPLE_WINS_OR_NOTHING',
-  ].includes(moveType);
+  ].includes(normalizedMoveType);
 };
 
 export const doesReturnResolveAsFail = (moveType?: SMSType): boolean => {
-  if (!moveType) return false;
+  const normalizedMoveType = normalizeSpecialMoveType(moveType);
+  if (!normalizedMoveType) return false;
   return [
     'DOUBLE_TROUBLE',
     'TRIPLE_THREAT',
@@ -34,7 +58,7 @@ export const doesReturnResolveAsFail = (moveType?: SMSType): boolean => {
     'GOLDEN_GAMBLE',
     'SHIELD_BOOST',
     'FINAL_SHOT',
-  ].includes(moveType);
+  ].includes(normalizedMoveType);
 };
 
 /**
@@ -46,9 +70,10 @@ export const resolveSMS = (
   basePoints: number,
   outcome: 'AWARD' | 'STEAL' | 'FAIL'
 ): SMSResolution => {
-  if (!moveType) return { points: basePoints, label: '' };
+  const normalizedMoveType = normalizeSpecialMoveType(moveType);
+  if (!normalizedMoveType) return { points: basePoints, label: '' };
 
-  switch (moveType) {
+  switch (normalizedMoveType) {
     case 'DOUBLE_TROUBLE':
       if (outcome === 'AWARD') return { points: basePoints * 2, label: 'DOUBLE OR LOSE: 2X' };
       if (outcome === 'STEAL') return { points: 0, label: 'STEAL BLOCKED', isBlocked: true };

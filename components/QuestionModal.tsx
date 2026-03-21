@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ShieldAlert, ArrowLeft, Trash2, Trophy, Eye } from 'lucide-react';
 import { Question, Player, GameTimer, BoardViewSettings } from '../types';
+import { QuestionModalSpecialMoveModel } from '../modules/specialMoves/modalSummary';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { CountdownOverlay } from './CountdownOverlay';
@@ -68,13 +69,7 @@ interface Props {
   selectedPlayerId: string | null;
   timer: GameTimer;
   viewSettings?: Partial<BoardViewSettings> | null;
-  specialMoveSummary?: {
-    moveType: string;
-    displayTitle: string;
-    pointsEffect: string;
-    penaltyEffect?: string;
-    stealPolicy: 'NO STEAL' | 'STEAL ALLOWED';
-  } | null;
+  specialMoveSummary?: QuestionModalSpecialMoveModel | null;
   allowSteal?: boolean;
   stealDisabledReason?: string;
   questionCountdownRemainingSeconds?: number;
@@ -376,14 +371,17 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
               className="w-full max-w-4xl rounded-xl border border-gold-500/40 bg-black/35 px-3 py-2 text-center"
             >
               <div className="text-[11px] md:text-xs font-black uppercase tracking-[0.2em] text-gold-300">
-                {specialMoveSummary.displayTitle}
+                {specialMoveSummary.bannerTitle}
+              </div>
+              <div className="mt-1 text-[9px] md:text-[10px] font-bold uppercase tracking-wider text-zinc-300">
+                {specialMoveSummary.compactSummary}
               </div>
               <div className="mt-1 flex flex-wrap justify-center gap-1.5 text-[9px] md:text-[10px] uppercase tracking-wider font-black text-zinc-100">
-                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.pointsEffect}</span>
-                {specialMoveSummary.penaltyEffect && (
-                  <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.penaltyEffect}</span>
+                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.rewardText}</span>
+                {specialMoveSummary.penaltyText && (
+                  <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.penaltyText}</span>
                 )}
-                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.stealPolicy}</span>
+                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.stealText}</span>
               </div>
             </div>
           )}
