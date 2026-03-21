@@ -14,7 +14,7 @@ import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
-import { deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState } from '../modules/specialMoves/tileTagState';
+import { deriveResolvedSpecialMoveTileIds, getTileSpecialMoveBadgeModel } from '../modules/specialMoves/tileTagState';
 
 interface Props {
   gameState: GameState;
@@ -1927,7 +1927,7 @@ export const DirectorPanel: React.FC<Props> = ({
                     {cat.questions.map((q) => {
                       const deployment = currentOverlay.deploymentsByTileId[q.id];
                       const isArmed = deployment?.status === 'ARMED';
-                      const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, resolvedSpecialMoveTileIds.has(q.id));
+                      const specialMoveBadge = getTileSpecialMoveBadgeModel(!!isArmed, resolvedSpecialMoveTileIds.has(q.id));
                       const isPlayable = !q.isAnswered && !q.isVoided;
                       const giftTileDisabledReason = isGiftActivatedMove(selectedMoveType)
                         ? getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, q.id)
@@ -1948,15 +1948,15 @@ export const DirectorPanel: React.FC<Props> = ({
                             {armingTileId === q.id && <Loader2 className="w-4 h-4 animate-spin text-gold-500" />}
                           </div>
                           <div className="mt-1 text-[9px] uppercase tracking-widest text-zinc-500">Col {tileColumnIndex >= 0 ? tileColumnIndex + 1 : '?'}</div>
-                          {specialMoveTagState !== 'none' && (
+                          {specialMoveBadge.showTag && (
                             <div
                               data-testid={`special-move-director-tag-${q.id}`}
-                              data-state={specialMoveTagState}
-                              className={`mt-2 inline-flex items-center rounded border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${specialMoveTagState === 'armed'
+                              data-state={specialMoveBadge.visualState}
+                              className={`mt-2 inline-flex items-center rounded border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${specialMoveBadge.tone === 'red'
                                 ? 'bg-red-700/90 border-red-400/70 text-red-100'
                                 : 'bg-zinc-800/90 border-zinc-500/60 text-zinc-300 grayscale'}`}
                             >
-                              SPECIAL MOVE!
+                              {specialMoveBadge.label}
                             </div>
                           )}
                           <div className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">

@@ -6,7 +6,7 @@ import { logger } from '../services/logger';
 import { getTriviaBoardLayoutTokens, sanitizeBoardViewSettings } from '../services/boardViewSettings';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { useViewportWidth } from '../hooks/useViewportWidth';
-import { getTileSpecialMoveTagState } from '../modules/specialMoves/tileTagState';
+import { getTileSpecialMoveBadgeModel } from '../modules/specialMoves/tileTagState';
 
 interface Props {
   categories: Category[];
@@ -100,7 +100,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
               const isPlayable = !q.isAnswered && !q.isVoided;
               const isArmed = overlay?.deploymentsByTileId?.[q.id]?.status === 'ARMED';
               const isResolved = !!resolvedSpecialMoveTileIds?.has(q.id);
-              const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, isResolved);
+              const specialMoveBadge = getTileSpecialMoveBadgeModel(!!isArmed, isResolved);
               
               return (
                 <button 
@@ -124,15 +124,15 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                     padding: 'var(--tile-inner-padding-px)'
                   }}
                 >
-                    {specialMoveTagState !== 'none' && (
+                    {specialMoveBadge.showTag && (
                       <span
                         data-testid={`special-move-tile-tag-${q.id}`}
-                        data-state={specialMoveTagState}
-                        className={`absolute top-2 left-2 pointer-events-none rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider border ${specialMoveTagState === 'armed'
+                        data-state={specialMoveBadge.visualState}
+                        className={`absolute top-2 left-2 pointer-events-none rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider border ${specialMoveBadge.tone === 'red'
                           ? 'bg-red-700/95 text-red-100 border-red-400/70'
                           : 'bg-zinc-800/90 text-zinc-300 border-zinc-500/60 grayscale'}`}
                       >
-                        SPECIAL MOVE!
+                        {specialMoveBadge.label}
                       </span>
                     )}
                     {isArmed && isPlayable && (
