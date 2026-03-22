@@ -787,12 +787,36 @@ const App: React.FC = () => {
          }
        }
      } catch (e: any) {
-       logger.error('bootstrap_suppressed_status_unknown', {
+       const bootstrapErrorMessage = String(e?.message || '');
+       const isBootstrapTransportFailure = e?.code === 'ERR_NETWORK'
+         || e?.name === 'TypeError'
+         || /cors|cross-origin|failed to fetch|network/i.test(bootstrapErrorMessage);
+
+       logger.error('bootstrap_error_occurred', {
          message: e?.message,
          code: e?.code,
        });
-       setSystemStatusError('Unable to verify system status. Please try again or contact support.');
-       console.error('System Initialization Failed', e);
+       // ERR_NETWORK = transport failure (CORS, fetch blocked, connection timeout, etc.)
+       // These are NOT server initialization failures, so we allow local bootstrap to proceed
+       if (isBootstrapTransportFailure) {
+         logger.warn('bootstrap_network_unavailable_using_local', {
+           fallbackMode: 'local_authority',
+           isTransport: true,
+           message: bootstrapErrorMessage,
+         });
+         // Don't set systemStatusError; allow Bootstrap screen to show with local mode
+         // The app will complete and isConfigured will default to false,
+         // which triggers the Bootstrap screen. This allows user to bootstrap locally
+         // even when backend is temporarily unreachable or has CORS issues.
+       } else {
+         // Unexpected/unclassified error; show recovery UI
+         logger.error('bootstrap_unexpected_error', { 
+           code: e?.code,
+           message: e?.message,
+         });
+         setSystemStatusError('Unable to verify system status. Please try again or contact support.');
+       }
+       console.error('System Initialization Error', e);
      } finally {
        setAuthChecked(true);
      }

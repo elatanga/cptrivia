@@ -5,6 +5,7 @@ const twilio = require('twilio');
 const crypto = require('crypto');
 const specialMoveHandlers = require('./src/specialMoves/handlers');
 const { syncSMSOverlay } = require('./specialMoves/overlayProcessor');
+const { createSystemStatusCorsPolicy, createGetSystemStatusHandler } = require('./src/systemStatusHttp');
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -87,52 +88,11 @@ const hashToken = (token) => crypto.createHash('sha256').update(normalizeToken(t
 const generateSecret = (prefix, bytes = 24) => `${prefix}-${crypto.randomBytes(bytes).toString('hex')}`;
 const nowIso = () => new Date().toISOString();
 
-const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const getAllowedAppOrigins = () => {
-  const origins = new Set(EXTRA_ALLOWED_APP_ORIGINS);
-  if (FIREBASE_PROJECT_ID) {
-    origins.add(`https://${FIREBASE_PROJECT_ID}.web.app`);
-    origins.add(`https://${FIREBASE_PROJECT_ID}.firebaseapp.com`);
-  }
-  return origins;
-};
-
-const hostedOriginMatchers = FIREBASE_PROJECT_ID ? [
-  new RegExp(`^https://${escapeRegExp(FIREBASE_PROJECT_ID)}(?:--[a-z0-9-]+)?\\.web\\.app$`, 'i'),
-  new RegExp(`^https://${escapeRegExp(FIREBASE_PROJECT_ID)}(?:--[a-z0-9-]+)?\\.firebaseapp\\.com$`, 'i'),
-  new RegExp(`^https://[a-z0-9-]+--${escapeRegExp(FIREBASE_PROJECT_ID)}\.[a-z0-9-]+\.hosted\.app$`, 'i'),
-  new RegExp(`^https://${escapeRegExp(FIREBASE_PROJECT_ID)}\.[a-z0-9-]+\.hosted\.app$`, 'i'),
-] : [];
-
-const localhostOriginMatchers = [
-  /^http:\/\/localhost(?::\d+)?$/i,
-  /^http:\/\/127\.0\.0\.1(?::\d+)?$/i,
-  /^http:\/\/\[::1\](?::\d+)?$/i,
-];
-
-const isAllowedCorsOrigin = (origin) => {
-  if (!origin) return true;
-  const normalizedOrigin = String(origin).trim();
-  if (!normalizedOrigin) return true;
-  if (getAllowedAppOrigins().has(normalizedOrigin)) return true;
-  if (hostedOriginMatchers.some((matcher) => matcher.test(normalizedOrigin))) return true;
-  if (ALLOW_LOCALHOST_CORS && localhostOriginMatchers.some((matcher) => matcher.test(normalizedOrigin))) return true;
-  return false;
-};
-
-const setCorsHeaders = (req, res, origin) => {
-  const requestedHeaders = req.get('Access-Control-Request-Headers');
-  const allowHeaders = requestedHeaders || 'Content-Type, Authorization, X-Firebase-AppCheck, X-Requested-With, X-Client-Version, X-Firebase-GMPID';
-  res.set('Vary', 'Origin, Access-Control-Request-Headers');
-  if (origin && isAllowedCorsOrigin(origin)) {
-    res.set('Access-Control-Allow-Origin', origin);
-  }
-  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.set('Access-Control-Allow-Headers', allowHeaders);
-  res.set('Access-Control-Max-Age', '3600');
-  res.set('Cache-Control', 'no-store');
-};
+const systemStatusCorsPolicy = createSystemStatusCorsPolicy({
+  projectId: FIREBASE_PROJECT_ID,
+  extraAllowedOrigins: EXTRA_ALLOWED_APP_ORIGINS,
+  allowLocalhostCors: ALLOW_LOCALHOST_CORS,
+});
 
 const getCorrelationIdFromHttpRequest = (req) => {
   const body = req && req.body;
@@ -598,63 +558,14 @@ const handleNewRequestNotification = async (requestData, correlationId) => {
   }
 };
 
-exports.getSystemStatus = functions.region(DEFAULT_FUNCTIONS_REGION).https.onRequest(async (req, res) => {
-  const origin = req.get('Origin') || '';
-  const correlationId = getCorrelationIdFromHttpRequest(req);
-  setCorsHeaders(req, res, origin);
-
-  if (req.method === 'OPTIONS') {
-    log('INFO', 'CORS', 'Handled system status preflight request', correlationId, {
-      origin: origin || 'none',
-      allowed: isAllowedCorsOrigin(origin),
-    });
-    res.status(204).send('');
-    return;
-  }
-
-  if (!isAllowedCorsOrigin(origin)) {
-    log('WARNING', 'SECURITY', 'Blocked system status request from disallowed origin', correlationId, {
-      origin: origin || 'none',
-      method: req.method,
-    });
-    res.status(403).json({ error: 'Origin not allowed' });
-    return;
-  }
-
-  if (req.method !== 'GET') {
-    log('WARNING', 'BOOTSTRAP', 'Rejected system status request with invalid method', correlationId, {
-      origin: origin || 'none',
-      method: req.method,
-    });
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
-  }
-
-  try {
-    const state = await getBootstrapState();
-    log('INFO', 'BOOTSTRAP', 'Bootstrap state loaded from persistent backend config', correlationId, {
-      origin: origin || 'none',
-      method: req.method,
-      bootstrapCompleted: state.bootstrapCompleted,
-      masterAdminUserId: state.masterAdminUserId,
-      initializedAt: state.initializedAt,
-    });
-    res.status(200).json({
-      ok: true,
-      initialized: state.bootstrapCompleted,
-      ...state,
-      data: state,
-      result: state,
-    });
-  } catch (error) {
-    log('ERROR', 'BOOTSTRAP', 'Failed to load bootstrap state', correlationId, {
-      origin: origin || 'none',
-      method: req.method,
-      error,
-    });
-    res.status(500).json({ error: 'Unable to load system status' });
-  }
+const getSystemStatusHandler = createGetSystemStatusHandler({
+  getBootstrapState,
+  log,
+  getCorrelationIdFromHttpRequest,
+  corsPolicy: systemStatusCorsPolicy,
 });
+
+exports.getSystemStatus = functions.region(DEFAULT_FUNCTIONS_REGION).https.onRequest(getSystemStatusHandler);
 
 exports.bootstrapSystem = functions.https.onCall(async (data) => {
   const correlationId = data && data.correlationId;
