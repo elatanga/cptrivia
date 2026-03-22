@@ -260,6 +260,28 @@ class AuthService {
     return result.data as TResponse;
   }
 
+  private classifyBootstrapFetchError(error: any, errorMessage: string): { code: string; userMessage: string; isTransportError: boolean; isCorsError: boolean } {
+    const message = error?.message || '';
+    const isCors = message.includes('CORS') || message.includes('Cross-Origin') || error?.name === 'TypeError';
+    const isNetworkError = message.includes('fetch') || message.includes('network') || message.includes('Failed to fetch') || error?.name === 'TypeError';
+
+    const detail = {
+      isTransportError: isNetworkError || isCors,
+      isCorsError: isCors,
+      code: isCors ? 'ERR_NETWORK' : 'ERR_NETWORK',
+      userMessage: isCors 
+        ? 'Cannot reach the system. CORS/network issue. Check your connection and try again.'
+        : 'Cannot reach the system backend. Check your connection and try again.',
+    };
+
+    logger.error('bootstrap_fetch_error_classified', {
+      message: errorMessage,
+      classification: detail,
+    });
+
+    return detail;
+  }
+
   private async fetchBootstrapStatusFromBackend(): Promise<BootstrapStatusShape> {
     const endpoint = buildFunctionsHttpUrl('getSystemStatus');
     if (!endpoint) {
@@ -283,13 +305,17 @@ class AuthService {
         cache: 'no-store',
       });
     } catch (error: any) {
+      const classified = this.classifyBootstrapFetchError(error, `Fetch failed: ${error?.message}`);
       logger.error('system_status_fetch_failed', {
         transport: 'http',
         endpoint,
         method: 'GET',
         message: error?.message,
+        errorType: error?.name,
+        isTransport: classified.isTransportError,
+        isCors: classified.isCorsError,
       });
-      throw new AppError('ERR_NETWORK', 'Unable to load bootstrap state.', correlationId);
+      throw new AppError('ERR_NETWORK', classified.userMessage, correlationId);
     }
 
     if (!response.ok) {
@@ -299,8 +325,9 @@ class AuthService {
         method: 'GET',
         status: response.status,
         statusText: response.statusText,
+        isErrorResponse: true,
       });
-      throw new AppError('ERR_NETWORK', 'Unable to load bootstrap state.', correlationId);
+      throw new AppError('ERR_NETWORK', 'Backend returned an error. Try again shortly.', correlationId);
     }
 
     let payload: any = null;
@@ -312,8 +339,9 @@ class AuthService {
         endpoint,
         method: 'GET',
         message: error?.message || 'Invalid JSON response',
+        parseError: true,
       });
-      throw new AppError('ERR_NETWORK', 'Unable to load bootstrap state.', correlationId);
+      throw new AppError('ERR_NETWORK', 'Backend response malformed. Try again shortly.', correlationId);
     }
 
     const normalized = this.normalizeBootstrapStatus(payload?.data || payload?.result || payload);

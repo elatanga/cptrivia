@@ -215,17 +215,17 @@ describe('SYSTEM: Critical Flow Automations', () => {
     expect(localStorage.getItem('cruzpham_user_session')).toBeNull();
   });
 
-  test('FAIL CLOSED: Backend bootstrap status failure shows retryable error instead of bootstrap', async () => {
+  test('transport bootstrap status failure falls back to bootstrap instead of fatal error', async () => {
     jest.spyOn(authService, 'getBootstrapStatus').mockRejectedValue(new Error('CORS blocked'));
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Unable to Verify Studio Status/i)).toBeInTheDocument();
-      expect(screen.getByText(/Unable to verify system status\. Please try again or contact support\./i)).toBeInTheDocument();
+      expect(screen.getByText(/SYSTEM BOOTSTRAP/i)).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/SYSTEM BOOTSTRAP/i)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Retry Status Check/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Unable to Verify Studio Status/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Retry Status Check/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Initialize Studio/i })).toBeInTheDocument();
   });
 });
