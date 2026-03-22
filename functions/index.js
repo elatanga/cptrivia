@@ -5,7 +5,7 @@ const twilio = require('twilio');
 const crypto = require('crypto');
 const specialMoveHandlers = require('./src/specialMoves/handlers');
 const { syncSMSOverlay } = require('./specialMoves/overlayProcessor');
-const { createSystemStatusCorsPolicy, createGetSystemStatusHandler } = require('./src/systemStatusHttp');
+const { createSystemStatusCorsPolicy, createGetSystemStatusHandler, createBootstrapSystemHandler } = require('./src/systemStatusHttp');
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -567,9 +567,7 @@ const getSystemStatusHandler = createGetSystemStatusHandler({
 
 exports.getSystemStatus = functions.region(DEFAULT_FUNCTIONS_REGION).https.onRequest(getSystemStatusHandler);
 
-exports.bootstrapSystem = functions.https.onCall(async (data) => {
-  const correlationId = data && data.correlationId;
-  const username = sanitizeUsername((data && data.username) || 'admin', 'Master Admin username');
+const runBootstrapSystemTransaction = async ({ username, correlationId }) => {
   log('INFO', 'BOOTSTRAP', 'Bootstrap requested', correlationId, { username });
 
   return db.runTransaction(async (transaction) => {
@@ -624,6 +622,22 @@ exports.bootstrapSystem = functions.https.onCall(async (data) => {
     log('INFO', 'BOOTSTRAP', 'Bootstrap complete', correlationId, { username });
     return result;
   });
+};
+
+const bootstrapSystemHttpHandler = createBootstrapSystemHandler({
+  bootstrapSystem: runBootstrapSystemTransaction,
+  sanitizeUsername,
+  log,
+  getCorrelationIdFromHttpRequest,
+  corsPolicy: systemStatusCorsPolicy,
+});
+
+exports.bootstrapSystem = functions.region(DEFAULT_FUNCTIONS_REGION).https.onRequest(bootstrapSystemHttpHandler);
+
+exports.bootstrapSystemCallable = functions.https.onCall(async (data) => {
+  const correlationId = data && data.correlationId;
+  const username = sanitizeUsername((data && data.username) || 'admin', 'Master Admin username');
+  return runBootstrapSystemTransaction({ username, correlationId });
 });
 
 exports.loginWithToken = functions.https.onCall(async (data) => {

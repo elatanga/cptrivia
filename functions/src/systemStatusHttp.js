@@ -45,7 +45,7 @@ const createSystemStatusCorsPolicy = ({ projectId, extraAllowedOrigins = [], all
     return allowLocalhostCors && localhostOriginMatchers.some((matcher) => matcher.test(normalized));
   };
 
-  const setCorsHeaders = (req, res, origin) => {
+  const setCorsHeaders = (req, res, origin, allowedMethods = 'GET, OPTIONS') => {
     const requestedHeaders = req.get('Access-Control-Request-Headers');
     const allowHeaders = requestedHeaders || 'Content-Type, Authorization, X-Firebase-AppCheck, X-Requested-With, X-Client-Version, X-Firebase-GMPID';
 
@@ -53,7 +53,7 @@ const createSystemStatusCorsPolicy = ({ projectId, extraAllowedOrigins = [], all
     if (origin && isAllowedOrigin(origin)) {
       res.set('Access-Control-Allow-Origin', toTrimmedOrigin(origin));
     }
-    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.set('Access-Control-Allow-Methods', allowedMethods);
     res.set('Access-Control-Allow-Headers', allowHeaders);
     res.set('Access-Control-Max-Age', '3600');
     res.set('Cache-Control', 'no-store');
@@ -135,8 +135,82 @@ const createGetSystemStatusHandler = ({ getBootstrapState, log, getCorrelationId
   };
 };
 
+const createBootstrapSystemHandler = ({ bootstrapSystem, sanitizeUsername, log, getCorrelationIdFromHttpRequest, corsPolicy }) => {
+  if (!corsPolicy || typeof corsPolicy.isAllowedOrigin !== 'function' || typeof corsPolicy.setCorsHeaders !== 'function') {
+    throw new Error('Invalid corsPolicy for bootstrapSystem handler');
+  }
+  if (typeof bootstrapSystem !== 'function') {
+    throw new Error('Invalid bootstrapSystem executor for bootstrapSystem handler');
+  }
+  if (typeof sanitizeUsername !== 'function') {
+    throw new Error('Invalid sanitizeUsername for bootstrapSystem handler');
+  }
+
+  return async (req, res) => {
+    const origin = req.get('Origin') || '';
+    const correlationId = getCorrelationIdFromHttpRequest(req);
+
+    corsPolicy.setCorsHeaders(req, res, origin, 'POST, OPTIONS');
+
+    if (req.method === 'OPTIONS') {
+      log('INFO', 'CORS', 'Handled bootstrap preflight request', correlationId, {
+        origin: origin || 'none',
+        allowed: corsPolicy.isAllowedOrigin(origin),
+      });
+      res.status(204).send('');
+      return;
+    }
+
+    if (!corsPolicy.isAllowedOrigin(origin)) {
+      log('WARNING', 'SECURITY', 'Blocked bootstrap request from disallowed origin', correlationId, {
+        origin: origin || 'none',
+        method: req.method,
+      });
+      res.status(403).json({ error: 'Origin not allowed' });
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      log('WARNING', 'BOOTSTRAP', 'Rejected bootstrap request with invalid method', correlationId, {
+        origin: origin || 'none',
+        method: req.method,
+      });
+      res.status(405).json({ error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      const username = sanitizeUsername((req.body && req.body.username) || 'admin', 'Master Admin username');
+      const result = await bootstrapSystem({ username, correlationId });
+      res.status(200).json(result);
+    } catch (error) {
+      const code = error && error.code ? String(error.code) : '';
+      if (code === 'already-exists') {
+        log('WARNING', 'BOOTSTRAP', 'Duplicate bootstrap attempt blocked', correlationId, {
+          origin: origin || 'none',
+          method: req.method,
+        });
+        res.status(409).json({ error: 'System already bootstrapped', code: 'already-exists' });
+        return;
+      }
+      if (code === 'invalid-argument') {
+        res.status(400).json({ error: error.message || 'Invalid bootstrap request', code: 'invalid-argument' });
+        return;
+      }
+
+      log('ERROR', 'BOOTSTRAP', 'Failed to bootstrap system', correlationId, {
+        origin: origin || 'none',
+        method: req.method,
+        error,
+      });
+      res.status(500).json({ error: 'Unable to bootstrap system' });
+    }
+  };
+};
+
 module.exports = {
   createSystemStatusCorsPolicy,
   createGetSystemStatusHandler,
+  createBootstrapSystemHandler,
 };
 
