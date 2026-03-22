@@ -760,14 +760,76 @@ class AuthService {
 
   async bootstrapMasterAdmin(username: string): Promise<string> {
     if (this.useAuthoritativeBackend()) {
-      try {
-        const sanitizedUsername = this.sanitizeUsername(username, 'Master Admin username');
-        const result = await this.callBackend<{ token: string }>('bootstrapSystem', { username: sanitizedUsername });
-        logger.info('[Bootstrap] master admin created via backend', { username: sanitizedUsername });
-        return result.token;
-      } catch (error) {
-        throw this.mapCallableError(error, 'ERR_BOOTSTRAP_COMPLETE', 'System already bootstrapped.');
+      const correlationId = logger.getCorrelationId();
+      const sanitizedUsername = this.sanitizeUsername(username, 'Master Admin username');
+      const endpoint = buildFunctionsHttpUrl('bootstrapSystem');
+      if (!endpoint) {
+        throw new AppError('ERR_NETWORK', 'Authoritative bootstrap endpoint unavailable.', correlationId);
       }
+
+      let response: Response;
+      try {
+        response = await fetch(endpoint, {
+          method: 'POST',
+          cache: 'no-store',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            username: sanitizedUsername,
+            correlationId,
+          }),
+        });
+      } catch (error: any) {
+        const classified = this.classifyBootstrapFetchError(error, `Bootstrap fetch failed: ${error?.message}`);
+        logger.error('bootstrap_submit_transport_failed', {
+          endpoint,
+          message: error?.message,
+          errorType: error?.name,
+          isCors: classified.isCorsError,
+        });
+        throw new AppError('ERR_NETWORK', classified.userMessage, correlationId);
+      }
+
+      let payload: any;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+
+      const backendMessage =
+        (typeof payload?.error === 'string' && payload.error.trim())
+          ? payload.error
+          : (typeof payload?.message === 'string' && payload.message.trim())
+            ? payload.message
+            : '';
+
+      const alreadyBootstrappedSignal =
+        response.status === 409
+        || payload?.code === 'already-exists'
+        || /already\s+bootstrapped/i.test(backendMessage);
+
+      if (alreadyBootstrappedSignal) {
+        throw new AppError('ERR_BOOTSTRAP_COMPLETE', backendMessage || 'System already bootstrapped.', correlationId);
+      }
+
+      if (!response.ok) {
+        logger.error('bootstrap_submit_failed', {
+          endpoint,
+          status: response.status,
+          statusText: response.statusText,
+        });
+        throw new AppError('ERR_UNKNOWN', backendMessage || 'Unable to complete bootstrap request.', correlationId);
+      }
+
+      const token = payload && typeof payload.token === 'string' ? payload.token : null;
+      if (!token) {
+        throw new AppError('ERR_UNKNOWN', 'Bootstrap response malformed.', correlationId);
+      }
+
+      logger.info('[Bootstrap] master admin created via backend', { username: sanitizedUsername });
+      return token;
     }
 
     const sanitizedUsername = this.sanitizeUsername(username, 'Master Admin username');
