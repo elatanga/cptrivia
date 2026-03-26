@@ -263,7 +263,31 @@ export type ErrorCode =
   | 'ERR_BOOTSTRAP_COMPLETE'
   | 'ERR_VALIDATION'
   | 'ERR_REQUEST_NOT_FOUND'
-  | 'ERR_REQUEST_ALREADY_PROCESSED';
+  | 'ERR_REQUEST_ALREADY_PROCESSED'
+  | 'ERR_DUPLICATE_REQUEST'
+  | 'ERR_REQUEST_LOCKED'
+  | 'ERR_RECOVERY_INVALID';
+
+export interface BootstrapStatus {
+  bootstrapCompleted?: boolean;
+  masterReady: boolean;
+  masterAdminUserId?: string | null;
+  initializedAt?: string | null;
+  masterAdminUsername?: string;
+  recoveryArmed?: boolean;
+  recoveryExpiresAt?: string | null;
+}
+
+export interface MasterRecoveryIssue {
+  recoveryCode: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export interface MasterRecoveryResult {
+  username: string;
+  rawToken: string;
+}
 
 export class AppError extends Error {
   public code: ErrorCode;
@@ -280,14 +304,33 @@ export class AppError extends Error {
 export type UserRole = 'MASTER_ADMIN' | 'ADMIN' | 'PRODUCER';
 export type UserSource = 'MANUAL_CREATE' | 'REQUEST_APPROVAL';
 export type UserStatus = 'ACTIVE' | 'REVOKED';
+export type DeliveryMethod = 'EMAIL' | 'SMS';
+export type DeliveryStatus = 'PENDING' | 'SENT' | 'FAILED' | 'SKIPPED';
 
 export interface DeliveryLog {
   id: string;
-  method: 'EMAIL' | 'SMS';
-  status: 'SENT' | 'FAILED';
+  method: DeliveryMethod;
+  status: DeliveryStatus;
   timestamp: string;
   providerId?: string;
   error?: string;
+  purpose?: 'CREDENTIALS' | 'ADMIN_NOTIFICATION' | 'GENERIC_MESSAGE';
+  recipient?: string;
+}
+
+export interface ChannelDeliveryState {
+  status: DeliveryStatus;
+  sentAt?: string;
+  lastAttemptAt?: string;
+  providerId?: string;
+  error?: string;
+}
+
+export interface CredentialDeliveryState {
+  SMS?: ChannelDeliveryState;
+  EMAIL?: ChannelDeliveryState;
+  lastIssuedAt?: string;
+  lastIssuedBy?: string;
 }
 
 export interface UserProfile {
@@ -295,6 +338,7 @@ export interface UserProfile {
   lastName?: string;
   tiktokHandle?: string;
   preferredUsername?: string;
+  notes?: string;
   source: UserSource;
   originalRequestId?: string;
 }
@@ -313,6 +357,7 @@ export interface User {
   expiresAt?: string | null; 
   createdBy?: string;
   lastDelivery?: DeliveryLog;
+  credentialDelivery?: CredentialDeliveryState;
 }
 
 export interface Session {
@@ -330,16 +375,24 @@ export interface TokenRequest {
   tiktokHandle: string;
   preferredUsername: string;
   phoneE164: string;
+  email?: string;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   createdAt: string; 
   updatedAt: string;
   approvedAt?: string;
   rejectedAt?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
+  linkedUserId?: string;
+  reviewLockExpiresAt?: string;
+  reviewLockedBy?: string;
   userId?: string; 
-  adminNotifyStatus: 'PENDING' | 'SENT' | 'FAILED';
+  adminNotifyStatus: DeliveryStatus;
   adminNotifyError?: string;
-  userNotifyStatus: 'PENDING' | 'SENT' | 'FAILED';
+  userNotifyStatus: DeliveryStatus;
   userNotifyError?: string;
+  delivery?: Partial<Record<DeliveryMethod, ChannelDeliveryState>>;
 }
 
 export interface AuthResponse {
@@ -351,6 +404,7 @@ export interface AuthResponse {
 
 export type AuditAction = 
   | 'BOOTSTRAP' 
+  | 'BOOTSTRAP_BLOCKED'
   | 'LOGIN' 
   | 'TOKEN_ISSUED' 
   | 'TOKEN_REFRESHED' 
@@ -366,7 +420,14 @@ export type AuditAction =
   | 'REQUEST_APPROVED' 
   | 'REQUEST_REJECTED' 
   | 'REQUEST_SUBMITTED' 
-  | 'ADMIN_NOTIFIED';
+  | 'ADMIN_NOTIFIED'
+  | 'REQUEST_REVIEW_STARTED'
+  | 'CREDENTIALS_RESENT'
+  | 'DELIVERY_FAILED'
+  | 'ADMIN_ACCESS_DENIED'
+  | 'MASTER_RECOVERY_ISSUED'
+  | 'MASTER_RECOVERY_COMPLETED'
+  | 'MASTER_RECOVERY_FAILED';
 
 export interface AuditLogEntry {
   id: string;

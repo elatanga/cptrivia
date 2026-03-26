@@ -1,6 +1,11 @@
 
-import { logger } from './logger';
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { vi } from 'vitest';
+
+declare const describe: any;
+declare const test: any;
+declare const expect: any;
+declare const beforeEach: any;
+declare const afterAll: any;
 
 // Mock Logger to prevent noise during test execution
 vi.mock('./logger', () => ({
@@ -42,47 +47,46 @@ describe('SYSTEM: Configuration & Initialization', () => {
     process.env = originalEnv;
   });
 
-  it('FAIL: Reports error when Runtime Config is missing', async () => {
-    // Clear runtime config and reload
-    delete (window as any).__RUNTIME_CONFIG__;
-    const { firebaseConfigError, missingKeys } = await import('./firebase');
-    expect(firebaseConfigError).toBe(true);
-    expect(missingKeys).toContain('FIREBASE_API_KEY');
-    expect(missingKeys).toContain('FIREBASE_PROJECT_ID');
+  test('FAIL: Reports error when Runtime Config is missing', async () => {
+    const firebaseModule: any = await import('./firebase');
+    expect(firebaseModule.firebaseConfigError).toBe(true);
+    expect(firebaseModule.missingKeys).toContain('FIREBASE_API_KEY');
+    expect(firebaseModule.missingKeys).toContain('FIREBASE_PROJECT_ID');
   });
 
-  it('FAIL: Reports error when keys are placeholders', async () => {
+  test('FAIL: Reports error when keys are placeholders', async () => {
     (window as any).__RUNTIME_CONFIG__ = {
-      FIREBASE_API_KEY: '__FIREBASE_API_KEY__', // Placeholder
+      FIREBASE_API_KEY: '...',
       FIREBASE_AUTH_DOMAIN: 'valid-domain',
       // ... missing others
     };
 
-    vi.resetModules();
-    const { firebaseConfigError, missingKeys } = await import('./firebase');
-    expect(firebaseConfigError).toBe(true);
-    expect(missingKeys).toContain('FIREBASE_API_KEY');
+    const firebaseModule: any = await import('./firebase');
+    expect(firebaseModule.firebaseConfigError).toBe(true);
+    expect(firebaseModule.missingKeys).toContain('FIREBASE_API_KEY');
   });
 
-  it('SUCCESS: Initializes App when config is valid', async () => {
+  test('SUCCESS: Initializes App when config is valid', async () => {
     (window as any).__RUNTIME_CONFIG__ = {
       FIREBASE_API_KEY: 'AIzaSyTestKey',
       FIREBASE_AUTH_DOMAIN: 'test.firebaseapp.com',
       FIREBASE_PROJECT_ID: 'test-project',
       FIREBASE_STORAGE_BUCKET: 'test.appspot.com',
       FIREBASE_MESSAGING_SENDER_ID: '123456789',
-      FIREBASE_APP_ID: '1:123456789:web:abcdef'
+      FIREBASE_APP_ID: '1:123456789:web:abcdef',
+      FUNCTIONS_REGION: 'us-central1'
     };
 
-    vi.resetModules();
-    const { firebaseConfigError, app, projectId } = await import('./firebase');
+    const firebaseModule: any = await import('./firebase');
     
-    if (firebaseConfigError) {
+    if (firebaseModule.firebaseConfigError) {
       throw new Error('Expected valid config but got error');
     }
 
-    expect(firebaseConfigError).toBe(false);
-    expect(app).toBeDefined();
-    expect(projectId).toBe('test-project');
+    expect(firebaseModule.firebaseConfigError).toBe(false);
+    expect(firebaseModule.app).toBeDefined();
+    expect(firebaseModule.projectId).toBe('test-project');
+    expect(firebaseModule.resolvedFunctionsTarget).toBe('us-central1');
+    expect(firebaseModule.buildFunctionsHttpUrl('getSystemStatus')).toBe('https://us-central1-test-project.cloudfunctions.net/getSystemStatus');
   });
 });
