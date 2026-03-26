@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import cors from "cors"; // 1. Import cors
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +16,17 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const app = express();
+
+// Option B: Restricted (Recommended)
+app.use(cors({
+  origin: [
+    "https://cptrivia-test--cruzpham-trivia-prod.us-central1.hosted.app",
+    /\.hosted\.app$/ // Matches any Firebase hosting preview URL
+  ],
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 
 // 1. CONSTANTS & ENV
 const PORT = process.env.PORT || 8080;
