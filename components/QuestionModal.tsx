@@ -1,15 +1,21 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ShieldAlert, ArrowLeft, Trash2, Trophy, Eye } from 'lucide-react';
-import { Question, Player, GameTimer } from '../types';
+import { Question, Player, GameTimer, BoardViewSettings } from '../types';
+import { QuestionModalSpecialMoveModel } from '../modules/specialMoves/modalSummary';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { CountdownOverlay } from './CountdownOverlay';
 import { AutoFitText } from './AutoFitText';
+import { getQuestionDisplayLayoutTokens } from '../services/boardViewSettings';
 
 const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => void }> = React.memo(({ timer, onTimerEnd }) => {
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const prevTimeLeft = useRef<number | null>(null);
+  // Ref tracks current timeLeft so the paused-state branch can read it
+  // without `timeLeft` being a useEffect dependency (which caused the
+  // interval to be torn-down and re-created on every tick).
+  const timeLeftRef = useRef<number | null>(null);
 
   useEffect(() => {
     let interval: number;
@@ -17,6 +23,7 @@ const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => 
       if (timer.endTime && timer.isRunning) {
         const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
         setTimeLeft(remaining);
+        timeLeftRef.current = remaining;
         if (remaining > 0 && remaining <= 5 && remaining !== prevTimeLeft.current) {
           soundService.playTimerTick();
         }
@@ -25,11 +32,14 @@ const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => 
           if (onTimerEnd) onTimerEnd();
         }
         prevTimeLeft.current = remaining;
-      } else if (timer.endTime && !timer.isRunning && timeLeft === null) {
+      } else if (timer.endTime && !timer.isRunning && timeLeftRef.current === null) {
+        // Paused with an endTime set but no value yet — show the snapshot.
         const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
         setTimeLeft(remaining);
+        timeLeftRef.current = remaining;
       } else if (!timer.endTime) {
         setTimeLeft(null);
+        timeLeftRef.current = null;
         prevTimeLeft.current = null;
       }
     };
@@ -37,7 +47,9 @@ const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => 
     updateTimer();
     interval = window.setInterval(updateTimer, 200);
     return () => clearInterval(interval);
-  }, [timer, timeLeft, onTimerEnd]);
+  // Removed `timeLeft` from deps: it was causing the interval to restart on
+  // every tick. `timeLeftRef` provides the current value without the dep.
+  }, [timer, onTimerEnd]);
 
   if (timeLeft === null) return null;
 
@@ -56,6 +68,10 @@ interface Props {
   players: Player[];
   selectedPlayerId: string | null;
   timer: GameTimer;
+  viewSettings?: Partial<BoardViewSettings> | null;
+  specialMoveSummary?: QuestionModalSpecialMoveModel | null;
+  allowSteal?: boolean;
+  stealDisabledReason?: string;
   questionCountdownRemainingSeconds?: number;
   questionCountdownDurationSeconds?: number;
   isQuestionCountdownRunning?: boolean;
@@ -66,12 +82,16 @@ interface Props {
   onTimerEnd?: () => void;
 }
 
-export const QuestionModal: React.FC<Props> = ({ 
+export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalInner({ 
   question,
   categoryTitle,
   players,
   selectedPlayerId,
   timer,
+  viewSettings,
+  specialMoveSummary,
+  allowSteal = true,
+  stealDisabledReason,
   questionCountdownRemainingSeconds,
   questionCountdownDurationSeconds,
   isQuestionCountdownRunning,
@@ -80,7 +100,7 @@ export const QuestionModal: React.FC<Props> = ({
   onClose,
   onReveal,
   onTimerEnd
-}) => {
+}) {
   const [showStealSelect, setShowStealSelect] = useState(false);
   const loggedQuestionIdRef = useRef<string | null>(null);
   const loggedDoubleQuestionIdRef = useRef<string | null>(null);
@@ -95,13 +115,19 @@ export const QuestionModal: React.FC<Props> = ({
     return q.options.filter((option) => typeof option === 'string' && option.trim().length > 0).slice(0, 4);
   }, [question]);
 
-  const optionGridClass = answerOptions.length === 4
-    ? 'grid-cols-2'
-    : answerOptions.length === 3
-      ? 'grid-cols-1 sm:grid-cols-2'
-      : answerOptions.length === 2
-        ? 'grid-cols-1 sm:grid-cols-2'
-        : 'grid-cols-1';
+  const displayTokens = useMemo(
+    () => getQuestionDisplayLayoutTokens(viewSettings, answerOptions.length),
+    [viewSettings, answerOptions.length]
+  );
+
+  const contentRegionStyle = useMemo(
+    () => ({
+      maxWidth: `${displayTokens.contentMaxWidthPercent}%`,
+      paddingLeft: `${displayTokens.contentPaddingPx}px`,
+      paddingRight: `${displayTokens.contentPaddingPx}px`,
+    }),
+    [displayTokens.contentMaxWidthPercent, displayTokens.contentPaddingPx]
+  );
 
   // LOGGING & SCROLL LOCK
   useEffect(() => {
@@ -136,23 +162,27 @@ export const QuestionModal: React.FC<Props> = ({
   }, [isDouble, isRevealed]);
 
   const questionContent = useMemo(() => (
-    <div data-testid="question-viewport" className="w-full px-1 md:px-4 overflow-hidden min-h-0 flex items-center justify-center">
+    <div
+      data-testid="question-viewport"
+      className="w-full overflow-hidden min-h-0 flex items-center justify-center mx-auto"
+      style={contentRegionStyle}
+    >
       <AutoFitText
         testId="question-text"
         text={question.text}
-        minFontSizePx={20}
-        maxFontSizePx={84}
-        clampVw={4.5}
-        className={`font-roboto-bold text-center transition-all duration-500 max-h-full ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
+        minFontSizePx={displayTokens.questionMinFontPx}
+        maxFontSizePx={displayTokens.questionMaxFontPx}
+        clampVw={displayTokens.questionClampVw}
+        className={`font-roboto-bold text-center transition-[opacity,transform,filter] duration-500 max-h-full ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
         containerClassName="w-full h-full flex items-center justify-center"
       />
     </div>
-  ), [question.text, isRevealed]);
+  ), [question.text, isRevealed, contentRegionStyle, displayTokens.questionMinFontPx, displayTokens.questionMaxFontPx, displayTokens.questionClampVw]);
 
   const answerContent = useMemo(() => (
-    <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-0">
+    <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-[3.5rem] md:min-h-[5rem] mx-auto" style={contentRegionStyle}>
       {!isRevealed && answerOptions.length > 0 && (
-        <div data-testid="answer-options-grid" className={`w-full grid ${optionGridClass} gap-2 md:gap-3`}>
+        <div data-testid="answer-options-grid" className={`w-full grid ${displayTokens.optionGridClass} gap-2 md:gap-3`}>
           {answerOptions.map((option, idx) => (
             <div
               key={`${option}-${idx}`}
@@ -161,9 +191,9 @@ export const QuestionModal: React.FC<Props> = ({
               <AutoFitText
                 testId={`answer-option-${idx}`}
                 text={option}
-                minFontSizePx={14}
-                maxFontSizePx={30}
-                clampVw={2.2}
+                minFontSizePx={displayTokens.optionMinFontPx}
+                maxFontSizePx={displayTokens.optionMaxFontPx}
+                clampVw={displayTokens.optionClampVw}
                 className="font-roboto-bold text-zinc-100 text-left"
                 containerClassName="w-full h-full flex items-center"
               />
@@ -180,9 +210,9 @@ export const QuestionModal: React.FC<Props> = ({
           <AutoFitText
             testId="answer-text-value"
             text={question.answer}
-            minFontSizePx={18}
-            maxFontSizePx={62}
-            clampVw={3.2}
+            minFontSizePx={displayTokens.answerMinFontPx}
+            maxFontSizePx={displayTokens.answerMaxFontPx}
+            clampVw={displayTokens.answerClampVw}
             className="text-gold-400 font-roboto-bold text-center drop-shadow-2xl"
             containerClassName="w-full"
           />
@@ -191,7 +221,19 @@ export const QuestionModal: React.FC<Props> = ({
         <div className="h-2 w-32 bg-zinc-800/50 rounded-full flex-none" />
       )}
     </div>
-  ), [isRevealed, answerOptions, optionGridClass, question.answer]);
+  ), [
+    isRevealed,
+    answerOptions,
+    question.answer,
+    contentRegionStyle,
+    displayTokens.optionGridClass,
+    displayTokens.optionMinFontPx,
+    displayTokens.optionMaxFontPx,
+    displayTokens.optionClampVw,
+    displayTokens.answerMinFontPx,
+    displayTokens.answerMaxFontPx,
+    displayTokens.answerClampVw,
+  ]);
 
   const handleAction = useCallback((action: 'reveal' | 'award' | 'steal' | 'void' | 'return', event?: React.MouseEvent | React.KeyboardEvent) => {
     if (event) {
@@ -220,7 +262,7 @@ export const QuestionModal: React.FC<Props> = ({
         }
         break;
       case 'steal':
-        if (isRevealed) {
+        if (isRevealed && allowSteal) {
           soundService.playSteal();
           setShowStealSelect(true);
         }
@@ -241,7 +283,7 @@ export const QuestionModal: React.FC<Props> = ({
         }
         break;
     }
-  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, isQuestionCountdownRunning]);
+  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, isQuestionCountdownRunning, allowSteal]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -312,17 +354,42 @@ export const QuestionModal: React.FC<Props> = ({
       <div 
         data-testid="luxury-container"
         className="relative z-10 w-full max-w-7xl h-[min(94dvh,920px)] max-h-[94dvh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2rem] md:rounded-[2.5rem] p-3 md:p-8 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden grid grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-2 md:gap-4"
+        style={{
+          maxWidth: `${displayTokens.modalMaxWidthPx}px`,
+          height: `min(94dvh, ${displayTokens.modalMaxHeightPx}px)`,
+          maxHeight: '94dvh',
+        }}
       >
         {/* Legacy per-question timer badge isolated from modal rendering flow */}
         <LegacyQuestionTimerBadge timer={timer} onTimerEnd={onTimerEnd} />
 
-        {/* 1. DOUBLE OR NOTHING LABEL */}
-        <div className="h-12 flex items-center justify-center">
+        {/* 1. TOP RISK/MODIFIER LABELS */}
+        <div className="min-h-12 flex flex-col items-center justify-center gap-1">
+          {specialMoveSummary && (
+            <div
+              data-testid="special-move-banner"
+              className="w-full max-w-4xl rounded-xl border border-gold-500/40 bg-black/35 px-3 py-2 text-center"
+            >
+              <div className="text-[11px] md:text-xs font-black uppercase tracking-[0.2em] text-gold-300">
+                {specialMoveSummary.bannerTitle}
+              </div>
+              <div className="mt-1 text-[9px] md:text-[10px] font-bold uppercase tracking-wider text-zinc-300">
+                {specialMoveSummary.compactSummary}
+              </div>
+              <div className="mt-1 flex flex-wrap justify-center gap-1.5 text-[9px] md:text-[10px] uppercase tracking-wider font-black text-zinc-100">
+                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.rewardText}</span>
+                {specialMoveSummary.penaltyText && (
+                  <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.penaltyText}</span>
+                )}
+                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.stealText}</span>
+              </div>
+            </div>
+          )}
           {isDouble && (
-            <span 
+            <span
               data-testid="double-label"
               className="text-red-500 font-black uppercase tracking-[0.3em] drop-shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-in fade-in slide-in-from-top-2 duration-700"
-              style={{ fontSize: 'clamp(18px, 2vw, 32px)' }}
+              style={{ fontSize: 'clamp(16px, 1.6vw, 26px)' }}
             >
               DOUBLE OR NOTHING
             </span>
@@ -388,10 +455,10 @@ export const QuestionModal: React.FC<Props> = ({
             {/* STEAL */}
             <button 
               type="button"
-              disabled={!isRevealed}
+              disabled={!isRevealed || !allowSteal}
               onClick={(e) => handleAction('steal', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && !isQuestionCountdownRunning ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
-              title="Steal (S)"
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && allowSteal && !isQuestionCountdownRunning ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              title={stealDisabledReason || 'Steal (S)'}
             >
               <div className="p-3 md:p-5 bg-purple-950/20 border-2 border-purple-500/50 rounded-full shadow-xl group-hover:bg-purple-900/40 transition-all">
                 <ShieldAlert className="w-5 h-5 md:w-8 md:h-8" />
@@ -443,4 +510,6 @@ export const QuestionModal: React.FC<Props> = ({
       )}
     </div>
   );
-};
+// React.memo: prevents re-renders driven purely by countdown ticks in the parent.
+// question/answer content is further stabilised internally by useMemo.
+});

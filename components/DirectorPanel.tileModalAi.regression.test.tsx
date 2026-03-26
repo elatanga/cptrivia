@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
 import { GameState } from '../types';
@@ -48,6 +48,11 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     vi.stubGlobal('crypto', { randomUUID: () => 'gen-id' });
   });
 
+  const getEditTileModal = () => {
+    const heading = screen.getByRole('heading', { name: /Science \/\/ 100/i });
+    return heading.closest('.max-w-lg') as HTMLElement;
+  };
+
   it('1) RENDERING: Tile modal includes the "AI Regen Tile" section', () => {
     render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
     
@@ -56,8 +61,15 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     fireEvent.click(tile.closest('.cursor-pointer')!);
 
     expect(screen.getByText(/AI Regen Tile/i)).toBeInTheDocument();
-    expect(screen.getByText('easy')).toBeInTheDocument();
-    expect(screen.getByText('hard')).toBeInTheDocument();
+    
+    // Find difficulty buttons within the modal (not the disabled ones outside)
+    const easyBtns = screen.getAllByText('easy');
+    const hardBtns = screen.getAllByText('hard');
+    // Get the enabled one (the one in the active modal)
+    const easyBtn = easyBtns.find(btn => !btn.classList.contains('opacity-30'));
+    const hardBtn = hardBtns.find(btn => !btn.classList.contains('opacity-30'));
+    expect(easyBtn).toBeInTheDocument();
+    expect(hardBtn).toBeInTheDocument();
   });
 
   it('2) FUNCTIONAL: Regen button calls generateSingleQuestion with selected difficulty', async () => {
@@ -68,13 +80,15 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     const tile = screen.getByText('100');
     fireEvent.click(tile.closest('.cursor-pointer')!);
 
-    // Select 'hard'
-    const hardBtn = screen.getByText('hard');
+    // Select 'hard' within the active edit-tile modal
+    const hardBtn = within(getEditTileModal()).getByRole('button', { name: 'hard' });
     fireEvent.click(hardBtn);
 
     // Click Regen
-    const regenBtn = screen.getByRole('button', { name: /regen/i });
-    fireEvent.click(regenBtn);
+    const regenBtn = within(getEditTileModal()).getByRole('button', { name: /^Regen$/i });
+    await act(async () => {
+      fireEvent.click(regenBtn);
+    });
 
     expect(geminiService.generateSingleQuestion).toHaveBeenCalledWith(
       'Regression Show',
@@ -91,7 +105,9 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
     
     fireEvent.click(screen.getByText('100').closest('.cursor-pointer')!);
-    fireEvent.click(screen.getByRole('button', { name: /regen/i }));
+    await act(async () => {
+      fireEvent.click(within(getEditTileModal()).getByRole('button', { name: /^Regen$/i }));
+    });
 
     await waitFor(() => {
       expect(mockOnUpdateState).toHaveBeenCalled();
@@ -110,7 +126,9 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     const { rerender } = render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);
     
     fireEvent.click(screen.getByText('100').closest('.cursor-pointer')!);
-    fireEvent.click(screen.getByRole('button', { name: /regen/i }));
+    await act(async () => {
+      fireEvent.click(within(getEditTileModal()).getByRole('button', { name: /^Regen$/i }));
+    });
 
     await waitFor(() => expect(mockOnUpdateState).toHaveBeenCalled());
 

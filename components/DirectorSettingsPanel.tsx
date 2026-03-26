@@ -3,6 +3,7 @@ import { Sliders, RotateCcw, Type, Layout, User } from 'lucide-react';
 import { BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { BOARD_VIEW_SETTINGS_OPTIONS, DEFAULT_BOARD_VIEW_SETTINGS, sanitizeBoardViewSettings, sanitizeBoardViewSettingsPatch } from '../services/boardViewSettings';
+import { QuestionDisplaySettings } from './QuestionDisplaySettings';
 
 interface Props {
   settings: BoardViewSettings;
@@ -134,6 +135,11 @@ export const DirectorSettingsPanel: React.FC<Props> = ({ settings, onUpdateSetti
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Question Display Settings Section */}
+      <div className="mt-12 pt-8 border-t border-zinc-800">
+        <QuestionDisplaySettings settings={safeSettings} onUpdateSettings={onUpdateSettings} />
       </div>
     </div>
   );
