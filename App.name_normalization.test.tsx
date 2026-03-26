@@ -1,6 +1,7 @@
 
 
 
+
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import App from './App';
@@ -64,12 +65,12 @@ describe('Player Name Normalization (Fix Verification)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Template Library/i));
     
-    fireEvent.click(screen.getByText(/Create Template/i));
-    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
-    fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Norm Game' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
+    await waitFor(() => screen.getByPlaceholderText(/e\.g\. Science Night 2024/i));
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. Science Night 2024/i), { target: { value: 'Norm Game' } });
     fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
-    await waitFor(() => screen.getByText(/Save Template/i));
-    fireEvent.click(screen.getByText(/Save Template/i));
+    await waitFor(() => screen.getByTestId('save-template-button'));
+    fireEvent.click(screen.getByTestId('save-template-button'));
     await waitFor(() => screen.getByText(/Play Show/i));
     fireEvent.click(screen.getByText(/Play Show/i));
     await waitFor(() => screen.getByText(/End Show/i));
@@ -85,18 +86,23 @@ describe('Player Name Normalization (Fix Verification)', () => {
   test('B) UI: Add Player stores and displays names as UPPERCASE', async () => {
     await setupActiveGame();
 
-    // 1. Quick Entry Add
-    const input = screen.getByPlaceholderText(/ADD NAME/i);
+    // Open Director -> Players and add a contestant
+    fireEvent.click(screen.getByRole('button', { name: /^Director$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Players$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Add Player$/i }));
+
+    const input = screen.getByPlaceholderText(/ENTER PLAYER NAME/i);
     fireEvent.change(input, { target: { value: 'mister el' } });
-    // Fix: Using getAllByRole to return array which supports .find()
-    fireEvent.click(screen.getAllByRole('button').find(b => b.querySelector('.lucide-plus'))!); // The plus button next to input
+    const confirmBtn = input.parentElement?.querySelector('.check-icon')?.closest('button');
+    expect(confirmBtn).toBeTruthy();
+    fireEvent.click(confirmBtn!);
 
     // Verification
     await waitFor(() => {
-        expect(screen.getByText('MISTER EL')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('MISTER EL')).toBeInTheDocument();
     });
 
-    // Persistent State Check
+    // Persistent state check
     const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
     const p = state.players.find((x: any) => x.name === 'MISTER EL');
     expect(p).toBeDefined();
@@ -106,38 +112,43 @@ describe('Player Name Normalization (Fix Verification)', () => {
     await setupActiveGame();
 
     // Open Director -> Players
-    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
-    fireEvent.click(screen.getByText(/Players/i, { selector: 'button' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Director$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Players$/i }));
 
     // Rename existing "PLAYER 1" to "mahfo"
     const input = screen.getByDisplayValue('PLAYER 1');
     fireEvent.change(input, { target: { value: 'mahfo' } });
     
-    // Switch away to trigger blur/update or just check state
-    fireEvent.click(screen.getByText(/Stats/i, { selector: 'button' }));
+    // Move to another tab to simulate normal operator flow
+    fireEvent.click(screen.getByRole('button', { name: /^Board$/i }));
 
-    // Verify Board/Scoreboard via state
+    // Verify board/scoreboard via state
     const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
     const p = state.players.find((x: any) => x.name === 'MAHFO');
     expect(p).toBeDefined();
     
     // Close director and check display
-    fireEvent.click(screen.getByText(/Close/i, { selector: 'button' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Close$/i }));
     await waitFor(() => {
-        expect(screen.getByText('MAHFO')).toBeInTheDocument();
+      expect(screen.getByText('MAHFO')).toBeInTheDocument();
     });
   });
 
   test('D) VALIDATION: Empty input shows toast and skips add', async () => {
     await setupActiveGame();
 
-    const input = screen.getByPlaceholderText(/ADD NAME/i);
+    fireEvent.click(screen.getByRole('button', { name: /^Director$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Players$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Add Player$/i }));
+
+    const input = screen.getByPlaceholderText(/ENTER PLAYER NAME/i);
     fireEvent.change(input, { target: { value: '   ' } });
-    // Fix: Using getAllByRole to return array which supports .find()
-    fireEvent.click(screen.getAllByRole('button').find(b => b.querySelector('.lucide-plus'))!);
+    const confirmBtn = input.parentElement?.querySelector('.check-icon')?.closest('button');
+    expect(confirmBtn).toBeTruthy();
+    fireEvent.click(confirmBtn!);
 
     await waitFor(() => {
-        expect(screen.getByText(/ENTER PLAYER NAME/i)).toBeInTheDocument();
+      expect(screen.getByText(/Enter a valid name/i)).toBeInTheDocument();
     });
 
     // Ensure no new player was added (should still have default 4)
@@ -145,5 +156,4 @@ describe('Player Name Normalization (Fix Verification)', () => {
     expect(state.players).toHaveLength(4);
   });
 });
-
 
