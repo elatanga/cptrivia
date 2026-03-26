@@ -70,6 +70,24 @@ describe('Steals Counter Feature', () => {
     await waitFor(() => screen.getByText(/End Show/i));
   };
 
+  const clickPlayableTileByPoints = async (points: number) => {
+    const candidate = await waitFor(() => {
+      const tile = screen
+        .getAllByRole('button')
+        .find((btn) => {
+          const label = (btn.textContent || '').trim();
+          return (
+            label === String(points)
+            && !btn.hasAttribute('disabled')
+            && String(btn.className || '').includes('bg-zinc-900')
+          );
+        });
+      if (!tile) throw new Error(`No playable ${points}-point tile found`);
+      return tile;
+    });
+    fireEvent.click(candidate);
+  };
+
   test('Steal action increments counter on scoreboard', async () => {
     await setupAndStartGame();
 
@@ -77,8 +95,7 @@ describe('Steals Counter Feature', () => {
     expect(screen.queryByText(/STEALS:/)).not.toBeInTheDocument();
 
     // 2. Open Question
-    const qBtn = screen.getAllByText('100')[0];
-    fireEvent.click(qBtn);
+    await clickPlayableTileByPoints(100);
     await waitFor(() => screen.getByTitle(/Reveal Answer/i));
 
     // Stop countdown so reveal/steal controls unlock deterministically in tests
@@ -110,12 +127,11 @@ describe('Steals Counter Feature', () => {
     await setupAndStartGame();
 
     // 1. Select Player 1 (to award to)
-    const p1 = screen.getByText('PLAYER 1');
+    const p1 = screen.getByText(/PLAYER 1/i);
     fireEvent.click(p1);
 
     // 2. Open Question
-    const qBtn = screen.getAllByText('200')[0];
-    fireEvent.click(qBtn);
+    await clickPlayableTileByPoints(200);
     
     // 3. Reveal & Award
     await waitFor(() => screen.getByTitle(/Reveal Answer/i));
@@ -140,8 +156,7 @@ describe('Steals Counter Feature', () => {
     await setupAndStartGame();
 
     // Perform a steal first
-    const qBtn = screen.getAllByText('100')[0];
-    fireEvent.click(qBtn);
+    await clickPlayableTileByPoints(100);
     await waitFor(() => screen.getByTitle(/Reveal Answer/i));
     fireEvent.click(screen.getByTitle(/Stop countdown/i));
     fireEvent.click(screen.getByTitle(/Reveal Answer/i));

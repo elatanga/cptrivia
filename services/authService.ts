@@ -6,6 +6,7 @@ import {
   areLocalMocksExplicitlyEnabled,
   assertNoMocksInNonDev,
   assertRealAuthInDeployedEnv,
+  isDeployedRuntime,
   logRuntimeMode,
 } from './runtimeConfig';
 
@@ -208,10 +209,11 @@ class AuthService {
   // --- PRIVATE HELPERS ---
 
   private useLocalAuthority(): boolean {
-    // Also use local authority when Firebase Functions are unavailable (e.g. missing/placeholder config).
-    // This prevents a hard "System Initialization Error" screen when runtime-config.js has not yet
-    // been populated with real credentials - the app gracefully falls back to localStorage-based auth.
-    return areLocalMocksExplicitlyEnabled() || !firebaseFunctions;
+    if (areLocalMocksExplicitlyEnabled()) return true;
+    // In deployed runtimes, authoritative backend status must remain the source of truth.
+    if (isDeployedRuntime()) return false;
+    // Local development may still run without Firebase initialized.
+    return !firebaseFunctions;
   }
 
   private useAuthoritativeBackend(): boolean {
