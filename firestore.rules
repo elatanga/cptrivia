@@ -16,16 +16,20 @@ service cloud.firestore {
     }
 
     // 2. USERS
-    // Client access is blocked; login and admin reads must use authoritative backend callables.
-    match /users/{userId} {
-      allow read, write: if false;
-    }
+        // allows the creation of the very first admin user during bootstrap
+        match /users/{userId} {
+          allow create: if userId == 'admin' &&
+            get(/databases/$(database)/documents/system_bootstrap/config).data.initialized == false;
+          allow read, update, delete: if false;
+        }
 
-    // 3. SYSTEM BOOTSTRAP
-    // Bootstrap status is resolved via backend callable only so cache clearing cannot influence setup visibility.
-    match /system_bootstrap/config {
-      allow read, write: if false;
-    }
+   // 3. SYSTEM BOOTSTRAP
+       // allows the frontend to check status and perform the initial one-time setup
+       match /system_bootstrap/config {
+         allow read: if true;
+         allow create: if request.resource.data.initialized == false;
+         allow update: if resource.data.initialized == false;
+       }
 
     match /system_bootstrap/recovery {
       allow read, write: if false;
