@@ -1,5 +1,7 @@
 
-export type SMSType = 'DOUBLE_TROUBLE' | 'TRIPLE_THREAT' | 'SABOTAGE' | 'MEGA_STEAL';
+import { SpecialMoveType } from '../../types';
+
+export type SMSType = SpecialMoveType;
 
 export interface SMSArmedMove {
   type: SMSType;

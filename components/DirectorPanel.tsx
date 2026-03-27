@@ -7,12 +7,14 @@ import { logger } from '../services/logger';
 import { soundService } from '../services/soundService';
 import { normalizePlayerName } from '../services/utils';
 import { sanitizeBoardViewSettings, sanitizeBoardViewSettingsPatch } from '../services/boardViewSettings';
-import { CategoryRegenerationMode, isTileActive, preserveTileStateOnRegenerate, regenerateCategoryWithMode } from '../services/boardRegenerationService';
+import { CategoryRegenerationMode, isTileActive, preserveTileStateOnRegenerate, regenerateCategoryWithMode, resetTileToActive } from '../services/boardRegenerationService';
 import { DirectorAiRegenerator } from './DirectorAiRegenerator';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
 import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
+import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
+import { deriveResolvedSpecialMoveTileIds, getTileSpecialMoveBadgeModel } from '../modules/specialMoves/tileTagState';
 
 interface Props {
   gameState: GameState;
@@ -33,6 +35,8 @@ interface Props {
   onQuestionTimerRestart?: () => void;
   onQuestionTimerStop?: () => void;
   sessionTimer?: SessionGameTimer;
+  sessionTimerEnabled?: boolean;
+  onSessionTimerToggle?: (enabled: boolean) => void;
   onSessionTimerStart?: (preset: '15m' | '30m' | '1h' | '1h30m' | '2h') => void;
   onSessionTimerPause?: () => void;
   onSessionTimerReset?: () => void;
@@ -62,6 +66,8 @@ export const DirectorPanel: React.FC<Props> = ({
   onQuestionTimerRestart,
   onQuestionTimerStop,
   sessionTimer,
+  sessionTimerEnabled,
+  onSessionTimerToggle,
   onSessionTimerStart,
   onSessionTimerPause,
   onSessionTimerReset,
@@ -73,6 +79,44 @@ export const DirectorPanel: React.FC<Props> = ({
 }) => {
   type LogChannel = 'ALL' | 'BOARD' | 'SCOREBOARD' | 'AI' | 'SPECIAL_MOVES' | 'SYSTEM';
   type SortOrder = 'NEWEST' | 'OLDEST';
+  type EndgameChallenge = {
+    id: string;
+    moveType: 'DOUBLE_WINS_OR_NOTHING' | 'TRIPLE_WINS_OR_NOTHING';
+    playerId: string;
+    categoryId: string;
+    questionText: string;
+    answerText: string;
+    status: 'PENDING' | 'RESOLVED' | 'CANCELED';
+  };
+
+  type AuditEntry = {
+    id: string;
+    ts: number;
+    iso: string;
+    type: AnalyticsEventType;
+    channel: LogChannel;
+    event: GameAnalyticsEvent;
+    sentence: string;
+    badgeLabel: 'AWARDED' | 'STOLEN' | 'VOIDED' | 'RETURNED' | 'PLAY';
+    badgeClasses: string;
+    detail: string;
+  };
+
+  type HistoryEntry = {
+    id: string;
+    iso: string;
+    type: AnalyticsEventType;
+    channel: LogChannel;
+    event: GameAnalyticsEvent;
+    sentence: string;
+    headline: string;
+    description: string;
+    metadataLine: string;
+    actorLabel: string;
+    outcomeLabel: string;
+    specialMoveLabel: string;
+    searchText: string;
+  };
 
   const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'SOUND_BOARD' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
   const [editingQuestion, setEditingQuestion] = useState<{cIdx: number, qIdx: number} | null>(null);
@@ -86,7 +130,11 @@ export const DirectorPanel: React.FC<Props> = ({
   const [channelFilter, setChannelFilter] = useState<LogChannel>('ALL');
   const [keyOnlyFilter, setKeyOnlyFilter] = useState(false);
   const [sortOrder, setSortOrder] = useState<SortOrder>('NEWEST');
-  
+  const [selectedEndgameCategoryId, setSelectedEndgameCategoryId] = useState<string>('');
+  const [isPreparingEndgameChallenge, setIsPreparingEndgameChallenge] = useState(false);
+  const [activeEndgameChallenge, setActiveEndgameChallenge] = useState<EndgameChallenge | null>(null);
+  const [selectedAuditDetail, setSelectedAuditDetail] = useState<AuditEntry | null>(null);
+
   // Per-tile AI state
   const [tileAiDifficulty, setTileAiDifficulty] = useState<Difficulty>("mixed");
   const [tileAiLoading, setTileAiLoading] = useState(false);
@@ -103,10 +151,44 @@ export const DirectorPanel: React.FC<Props> = ({
   const [confirmResetAll, setConfirmResetAll] = useState(false);
 
   const moveLabels: Record<SpecialMoveType, string> = {
-    DOUBLE_TROUBLE: 'DOUBLE TROUBLE',
-    TRIPLE_THREAT: 'TRIPLE THREAT',
-    SABOTAGE: 'SABOTAGE',
-    MEGA_STEAL: 'MEGA STEAL'
+    DOUBLE_TROUBLE: 'DOUBLE OR LOSE',
+    TRIPLE_THREAT: 'TRIPLE OR LOSE',
+    SABOTAGE: 'SAFE BET',
+    MEGA_STEAL: 'LOCKOUT',
+    DOUBLE_WINS_OR_NOTHING: 'DOUBLE YOUR WINS OR NOTHING',
+    TRIPLE_WINS_OR_NOTHING: 'TRIPLE YOUR WINS OR NOTHING',
+    SAFE_BET: 'SAFE BET',
+    LOCKOUT: 'LOCKOUT',
+    SUPER_SAVE: 'SUPER SAVE',
+    GOLDEN_GAMBLE: 'GOLDEN GAMBLE',
+    SHIELD_BOOST: 'SHIELD BOOST',
+    FINAL_SHOT: 'FINAL SHOT',
+  };
+
+  const standardMoveTypes: SpecialMoveType[] = [
+    'DOUBLE_TROUBLE',
+    'TRIPLE_THREAT',
+    'SAFE_BET',
+    'LOCKOUT',
+    'DOUBLE_WINS_OR_NOTHING',
+    'TRIPLE_WINS_OR_NOTHING',
+  ];
+
+  const giftMoveTypes: SpecialMoveType[] = ['SUPER_SAVE', 'GOLDEN_GAMBLE', 'SHIELD_BOOST', 'FINAL_SHOT'];
+
+  const moveDescriptions: Record<SpecialMoveType, string> = {
+    DOUBLE_TROUBLE: 'Tile only. Correct = 2x. Fail/return = lose tile value. No steal.',
+    TRIPLE_THREAT: 'Tile only. Correct = 3x. Fail/return = lose 130% of tile value. No steal.',
+    SABOTAGE: 'Legacy alias for Safe Bet.',
+    MEGA_STEAL: 'Legacy alias for Lockout.',
+    SAFE_BET: 'Tile only. Correct = +50%. Wrong = no penalty. No steal.',
+    LOCKOUT: 'Tile only. No steal allowed. Normal award, no extra fail penalty.',
+    DOUBLE_WINS_OR_NOTHING: 'Endgame challenge. Top-2 only. Correct doubles total score, wrong resets to 0.',
+    TRIPLE_WINS_OR_NOTHING: 'Endgame challenge. Top-2 only. Correct triples total score, wrong resets to 0.',
+    SUPER_SAVE: 'Gift required. First 3 columns only. Correct = 3x. No steal.',
+    GOLDEN_GAMBLE: 'Gift required. Middle columns only. Correct = +125%. Wrong = -50%. No steal.',
+    SHIELD_BOOST: 'Gift required. Non-final column only. Correct = 2x. Wrong = no penalty. No steal.',
+    FINAL_SHOT: 'Gift required. Last 2 columns only. Correct = 3x. Wrong = lose tile value. No steal.',
   };
 
   const backendModeLabels: Record<SMSBackendMode, string> = {
@@ -116,6 +198,28 @@ export const DirectorPanel: React.FC<Props> = ({
   };
 
   const refreshBackendMode = () => setBackendMode(specialMovesClient.getBackendMode());
+
+  const getSpecialMoveErrorMessage = (error: unknown, fallback: string) => {
+    const e = error as { code?: string; message?: string; details?: any };
+    const raw = (e?.message || '').trim();
+    const detailsMessage = typeof e?.details?.message === 'string' ? e.details.message.trim() : '';
+    const normalizedCode = (e?.code || '').toLowerCase();
+
+    if (detailsMessage) return detailsMessage;
+
+    if (raw) {
+      const prefixed = raw.match(/^[A-Z_]+:\s*(.+)$/);
+      if (prefixed?.[1]) return prefixed[1];
+      if (!/internal/i.test(raw)) return raw;
+    }
+
+    if (normalizedCode.includes('already-exists')) return 'Tile is already affected by an active move.';
+    if (normalizedCode.includes('invalid-argument')) return 'Special move request is missing required data.';
+    if (normalizedCode.includes('failed-precondition')) return 'Special move request is not in a valid state.';
+    if (normalizedCode.includes('not-found')) return 'Requested special move data was not found.';
+
+    return fallback;
+  };
 
   const sentenceCase = (value: string) => value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase());
   const pointsLabel = (value?: number) => {
@@ -134,6 +238,18 @@ export const DirectorPanel: React.FC<Props> = ({
     if (!note) return '';
     const match = note.match(/^stolen from\s+(.+)$/i);
     return match?.[1]?.trim() || '';
+  };
+  const maskSafeText = (value: unknown) => {
+    const raw = value === null || value === undefined ? '' : String(value);
+    const masked = typeof (logger as any).maskPII === 'function' ? (logger as any).maskPII(raw) : raw;
+    return typeof masked === 'string' ? masked.replace(/\s+/g, ' ').trim() : String(masked || '');
+  };
+  const firstNonEmpty = (...values: unknown[]) => {
+    for (const value of values) {
+      const next = maskSafeText(value);
+      if (next) return next;
+    }
+    return '';
   };
   const includesDoubleOrNothing = (value: unknown) => typeof value === 'string' && /double\s*or\s*nothing/i.test(value);
   const isDoubleOrNothingEvent = (event: GameAnalyticsEvent) => {
@@ -193,6 +309,51 @@ export const DirectorPanel: React.FC<Props> = ({
     return false;
   };
 
+  const isGameplayAuditEvent = (event: GameAnalyticsEvent) => [
+    'TILE_OPENED',
+    'POINTS_AWARDED',
+    'POINTS_STOLEN',
+    'TILE_VOIDED',
+    'QUESTION_RETURNED',
+  ].includes(event.type);
+
+  const getAuditBadge = (event: GameAnalyticsEvent): { label: AuditEntry['badgeLabel']; classes: string } => {
+    if (event.type === 'POINTS_AWARDED') return { label: 'AWARDED', classes: 'text-emerald-200 border-emerald-500/40 bg-emerald-900/30' };
+    if (event.type === 'POINTS_STOLEN') return { label: 'STOLEN', classes: 'text-violet-200 border-violet-500/40 bg-violet-900/30' };
+    if (event.type === 'TILE_VOIDED') return { label: 'VOIDED', classes: 'text-amber-200 border-amber-500/40 bg-amber-900/30' };
+    if (event.type === 'QUESTION_RETURNED') return { label: 'RETURNED', classes: 'text-rose-200 border-rose-500/40 bg-rose-900/30' };
+    return { label: 'PLAY', classes: 'text-zinc-200 border-zinc-600 bg-zinc-800/60' };
+  };
+
+  const formatAuditPlaySentence = (event: GameAnalyticsEvent, pendingPlay?: PendingPlayContext) => {
+    const c = event.context || {};
+    const player = normalizeName(c.playerName || event.actor?.playerName || pendingPlay?.openerName);
+    const category = c.categoryName || pendingPlay?.categoryName || 'Unknown Category';
+    const points = typeof c.points === 'number' ? c.points : pendingPlay?.points;
+    const moveType = firstNonEmpty(c.specialMoveName, c.specialMoveType,
+      typeof c.note === 'string' && /double|triple|safe bet|lockout|super save|golden gamble|shield boost|final shot/i.test(c.note) ? c.note : ''
+    );
+
+    if (event.type === 'TILE_OPENED') {
+      return `${player} stepped up for ${category} at ${pointsLabel(points)}.`;
+    }
+    if (event.type === 'POINTS_AWARDED') {
+      const delta = typeof c.delta === 'number' ? c.delta : points;
+      return `${player} answered ${category} for ${pointsLabel(points)} and was awarded ${pointsLabel(delta)}${moveType ? ` under ${moveType}` : ''}.`;
+    }
+    if (event.type === 'POINTS_STOLEN') {
+      const victim = extractStealVictim(c.note);
+      return `${player} stole ${category} for ${pointsLabel(points)}${victim ? ` from ${victim}` : ''}.`;
+    }
+    if (event.type === 'TILE_VOIDED') {
+      return `${player} missed ${category} for ${pointsLabel(points)}. The tile was voided.`;
+    }
+    if (event.type === 'QUESTION_RETURNED') {
+      return `${player}'s play on ${category} for ${pointsLabel(points)} was returned to the board.`;
+    }
+    return formatFinalOutcomeSentence(event, pendingPlay);
+  };
+
   const getEventChannel = (event: GameAnalyticsEvent): LogChannel => {
     if (event.type.startsWith('AI_')) return 'AI';
     if (event.type.startsWith('SPECIAL_MOVE')) return 'SPECIAL_MOVES';
@@ -203,6 +364,51 @@ export const DirectorPanel: React.FC<Props> = ({
       return 'BOARD';
     }
     return 'SYSTEM';
+  };
+
+  const getSafeHistoryContext = (event: GameAnalyticsEvent) => {
+    const c = event.context || {};
+    const playerName = firstNonEmpty(c.playerName, event.actor?.playerName, 'Host');
+    const categoryName = firstNonEmpty(c.categoryName, 'Board');
+    const points = typeof c.points === 'number' ? c.points : undefined;
+    const delta = typeof c.delta === 'number' ? c.delta : undefined;
+    const note = firstNonEmpty(c.note);
+    const message = firstNonEmpty(c.message);
+    const outcome = event.type === 'POINTS_AWARDED'
+      ? 'AWARDED'
+      : event.type === 'POINTS_STOLEN'
+        ? 'STOLEN'
+        : event.type === 'TILE_VOIDED'
+          ? 'VOIDED'
+          : event.type === 'QUESTION_RETURNED'
+            ? 'RETURNED'
+            : event.type.includes('FAILED')
+              ? 'FAILED'
+              : event.type.includes('START')
+                ? 'STARTED'
+                : event.type.includes('STOP') || event.type.includes('PAUSE')
+                  ? 'STOPPED'
+                  : 'UPDATED';
+
+    const specialMove = firstNonEmpty(
+      c.specialMoveName,
+      c.specialMoveType,
+      c.note && /double|triple|safe bet|lockout|super save|golden gamble|shield boost|final shot/i.test(String(c.note)) ? c.note : '',
+      c.after && typeof c.after === 'object' ? (c.after as any).moveType : '',
+      c.before && typeof c.before === 'object' ? (c.before as any).moveType : ''
+    );
+
+    return {
+      actorLabel: firstNonEmpty(event.actor?.role, 'system').toUpperCase(),
+      playerName,
+      categoryName,
+      points,
+      delta,
+      outcome,
+      specialMove,
+      note,
+      message,
+    };
   };
 
   const formatEventSentence = (event: GameAnalyticsEvent): string => {
@@ -222,13 +428,13 @@ export const DirectorPanel: React.FC<Props> = ({
       case 'ANSWER_REVEALED':
         return `Answer reveal is up for ${categoryName} (${pointsLabel(points)}).`;
       case 'POINTS_AWARDED':
-        return `${playerName} hit ${categoryName} for ${pointsLabel(delta || points)}. Crowd goes wild.`;
+        return `${playerName} hit ${categoryName} for ${pointsLabel(delta || points)}${c.specialMoveName ? ` using ${c.specialMoveName}` : ''}. Crowd goes wild.`;
       case 'POINTS_STOLEN':
-        return `${playerName} stole ${pointsLabel(delta || points)} in ${categoryName}${extractStealVictim(c.note) ? ` from ${extractStealVictim(c.note)}` : ''}. Huge swing.`;
+        return `${playerName} stole ${pointsLabel(delta || points)} in ${categoryName}${extractStealVictim(c.note) ? ` from ${extractStealVictim(c.note)}` : ''}${c.specialMoveName ? ` using ${c.specialMoveName}` : ''}. Huge swing.`;
       case 'TILE_VOIDED':
         return `${categoryName} for ${pointsLabel(points)} was ruled void. Next play.`;
       case 'QUESTION_RETURNED':
-        return `${categoryName} for ${pointsLabel(points)} was sent back to the board.`;
+        return `${categoryName} for ${pointsLabel(points)} was sent back to the board${c.specialMoveName ? ` under ${c.specialMoveName}` : ''}.`;
       case 'QUESTION_EDITED':
         return `A board tile was edited in ${categoryName}.`;
       case 'AI_TILE_REPLACE_START':
@@ -289,30 +495,68 @@ export const DirectorPanel: React.FC<Props> = ({
     }
   };
 
-  const fullHistoryLogs = useMemo(() => {
+  const fullHistoryLogs = useMemo<HistoryEntry[]>(() => {
     const events = [...(gameState.events || [])].sort((a, b) => a.ts - b.ts);
     return events.map((event) => ({
-      id: event.id,
+      id: event.id || `${event.type}_${event.ts}`,
       iso: event.iso,
       type: event.type,
       channel: getEventChannel(event),
       event,
-      sentence: formatEventSentence(event)
+      sentence: formatEventSentence(event),
+      headline: (() => {
+        const safe = getSafeHistoryContext(event);
+        if (event.type === 'POINTS_AWARDED') return `${safe.playerName} was awarded points`;
+        if (event.type === 'POINTS_STOLEN') return `${safe.playerName} stole the tile`;
+        if (event.type === 'TILE_VOIDED') return `Tile in ${safe.categoryName} was voided`;
+        if (event.type === 'QUESTION_RETURNED') return `Tile in ${safe.categoryName} returned to board`;
+        if (event.type === 'SPECIAL_MOVE_ARMED') return `Special move armed on ${safe.categoryName}`;
+        return `${sentenceCase(event.type)} event`;
+      })(),
+      description: (() => {
+        const safe = getSafeHistoryContext(event);
+        const pointDetail = typeof safe.points === 'number' ? ` (${pointsLabel(safe.points)})` : '';
+        const deltaDetail = typeof safe.delta === 'number' ? ` Score impact: ${safe.delta >= 0 ? '+' : ''}${safe.delta}.` : '';
+        const moveDetail = safe.specialMove ? ` Special move: ${safe.specialMove}.` : '';
+        const noteDetail = safe.note ? ` Note: ${safe.note}.` : '';
+        return `${maskSafeText(formatEventSentence(event))}${pointDetail}.${deltaDetail}${moveDetail}${noteDetail}`.replace(/\.+/g, '.').trim();
+      })(),
+      metadataLine: (() => {
+        const safe = getSafeHistoryContext(event);
+        return [
+          safe.actorLabel,
+          safe.playerName,
+          safe.categoryName,
+          typeof safe.points === 'number' ? pointsLabel(safe.points).toUpperCase() : '',
+          safe.outcome,
+          safe.specialMove ? `MOVE: ${safe.specialMove.toUpperCase()}` : '',
+        ].filter(Boolean).join(' • ');
+      })(),
+      actorLabel: getSafeHistoryContext(event).actorLabel,
+      outcomeLabel: getSafeHistoryContext(event).outcome,
+      specialMoveLabel: getSafeHistoryContext(event).specialMove,
+      searchText: [
+        maskSafeText(formatEventSentence(event)),
+        maskSafeText(getSafeHistoryContext(event).playerName),
+        maskSafeText(getSafeHistoryContext(event).categoryName),
+        maskSafeText(getSafeHistoryContext(event).note),
+        maskSafeText(getSafeHistoryContext(event).message),
+        maskSafeText(getSafeHistoryContext(event).specialMove),
+      ].join(' ').toLowerCase(),
     }));
   }, [gameState.events]);
 
-  const auditEvents = useMemo(() => {
-    const ordered = [...(gameState.events || [])].sort((a, b) => a.ts - b.ts);
+  const auditEvents = useMemo<AuditEntry[]>(() => {
+    const ordered = [...(gameState.events || [])]
+      .filter((event): event is GameAnalyticsEvent => !!event && typeof event.type === 'string')
+      .sort((a, b) => {
+        if (a.ts !== b.ts) return a.ts - b.ts;
+        return String(a.id || '').localeCompare(String(b.id || ''));
+      });
     const pendingByTileId = new Map<string, PendingPlayContext>();
+    const dedupe = new Set<string>();
     let selectedPlayerName: string | undefined;
-    const summaries: Array<{
-      id: string;
-      iso: string;
-      type: AnalyticsEventType;
-      channel: LogChannel;
-      event: GameAnalyticsEvent;
-      sentence: string;
-    }> = [];
+    const summaries: AuditEntry[] = [];
 
     ordered.forEach((event) => {
       const c = event.context || {};
@@ -331,35 +575,58 @@ export const DirectorPanel: React.FC<Props> = ({
         });
       }
 
-      if (!isFinalOutcomeEvent(event)) return;
+      if (!isGameplayAuditEvent(event)) return;
+
+      const dedupeKey = event.id || `${event.type}_${event.ts}_${c.tileId || ''}_${c.playerId || ''}_${c.playerName || ''}_${c.categoryName || ''}`;
+      if (dedupe.has(dedupeKey)) return;
+      dedupe.add(dedupeKey);
 
       const pendingPlay = c.tileId ? pendingByTileId.get(c.tileId) : undefined;
+      const badge = getAuditBadge(event);
+      const safePlayer = normalizeName(c.playerName || event.actor?.playerName || pendingPlay?.openerName);
+      const safeCategory = c.categoryName || pendingPlay?.categoryName || 'Unknown Category';
+      const safePoints = typeof c.points === 'number' ? c.points : pendingPlay?.points;
+      const delta = typeof c.delta === 'number' ? c.delta : undefined;
       summaries.push({
-        id: event.id,
+        id: event.id || dedupeKey,
+        ts: Number.isFinite(event.ts) ? event.ts : Date.parse(event.iso || '') || 0,
         iso: event.iso,
         type: event.type,
         channel: getEventChannel(event),
         event,
-        sentence: formatFinalOutcomeSentence(event, pendingPlay),
+        sentence: formatAuditPlaySentence(event, pendingPlay),
+        badgeLabel: badge.label,
+        badgeClasses: badge.classes,
+        detail: `${safePlayer} • ${safeCategory}${typeof safePoints === 'number' ? ` • ${pointsLabel(safePoints)}` : ''}${typeof delta === 'number' ? ` • ${delta >= 0 ? '+' : ''}${delta} points` : ''}`,
       });
 
-      if (c.tileId) {
+      if (c.tileId && isFinalOutcomeEvent(event)) {
         pendingByTileId.delete(c.tileId);
       }
     });
 
-    const latestTwelve = summaries.slice(-12);
+    const latestTwelve = [...summaries]
+      .sort((a, b) => {
+        if (a.ts !== b.ts) return b.ts - a.ts;
+        return b.id.localeCompare(a.id);
+      })
+      .slice(0, 12);
+
     return latestTwelve.map((event) => ({
       id: event.id,
       iso: event.iso,
+      ts: event.ts,
       type: event.type,
       channel: event.channel,
       event: event.event,
       sentence: event.sentence,
+      badgeLabel: event.badgeLabel,
+      badgeClasses: event.badgeClasses,
+      detail: event.detail,
     }));
   }, [gameState.events]);
 
-  const filterLogEntries = <T extends { sentence: string; type: AnalyticsEventType; channel: LogChannel; event: GameAnalyticsEvent }>(entries: T[]) => {
+  const filterLogEntries = <T extends { sentence: string; type: AnalyticsEventType; channel: LogChannel; event: GameAnalyticsEvent; searchText?: string }>(entries: T[]) => {
     const normalizedQuery = logQuery.trim().toLowerCase();
     const filtered = entries.filter((entry) => {
       if (eventTypeFilter !== 'ALL' && entry.type !== eventTypeFilter) return false;
@@ -367,7 +634,7 @@ export const DirectorPanel: React.FC<Props> = ({
       if (keyOnlyFilter && !isKeyActivityEvent(entry.event)) return false;
       if (!normalizedQuery) return true;
 
-      const haystack = [
+      const haystack = entry.searchText || [
         entry.sentence,
         sentenceCase(entry.type),
         entry.event.context?.playerName || '',
@@ -382,7 +649,6 @@ export const DirectorPanel: React.FC<Props> = ({
   };
 
   const filteredHistoryLogs = useMemo(() => filterLogEntries(fullHistoryLogs), [fullHistoryLogs, logQuery, eventTypeFilter, channelFilter, keyOnlyFilter, sortOrder]);
-  const filteredAuditEvents = useMemo(() => filterLogEntries(auditEvents), [auditEvents, logQuery, eventTypeFilter, channelFilter, keyOnlyFilter, sortOrder]);
 
   const clearLogFilters = () => {
     setLogQuery('');
@@ -392,20 +658,48 @@ export const DirectorPanel: React.FC<Props> = ({
     setSortOrder('NEWEST');
   };
 
-  const downloadLogs = (entries: Array<{ iso: string; sentence: string }>, filenamePrefix: string) => {
+  const downloadLogs = (entries: HistoryEntry[], filenamePrefix: string) => {
     try {
-      const lines = entries.map((entry) => `[${entry.iso}] ${entry.sentence}`);
-      const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+      const snapshot = [...entries];
+      const escapeCsv = (value: unknown) => {
+        const text = maskSafeText(value).replace(/\r?\n|\r/g, ' ');
+        return `"${text.replace(/"/g, '""')}"`;
+      };
+      const headers = [
+        'timestamp',
+        'event_type',
+        'channel',
+        'actor',
+        'headline',
+        'description',
+        'metadata',
+        'outcome',
+        'special_move',
+      ];
+      const rows = snapshot.map((entry) => [
+        entry.iso,
+        entry.type,
+        entry.channel,
+        entry.actorLabel,
+        entry.headline,
+        entry.description,
+        entry.metadataLine,
+        entry.outcomeLabel,
+        entry.specialMoveLabel,
+      ].map(escapeCsv).join(','));
+
+      const csv = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       const url = window.URL.createObjectURL(blob);
-      const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 16);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `${filenamePrefix}-${stamp}.txt`;
+      anchor.download = `${filenamePrefix}-${stamp}.csv`;
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
       window.URL.revokeObjectURL(url);
-      addToast('success', 'Logs downloaded.');
+      addToast('success', snapshot.length ? 'Logs exported as CSV.' : 'No logs to export.');
     } catch (e: any) {
       logger.error('director_log_download_failed', { error: e.message });
       addToast('error', 'Failed to download logs.');
@@ -417,6 +711,132 @@ export const DirectorPanel: React.FC<Props> = ({
     activeByTargetId: {},
     updatedAt: Date.now(),
     version: 1
+  };
+  const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
+
+  const isEndgameMove = (moveType: SpecialMoveType) => moveType === 'DOUBLE_WINS_OR_NOTHING' || moveType === 'TRIPLE_WINS_OR_NOTHING';
+  const isTileMove = (moveType: SpecialMoveType) => !isEndgameMove(moveType);
+  const boardColumnCount = useMemo(() => getBoardPointColumns(gameState.categories), [gameState.categories]);
+  const giftGlobalDisabledReasons = useMemo(() => {
+    const result: Partial<Record<SpecialMoveType, string | null>> = {};
+    giftMoveTypes.forEach((moveType) => {
+      result[moveType] = getGiftMoveGlobalDisabledReason(moveType, gameState.categories);
+    });
+    return result;
+  }, [giftMoveTypes, gameState.categories]);
+
+  const isBoardExhausted = useMemo(
+    () => gameState.categories.every((category) => category.questions.every((question) => question.isAnswered || question.isVoided)),
+    [gameState.categories]
+  );
+  const hasActiveTile = !!gameState.activeCategoryId && !!gameState.activeQuestionId;
+  const isSessionTimerFeatureEnabled = sessionTimerEnabled ?? true;
+  const rankedPlayers = useMemo(
+    () => [...gameState.players].sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return gameState.players.findIndex((p) => p.id === a.id) - gameState.players.findIndex((p) => p.id === b.id);
+    }),
+    [gameState.players]
+  );
+  const topTwoPlayerIds = useMemo(() => new Set(rankedPlayers.slice(0, 2).map((p) => p.id)), [rankedPlayers]);
+  const selectedPlayerEligibleForEndgame = !!gameState.selectedPlayerId && topTwoPlayerIds.has(gameState.selectedPlayerId);
+  const canUseEndgameMoves = isBoardExhausted && !hasActiveTile;
+  const endgameDisabledReason = !isBoardExhausted
+    ? 'Available only after all tiles are played.'
+    : hasActiveTile
+      ? 'Finish the currently active tile first.'
+      : !selectedPlayerEligibleForEndgame
+        ? 'Select one of the top two players first.'
+        : '';
+
+  const resolveEndgameChallenge = (outcome: 'SUCCESS' | 'FAIL') => {
+    if (!activeEndgameChallenge || activeEndgameChallenge.status !== 'PENDING') return;
+    const challengedPlayer = gameState.players.find((player) => player.id === activeEndgameChallenge.playerId);
+    if (!challengedPlayer) {
+      addToast('error', 'Challenge player no longer available.');
+      return;
+    }
+
+    const multiplier = activeEndgameChallenge.moveType === 'TRIPLE_WINS_OR_NOTHING' ? 3 : 2;
+    const newScore = outcome === 'SUCCESS' ? Math.round(challengedPlayer.score * multiplier) : 0;
+    const delta = newScore - challengedPlayer.score;
+
+    onUpdateState({
+      ...gameState,
+      players: gameState.players.map((player) => (
+        player.id === challengedPlayer.id ? { ...player, score: newScore } : player
+      ))
+    });
+
+    emitGameEvent('SCORE_ADJUSTED', {
+      actor: { role: 'director' },
+      context: {
+        playerId: challengedPlayer.id,
+        playerName: challengedPlayer.name,
+        delta,
+        note: `${activeEndgameChallenge.moveType}:${outcome}`,
+      }
+    });
+
+    setActiveEndgameChallenge({ ...activeEndgameChallenge, status: 'RESOLVED' });
+    addToast(outcome === 'SUCCESS' ? 'success' : 'error', outcome === 'SUCCESS' ? `${challengedPlayer.name} wins ${multiplier}x total score!` : `${challengedPlayer.name} reset to 0.`);
+  };
+
+  const startEndgameChallenge = async () => {
+    if (!isEndgameMove(selectedMoveType)) return;
+    if (!canUseEndgameMoves || !selectedPlayerEligibleForEndgame) {
+      addToast('error', endgameDisabledReason || 'Move unavailable right now.');
+      return;
+    }
+    if (!selectedEndgameCategoryId) {
+      addToast('error', 'Select a category first.');
+      return;
+    }
+    if (isPreparingEndgameChallenge || activeEndgameChallenge?.status === 'PENDING') return;
+
+    const selectedCategory = gameState.categories.find((category) => category.id === selectedEndgameCategoryId);
+    const selectedPlayer = gameState.players.find((player) => player.id === gameState.selectedPlayerId);
+    if (!selectedCategory || !selectedPlayer) {
+      addToast('error', 'Unable to prepare challenge.');
+      return;
+    }
+
+    setIsPreparingEndgameChallenge(true);
+    try {
+      const challenge = await generateSingleQuestion(
+        gameState.showTitle || 'General Trivia',
+        500,
+        selectedCategory.title,
+        'hard',
+        crypto.randomUUID()
+      );
+
+      const nextChallenge: EndgameChallenge = {
+        id: crypto.randomUUID(),
+        moveType: selectedMoveType,
+        playerId: selectedPlayer.id,
+        categoryId: selectedCategory.id,
+        questionText: challenge.text,
+        answerText: challenge.answer,
+        status: 'PENDING'
+      };
+      setActiveEndgameChallenge(nextChallenge);
+      emitGameEvent('SPECIAL_MOVE_ARMED', {
+        actor: { role: 'director' },
+        context: {
+          playerId: selectedPlayer.id,
+          playerName: selectedPlayer.name,
+          categoryName: selectedCategory.title,
+          note: `${selectedMoveType}:challenge_prepared`
+        }
+      });
+      addToast('info', 'Endgame challenge generated. Ask the question and resolve outcome.');
+    } catch (e: any) {
+      logger.error('director_endgame_challenge_prepare_failed', { moveType: selectedMoveType, error: e.message });
+      addToast('error', 'Failed to generate endgame challenge.');
+    } finally {
+      setIsPreparingEndgameChallenge(false);
+    }
   };
 
   // --- CLEANUP ON MODAL CLOSE ---
@@ -531,12 +951,17 @@ export const DirectorPanel: React.FC<Props> = ({
   const handleRemovePlayer = (id: string) => {
     const p = gameState.players.find(x => x.id === id);
     if (p && confirm(`Permanently remove ${p.name}?`)) {
-      soundService.playClick();
-      logger.info('director_player_update', { playerId: id, field: 'removed' });
-      const nextPlayers = gameState.players.filter(x => x.id !== id);
-      const nextSelection = gameState.selectedPlayerId === id ? (nextPlayers[0]?.id || null) : gameState.selectedPlayerId;
-      onUpdateState({ ...gameState, players: nextPlayers, selectedPlayerId: nextSelection });
-      addToast('info', `Removed ${p.name}`);
+      try {
+        soundService.playClick();
+        logger.info('director_player_update', { playerId: id, field: 'removed' });
+        const nextPlayers = gameState.players.filter(x => x.id !== id);
+        const nextSelection = gameState.selectedPlayerId === id ? (nextPlayers[0]?.id || null) : gameState.selectedPlayerId;
+        onUpdateState({ ...gameState, players: nextPlayers, selectedPlayerId: nextSelection });
+        addToast('info', `Removed ${p.name}`);
+      } catch (error) {
+        logger.error('director_player_removal_failed', { playerId: id, error: String(error) });
+        addToast('error', `Failed to update: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     }
   };
 
@@ -561,7 +986,9 @@ export const DirectorPanel: React.FC<Props> = ({
       color: '#fff',
       wildcardsUsed: 0,
       wildcardActive: false,
-      stealsCount: 0
+      stealsCount: 0,
+      specialMovesUsedCount: 0,
+      specialMovesUsedNames: []
     };
     
     onUpdateState({ 
@@ -621,6 +1048,39 @@ export const DirectorPanel: React.FC<Props> = ({
       return;
     }
 
+    if (!isTileMove(selectedMoveType)) {
+      addToast('error', 'This move targets a player challenge, not a tile.');
+      return;
+    }
+
+    const tile = gameState.categories
+      .flatMap((category) => category.questions.map((question) => ({ category, question })))
+      .find((entry) => entry.question.id === tileId);
+
+    if (!tile) {
+      addToast('error', 'Unable to find that tile. Please try again.');
+      return;
+    }
+
+    if (!isTileActive(tile.question)) {
+      addToast('error', 'Special moves can only be armed on active tiles.');
+      return;
+    }
+
+    const existingDeployment = currentOverlay.deploymentsByTileId?.[tileId];
+    if (existingDeployment?.status === 'ARMED') {
+      addToast('error', 'Tile already armed with a special move.');
+      return;
+    }
+
+    if (isGiftActivatedMove(selectedMoveType)) {
+      const giftDisabledReason = getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, tileId);
+      if (giftDisabledReason) {
+        addToast('error', giftDisabledReason);
+        return;
+      }
+    }
+
     setArmingTileId(tileId);
     soundService.playClick();
 
@@ -635,7 +1095,6 @@ export const DirectorPanel: React.FC<Props> = ({
       });
 
       logger.info('director_special_move_armed', { gameId, tileId, moveType: selectedMoveType });
-      const tile = gameState.categories.flatMap((category) => category.questions.map((question) => ({ category, question }))).find((entry) => entry.question.id === tileId);
       emitGameEvent('SPECIAL_MOVE_ARMED', {
         actor: { role: 'director' },
         context: {
@@ -643,13 +1102,17 @@ export const DirectorPanel: React.FC<Props> = ({
           categoryName: tile?.category.title,
           points: tile?.question.points,
           note: selectedMoveType,
-          message: `Armed ${selectedMoveType}`
+          message: `Armed ${selectedMoveType}`,
+          after: {
+            activationSource: isGiftActivatedMove(selectedMoveType) ? 'gift' : 'standard',
+            giftRequired: isGiftActivatedMove(selectedMoveType)
+          }
         }
       });
       addToast('success', 'MOVE DEPLOYED');
     } catch (e: any) {
       logger.error('director_special_move_arm_failed', { gameId, tileId, moveType: selectedMoveType, error: e.message });
-      addToast('error', e.message || 'Failed to deploy move.');
+      addToast('error', getSpecialMoveErrorMessage(e, 'Failed to deploy move.'));
     } finally {
       refreshBackendMode();
       setArmingTileId(null);
@@ -681,7 +1144,7 @@ export const DirectorPanel: React.FC<Props> = ({
       addToast('info', 'ARMORY CLEARED');
     } catch (e: any) {
       logger.error('director_special_move_clear_failed', { gameId, error: e.message });
-      addToast('error', e.message || 'Failed to clear armory.');
+      addToast('error', getSpecialMoveErrorMessage(e, 'Failed to clear armory.'));
     } finally {
       refreshBackendMode();
       setIsClearingArmory(false);
@@ -760,11 +1223,17 @@ export const DirectorPanel: React.FC<Props> = ({
 
       const nextCategories = [...gameState.categories];
       const nextQuestions = [...nextCategories[cIdx].questions];
-      nextQuestions[qIdx] = preserveTileStateOnRegenerate(nextQuestions[qIdx], {
-        ...nextQuestions[qIdx],
+      const existingQuestion = nextQuestions[qIdx];
+      const generatedQuestion = {
+        ...existingQuestion,
         text: result.text,
         answer: result.answer,
-      });
+      };
+      const shouldReactivateQuickTile = source === 'quick' && !isTileActive(existingQuestion);
+
+      nextQuestions[qIdx] = shouldReactivateQuickTile
+        ? resetTileToActive(existingQuestion, generatedQuestion)
+        : preserveTileStateOnRegenerate(existingQuestion, generatedQuestion);
       nextCategories[cIdx] = { ...nextCategories[cIdx], questions: nextQuestions };
 
       const afterState = getTileStateSnapshot(nextQuestions[qIdx]);
@@ -792,7 +1261,7 @@ export const DirectorPanel: React.FC<Props> = ({
         },
       });
 
-      addToast('success', 'Tile content regenerated.');
+      addToast('success', shouldReactivateQuickTile ? 'Tile content regenerated and reactivated.' : 'Tile content regenerated.');
     } catch (e: any) {
       logger.error('board_regen_tile_failed', {
         genId,
@@ -949,10 +1418,10 @@ export const DirectorPanel: React.FC<Props> = ({
             <Users className="w-4 h-4" /> Players
           </button>
           <button aria-label="Moves Tab" onClick={() => setActiveTab('MOVES')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
-            <ShieldAlert className="w-4 h-4" /> Moves
+            <ShieldAlert className="w-4 h-4" /> Special Moves
           </button>
           <button onClick={() => setActiveTab('MOVES_HELP')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES_HELP' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
-            <Info className="w-4 h-4" /> Moves Help
+            <Info className="w-4 h-4" /> Special Moves Guide
           </button>
           <button onClick={() => setActiveTab('LOGS_AUDIT')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'LOGS_AUDIT' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <History className="w-4 h-4" /> Logs & Audit
@@ -1039,6 +1508,7 @@ export const DirectorPanel: React.FC<Props> = ({
                     <th className="p-5 border-b border-zinc-800">Live Score</th>
                     <th className="p-5 border-b border-zinc-800">Wildcards</th>
                     <th className="p-5 border-b border-zinc-800">Steals</th>
+                    <th className="p-5 border-b border-zinc-800">Special Moves</th>
                     <th className="p-5 border-b border-zinc-800 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -1095,6 +1565,12 @@ export const DirectorPanel: React.FC<Props> = ({
                           <span className="font-mono font-black text-sm">{p.stealsCount || 0}</span>
                         </div>
                       </td>
+                      <td className="p-5">
+                        <div className="flex items-center gap-2 text-red-400" title={(p.specialMovesUsedNames || []).join(', ')}>
+                          <Sparkles className="w-4 h-4" />
+                          <span className="font-mono font-black text-sm">{p.specialMovesUsedCount || 0}</span>
+                        </div>
+                      </td>
                       <td className="p-5 text-right">
                         <button 
                           /* Fix: Replace undefined 'id' with 'p.id' */
@@ -1109,7 +1585,7 @@ export const DirectorPanel: React.FC<Props> = ({
                   ))}
                   {(!gameState.players || gameState.players.length === 0) && (
                     <tr>
-                      <td colSpan={5} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
+                      <td colSpan={6} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
                         No contestants registered for this session
                       </td>
                     </tr>
@@ -1135,14 +1611,16 @@ export const DirectorPanel: React.FC<Props> = ({
                 <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-4">Question Countdown Timer</div>
                 <div className="space-y-4">
                   <div className="flex items-center justify-between gap-3 bg-black/40 border border-zinc-800 rounded-lg px-3 py-2">
-                    <span className="text-[11px] uppercase tracking-wider font-black text-zinc-300">Auto-start on tile open</span>
+                    <span className="text-[11px] uppercase tracking-wider font-black text-zinc-300">Question countdown enabled</span>
                     <button
+                      data-testid="question-countdown-toggle"
                       onClick={() => onQuestionTimerToggle && onQuestionTimerToggle(!questionTimerEnabled)}
                       className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-widest ${questionTimerEnabled ? 'bg-cyan-600 text-black' : 'bg-zinc-700 text-zinc-200'}`}
                     >
                       {questionTimerEnabled ? 'On' : 'Off'}
                     </button>
                   </div>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wide">Countdown is opt-in and stays off until manually enabled.</p>
                   <div className="flex gap-2 flex-wrap">
                     {[5, 7, 8, 10, 15].map((duration) => (
                       <button
@@ -1192,6 +1670,17 @@ export const DirectorPanel: React.FC<Props> = ({
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5">
                 <div className="text-[10px] uppercase tracking-widest font-black text-purple-300 mb-4">Session Game Timer</div>
                 <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-3 bg-black/40 border border-zinc-800 rounded-lg px-3 py-2">
+                    <span className="text-[11px] uppercase tracking-wider font-black text-zinc-300">Session timer enabled</span>
+                    <button
+                      data-testid="session-game-timer-toggle"
+                      onClick={() => onSessionTimerToggle && onSessionTimerToggle(!isSessionTimerFeatureEnabled)}
+                      className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-widest ${isSessionTimerFeatureEnabled ? 'bg-purple-600 text-white' : 'bg-zinc-700 text-zinc-200'}`}
+                    >
+                      {isSessionTimerFeatureEnabled ? 'On' : 'Off'}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wide">Session timer controls stay idle while disabled.</p>
                   {!sessionTimer?.remainingSeconds ? (
                     <div className="flex gap-2 flex-wrap">
                       {(['15m', '30m', '1h', '1h30m', '2h'] as const).map((preset) => (
@@ -1201,6 +1690,7 @@ export const DirectorPanel: React.FC<Props> = ({
                             if (onSessionTimerStart) onSessionTimerStart(preset);
                             addToast('success', `Game timer started: ${preset}`);
                           }}
+                          disabled={!isSessionTimerFeatureEnabled}
                           className="px-4 py-2 rounded-lg font-black text-[11px] uppercase tracking-widest transition-all bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
                         >
                           {preset}
@@ -1221,6 +1711,7 @@ export const DirectorPanel: React.FC<Props> = ({
                             if (onSessionTimerPause) onSessionTimerPause();
                             addToast('info', `Game timer ${sessionTimer.isStopped ? 'resumed' : 'paused'}.`);
                           }}
+                          disabled={!isSessionTimerFeatureEnabled}
                           className="flex-1 px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-black rounded-lg uppercase transition-colors flex items-center justify-center gap-2"
                         >
                           {sessionTimer.isStopped ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
@@ -1231,6 +1722,7 @@ export const DirectorPanel: React.FC<Props> = ({
                             if (onSessionTimerReset) onSessionTimerReset();
                             addToast('info', 'Game timer reset.');
                           }}
+                          disabled={!isSessionTimerFeatureEnabled}
                           className="flex-1 px-3 py-2 bg-red-600 hover:bg-red-500 text-white text-[11px] font-black rounded-lg uppercase transition-colors flex items-center justify-center gap-2"
                         >
                           <RotateCcw className="w-3 h-3" /> Reset
@@ -1275,7 +1767,7 @@ export const DirectorPanel: React.FC<Props> = ({
             <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
-                  <ShieldAlert className="w-4 h-4" /> MOVES
+                  <ShieldAlert className="w-4 h-4" /> SPECIAL MOVES
                 </h3>
                 <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Select a move, then arm any live tile on the board.</p>
                 <div className="mt-2">
@@ -1297,18 +1789,135 @@ export const DirectorPanel: React.FC<Props> = ({
               </button>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {(Object.keys(moveLabels) as SpecialMoveType[]).map((moveType) => (
-                <button
-                  key={moveType}
-                  onClick={() => setSelectedMoveType(moveType)}
-                  className={`rounded-2xl border p-4 text-left transition-all ${selectedMoveType === moveType ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-800 bg-zinc-900/40 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900/70'}`}
-                >
-                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Special Move</div>
-                  <div className="mt-2 text-sm font-black uppercase tracking-wide">{moveLabels[moveType]}</div>
-                </button>
-              ))}
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/25 p-4">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 font-black mb-3">Standard Special Moves</div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {standardMoveTypes.map((moveType) => {
+                  const disabled = isEndgameMove(moveType) ? !canUseEndgameMoves : false;
+                  const disabledReason = isEndgameMove(moveType) ? endgameDisabledReason : '';
+
+                  return (
+                    <button
+                      key={moveType}
+                      disabled={disabled}
+                      onClick={() => setSelectedMoveType(moveType)}
+                      className={`rounded-2xl border p-4 text-left transition-all ${disabled ? 'opacity-50 cursor-not-allowed border-zinc-800 bg-zinc-900/20 text-zinc-500' : selectedMoveType === moveType ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-800 bg-zinc-900/40 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900/70'}`}
+                    >
+                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Special Move</div>
+                      <div className="mt-2 text-sm font-black uppercase tracking-wide">{moveLabels[moveType]}</div>
+                      <div className="mt-2 text-[10px] text-zinc-400 leading-relaxed">{moveDescriptions[moveType]}</div>
+                      {disabledReason && <div className="mt-2 text-[10px] font-black text-red-300">{disabledReason}</div>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            <div className="rounded-2xl border border-purple-700/40 bg-purple-950/20 p-4 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-purple-200 font-black">Gift Activated Special Moves</div>
+                  <p className="text-[11px] text-zinc-300 mt-1">Host gift activation required. Gift moves enforce stricter tile eligibility and include no-steal safety.</p>
+                </div>
+                <span className="inline-flex items-center rounded-full border border-purple-400/40 bg-purple-800/30 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-purple-100">Gift Required</span>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {giftMoveTypes.map((moveType) => {
+                  const disabledReason = giftGlobalDisabledReasons[moveType] || '';
+                  const disabled = !!disabledReason;
+                  const selected = selectedMoveType === moveType;
+
+                  return (
+                    <button
+                      key={moveType}
+                      disabled={disabled}
+                      onClick={() => setSelectedMoveType(moveType)}
+                      className={`rounded-2xl border p-4 text-left transition-all ${disabled ? 'opacity-55 cursor-not-allowed border-zinc-800 bg-zinc-900/25 text-zinc-500' : selected ? 'border-purple-400 bg-purple-500/10 text-purple-100 shadow-lg shadow-purple-900/20' : 'border-zinc-800 bg-zinc-900/40 text-zinc-200 hover:border-purple-500 hover:bg-zinc-900/70'}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Gift Move</div>
+                        <span className="inline-flex items-center rounded-full border border-amber-400/50 bg-amber-800/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-200">Gift Required</span>
+                      </div>
+                      <div className="mt-2 text-sm font-black uppercase tracking-wide">{moveLabels[moveType]}</div>
+                      <div className="mt-2 text-[10px] text-zinc-400 leading-relaxed">{moveDescriptions[moveType]}</div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <span className="rounded border border-zinc-700/80 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-zinc-300">No Steal</span>
+                        {moveType === 'SUPER_SAVE' && <span className="rounded border border-zinc-700/80 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-zinc-300">Early Columns Only</span>}
+                        {moveType === 'FINAL_SHOT' && <span className="rounded border border-zinc-700/80 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-zinc-300">Late Columns Only</span>}
+                        {(moveType === 'SUPER_SAVE' || moveType === 'FINAL_SHOT') && <span className="rounded border border-zinc-700/80 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-zinc-300">Board Min 6 Columns</span>}
+                      </div>
+                      {disabledReason && <div className="mt-2 text-[10px] font-black text-red-300">{disabledReason}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black/30 px-4 py-3 text-[11px] text-zinc-300">
+              <span className="font-black text-gold-400 uppercase">Active move: {moveLabels[selectedMoveType]}</span>
+              {isGiftActivatedMove(selectedMoveType) && <span className="ml-2 inline-flex items-center rounded-full border border-amber-400/50 bg-amber-900/30 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-200">Gift Required</span>}
+              <span className="ml-2 text-zinc-500 normal-case font-normal tracking-normal">Board columns: {boardColumnCount}</span>
+            </div>
+
+            {isEndgameMove(selectedMoveType) && (
+              <div className="rounded-2xl border border-amber-600/40 bg-amber-950/20 p-4 space-y-3">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-black">Endgame Challenge Setup</div>
+                <p className="text-[11px] text-zinc-300">Board must be fully exhausted, no active tile can be open, and selected player must be top 2 by score.</p>
+                {!canUseEndgameMoves && <p className="text-[11px] text-red-300 font-bold">{endgameDisabledReason}</p>}
+                {canUseEndgameMoves && !selectedPlayerEligibleForEndgame && <p className="text-[11px] text-red-300 font-bold">{endgameDisabledReason}</p>}
+                <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
+                  <select
+                    value={selectedEndgameCategoryId}
+                    onChange={(e) => setSelectedEndgameCategoryId(e.target.value)}
+                    className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-[12px] text-white outline-none focus:border-gold-500"
+                  >
+                    <option value="">Select category</option>
+                    {gameState.categories.map((category) => (
+                      <option key={category.id} value={category.id}>{category.title}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={startEndgameChallenge}
+                    disabled={!canUseEndgameMoves || !selectedPlayerEligibleForEndgame || !selectedEndgameCategoryId || isPreparingEndgameChallenge || activeEndgameChallenge?.status === 'PENDING'}
+                    className="bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black font-black px-4 py-2 rounded-lg text-[11px] uppercase"
+                  >
+                    {isPreparingEndgameChallenge ? 'Generating...' : 'Generate Challenge'}
+                  </button>
+                </div>
+
+                {activeEndgameChallenge && (
+                  <div className="rounded-xl border border-zinc-700 bg-black/40 p-4 space-y-3">
+                    <div className="text-[10px] uppercase tracking-widest text-zinc-400 font-black">Live Challenge</div>
+                    <div className="text-sm text-zinc-100 font-bold">{activeEndgameChallenge.questionText}</div>
+                    <div className="text-[11px] text-zinc-400">Answer: {activeEndgameChallenge.answerText}</div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => resolveEndgameChallenge('SUCCESS')}
+                        disabled={activeEndgameChallenge.status !== 'PENDING'}
+                        className="px-3 py-2 rounded bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white text-[10px] font-black uppercase"
+                      >
+                        Resolve Success
+                      </button>
+                      <button
+                        onClick={() => resolveEndgameChallenge('FAIL')}
+                        disabled={activeEndgameChallenge.status !== 'PENDING'}
+                        className="px-3 py-2 rounded bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-[10px] font-black uppercase"
+                      >
+                        Resolve Fail (Reset to 0)
+                      </button>
+                      <button
+                        onClick={() => setActiveEndgameChallenge((prev) => prev ? { ...prev, status: 'CANCELED' } : prev)}
+                        disabled={activeEndgameChallenge.status !== 'PENDING'}
+                        className="px-3 py-2 rounded bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white text-[10px] font-black uppercase"
+                      >
+                        Cancel Challenge
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="space-y-4">
               {gameState.categories.map((cat) => (
@@ -1318,23 +1927,45 @@ export const DirectorPanel: React.FC<Props> = ({
                     {cat.questions.map((q) => {
                       const deployment = currentOverlay.deploymentsByTileId[q.id];
                       const isArmed = deployment?.status === 'ARMED';
+                      const specialMoveBadge = getTileSpecialMoveBadgeModel(!!isArmed, resolvedSpecialMoveTileIds.has(q.id));
                       const isPlayable = !q.isAnswered && !q.isVoided;
+                      const giftTileDisabledReason = isGiftActivatedMove(selectedMoveType)
+                        ? getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, q.id)
+                        : null;
+                      const giftBlocked = !!giftTileDisabledReason;
+                      const tileColumnIndex = getTileColumnIndex(gameState.categories, q.id);
 
                       return (
                         <button
                           key={q.id}
                           aria-label={`Arm ${moveLabels[selectedMoveType]} on ${cat.title} for ${q.points}`}
-                          disabled={!isPlayable || armingTileId === q.id}
+                          disabled={!isPlayable || armingTileId === q.id || !isTileMove(selectedMoveType) || giftBlocked}
                           onClick={() => handleArmMove(q.id)}
-                          className={`rounded-xl border p-4 text-left transition-all ${!isPlayable ? 'cursor-not-allowed border-zinc-800 bg-black/30 text-zinc-600 opacity-50' : isArmed ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-700 bg-zinc-900 text-white hover:border-gold-500 hover:bg-zinc-800'}`}
+                          className={`rounded-xl border p-4 text-left transition-all ${!isPlayable || !isTileMove(selectedMoveType) || giftBlocked ? 'cursor-not-allowed border-zinc-800 bg-black/30 text-zinc-600 opacity-50' : isArmed ? 'border-gold-500 bg-gold-500/10 text-gold-400 shadow-lg shadow-gold-900/10' : 'border-zinc-700 bg-zinc-900 text-white hover:border-gold-500 hover:bg-zinc-800'}`}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-lg font-black">{q.points}</span>
                             {armingTileId === q.id && <Loader2 className="w-4 h-4 animate-spin text-gold-500" />}
                           </div>
+                          <div className="mt-1 text-[9px] uppercase tracking-widest text-zinc-500">Col {tileColumnIndex >= 0 ? tileColumnIndex + 1 : '?'}</div>
+                          {specialMoveBadge.showTag && (
+                            <div
+                              data-testid={`special-move-director-tag-${q.id}`}
+                              data-state={specialMoveBadge.visualState}
+                              className={`mt-2 inline-flex items-center rounded border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${specialMoveBadge.tone === 'red'
+                                ? 'bg-red-700/90 border-red-400/70 text-red-100'
+                                : 'bg-zinc-800/90 border-zinc-500/60 text-zinc-300 grayscale'}`}
+                            >
+                              {specialMoveBadge.label}
+                            </div>
+                          )}
                           <div className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
                             {isArmed ? moveLabels[deployment.moveType!] : 'Ready to Arm'}
                           </div>
+                          {isArmed && isGiftActivatedMove(deployment.moveType as SpecialMoveType) && (
+                            <div className="mt-1 inline-flex items-center rounded-full border border-amber-400/50 bg-amber-900/30 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-200">Gift Required</div>
+                          )}
+                          {giftBlocked && <div className="mt-2 text-[10px] font-black text-red-300">{giftTileDisabledReason}</div>}
                         </button>
                       );
                     })}
@@ -1349,42 +1980,90 @@ export const DirectorPanel: React.FC<Props> = ({
         {activeTab === 'MOVES_HELP' && (
           <div className="space-y-6 animate-in fade-in duration-300 max-w-4xl mx-auto">
             <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg">
-              <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
-                <Info className="w-4 h-4" /> How To Play Special Moves
+                <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                  <Info className="w-4 h-4" /> Special Moves Guide
               </h3>
               <p className="text-[11px] text-zinc-300 mt-3 leading-relaxed">
-                Use this flow every round to arm tactical modifiers on question tiles before contestants answer.
+                  This guide explains what each special move does, when it is available, and how directors should resolve outcomes safely.
               </p>
             </div>
 
             <div className="bg-black/40 border border-zinc-800 rounded-2xl p-5 space-y-3">
-              <h4 className="text-[11px] uppercase tracking-widest font-black text-zinc-400">Step-by-step</h4>
+              <h4 className="text-[11px] uppercase tracking-widest font-black text-zinc-400">Activation Flow</h4>
               <ol className="list-decimal ml-5 space-y-2 text-[12px] text-zinc-200 leading-relaxed">
-                <li>Open the <span className="font-black text-gold-500">Moves</span> tab.</li>
-                <li>Select one move type (Double Trouble, Triple Threat, Sabotage, or Mega Steal).</li>
-                <li>Click a live tile (not answered/voided) to arm it.</li>
+                <li>Open the <span className="font-black text-gold-500">Special Moves</span> tab.</li>
+                <li>Select one move type.</li>
+                <li>For tile moves: click a live tile (not answered/voided) to arm it.</li>
+                <li>For wins-or-nothing moves: select an eligible top-2 player, choose category, generate challenge, then resolve outcome once.</li>
                 <li>On the public board, armed tiles show a Zap icon and pulse.</li>
-                <li>Run the question normally; score effects apply automatically on award/steal.</li>
+                <li>Run the question normally; score effects apply automatically on award/return based on move rules.</li>
                 <li>Use <span className="font-black text-red-400">Wipe All Armed Tiles</span> to reset at any time.</li>
               </ol>
             </div>
 
+            <div className="space-y-3">
+              <h4 className="text-[11px] uppercase tracking-widest font-black text-zinc-400">Standard Moves</h4>
+              <div className="grid gap-3 md:grid-cols-2">
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-cyan-300 font-black">Double or Lose</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Eligibility: any active tile. Correct + award = 2x tile points. Wrong/failed return = subtract tile value. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-gold-300 font-black">Triple or Lose</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Eligibility: any active tile. Correct + award = 3x tile points. Wrong/failed return = subtract 130% of tile value (rounded). No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-amber-300 font-black">Double Your Wins or Nothing</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Endgame-only. Board exhausted, no active tile, top-2 player only. AI challenge: correct doubles total score, wrong resets to 0.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-rose-300 font-black">Triple Your Wins or Nothing</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Endgame-only. Board exhausted, no active tile, top-2 player only. AI challenge: correct triples total score, wrong resets to 0.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-emerald-300 font-black">Safe Bet</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Eligibility: any active tile. Correct + award = +50% tile value. Wrong = no penalty. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-violet-300 font-black">Lockout</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Eligibility: any active tile. Correct + award = standard tile value. Wrong = no extra penalty. No steal allowed.</p>
+              </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <h4 className="text-[11px] uppercase tracking-widest font-black text-zinc-400">Gift Activated Special Moves</h4>
+                <span className="inline-flex items-center rounded-full border border-amber-400/50 bg-amber-900/30 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-200">Gift Required</span>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-sky-300 font-black">Super Save</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Gift required. Board min 6 columns and min 6 active tiles. Use only in first 3 columns (never last 3). Correct + award = 3x tile points. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-amber-300 font-black">Golden Gamble</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Gift required. Board min 5 columns and min 5 active tiles. Middle columns only. Correct + award = 225% tile value. Wrong = -50% tile value. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-emerald-300 font-black">Shield Boost</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Gift required. Any active non-final-column tile. Correct + award = 2x tile value. Wrong = no penalty and tile resolves closed. No steal allowed.</p>
+              </div>
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-widest text-rose-300 font-black">Final Shot</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Gift required. Board min 6 columns and min 4 active tiles. Last 2 columns only. Correct + award = 3x tile value. Wrong = subtract tile value. No steal allowed.</p>
+              </div>
+              </div>
+            </div>
+
             <div className="grid gap-3 md:grid-cols-2">
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-widest text-cyan-300 font-black">Double Trouble</div>
-                <p className="text-[11px] text-zinc-300 mt-2">Award/steal resolves at 2x value; fail applies standard penalty path.</p>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-300 font-black">Second Chance</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Concept guide: one retry after first miss, then fail closes the tile with no steal. Use only if enabled in this build.</p>
               </div>
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-widest text-gold-300 font-black">Triple Threat</div>
-                <p className="text-[11px] text-zinc-300 mt-2">Award/steal resolves at 3x value; fail carries stronger downside.</p>
-              </div>
-              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-widest text-red-300 font-black">Sabotage</div>
-                <p className="text-[11px] text-zinc-300 mt-2">Normal upside on success; reduced-value penalty on failure.</p>
-              </div>
-              <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-widest text-purple-300 font-black">Mega Steal</div>
-                <p className="text-[11px] text-zinc-300 mt-2">Steal resolves at 2x; direct award is blocked.</p>
+                <div className="text-[10px] uppercase tracking-widest text-zinc-300 font-black">Category Freeze</div>
+                <p className="text-[11px] text-zinc-300 mt-2">Concept guide: category cannot be selected for the next turn/round. Use only if your current show rules enable turn-based restrictions.</p>
               </div>
             </div>
           </div>
@@ -1485,13 +2164,26 @@ export const DirectorPanel: React.FC<Props> = ({
 
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-4">
-                <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-3">Audit (Last 12 Final Outcomes)</div>
+                <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300 mb-3">Audit (Last 12 Gameplay Highlights)</div>
                 <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-2 custom-scrollbar" data-testid="audit-log-list">
-                  {filteredAuditEvents.length === 0 && <div className="text-[11px] text-zinc-500">No key activity logged yet.</div>}
-                  {filteredAuditEvents.map((entry) => (
+                  {auditEvents.length === 0 && <div className="text-[11px] text-zinc-500">No gameplay highlights yet. Play a tile to start the reel.</div>}
+                  {auditEvents.map((entry) => (
                     <div key={entry.id} className="rounded-lg border border-zinc-800 bg-black/30 p-3">
-                      <div className="text-[10px] text-zinc-500 font-mono">{new Date(entry.iso).toLocaleTimeString()}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[10px] text-zinc-500 font-mono">{new Date(entry.iso || entry.ts).toLocaleTimeString()}</div>
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${entry.badgeClasses}`}>{entry.badgeLabel}</span>
+                          <button
+                            aria-label="Open play details"
+                            onClick={() => setSelectedAuditDetail(entry)}
+                            className="inline-flex items-center rounded-full border border-cyan-500/50 bg-cyan-900/30 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-cyan-200 hover:bg-cyan-800/40"
+                          >
+                            PLAY
+                          </button>
+                        </div>
+                      </div>
                       <div className="text-[12px] text-zinc-200 mt-1 leading-relaxed">{entry.sentence}</div>
+                      <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-1">{entry.detail}</div>
                     </div>
                   ))}
                 </div>
@@ -1503,13 +2195,51 @@ export const DirectorPanel: React.FC<Props> = ({
                   {filteredHistoryLogs.length === 0 && <div className="text-[11px] text-zinc-500">No events captured yet.</div>}
                   {filteredHistoryLogs.map((entry) => (
                     <div key={entry.id} className="rounded-lg border border-zinc-800 bg-black/30 p-3">
-                      <div className="text-[10px] text-zinc-500 font-mono">{entry.iso} • {sentenceCase(entry.type)}</div>
-                      <div className="text-[12px] text-zinc-100 mt-1 leading-relaxed">{entry.sentence}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[10px] text-zinc-500 font-mono">{entry.iso}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-zinc-300">{sentenceCase(entry.type)}</span>
+                          <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-zinc-300">{entry.channel}</span>
+                        </div>
+                      </div>
+                      <div className="text-[12px] text-zinc-100 mt-1 font-bold">{entry.headline}</div>
+                      <div className="text-[12px] text-zinc-200 mt-1 leading-relaxed">{entry.description}</div>
+                      <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-1">{entry.metadataLine}</div>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
+
+            {selectedAuditDetail && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" onClick={() => setSelectedAuditDetail(null)}>
+                <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="audit-detail-modal">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest font-black text-cyan-300">Play Event Details</div>
+                      <div className="mt-1 text-sm text-zinc-100 leading-relaxed">{selectedAuditDetail.sentence}</div>
+                    </div>
+                    <button
+                      aria-label="Close play details"
+                      onClick={() => setSelectedAuditDetail(null)}
+                      className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] font-bold uppercase text-zinc-300 hover:text-white"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="mt-4 space-y-2 text-[11px] text-zinc-300">
+                    <div><span className="text-zinc-500 uppercase tracking-wide">Time:</span> {new Date(selectedAuditDetail.iso || selectedAuditDetail.ts).toLocaleTimeString()}</div>
+                    <div><span className="text-zinc-500 uppercase tracking-wide">Outcome:</span> {selectedAuditDetail.badgeLabel}</div>
+                    <div><span className="text-zinc-500 uppercase tracking-wide">Type:</span> {sentenceCase(selectedAuditDetail.type)}</div>
+                    <div><span className="text-zinc-500 uppercase tracking-wide">Summary:</span> {selectedAuditDetail.detail}</div>
+                    {selectedAuditDetail.event.context?.note && (
+                      <div><span className="text-zinc-500 uppercase tracking-wide">Notes:</span> {selectedAuditDetail.event.context.note}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

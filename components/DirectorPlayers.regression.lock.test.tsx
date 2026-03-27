@@ -81,7 +81,12 @@ describe('Director Panel: Players Roster Lock', () => {
     fireEvent.click(screen.getByText('Add Player'));
     const input = screen.getByPlaceholderText('ENTER PLAYER NAME');
     fireEvent.change(input, { target: { value: 'Charlie' } });
-    fireEvent.click(screen.getByRole('button', { name: /check/i }));
+    
+    // Find the check button (green button with check icon next to the player name input)
+    const buttons = screen.getAllByRole('button');
+    const checkBtn = buttons.find(btn => btn.querySelector('.check-icon') !== null);
+    expect(checkBtn).toBeDefined();
+    if (checkBtn) fireEvent.click(checkBtn);
 
     expect(mockOnUpdateState).toHaveBeenCalledWith(expect.objectContaining({
       players: expect.arrayContaining([

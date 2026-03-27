@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
 import { GameState } from '../types';
@@ -47,6 +47,11 @@ describe('Director Panel: Tile Modal AI Regression', () => {
     vi.clearAllMocks();
     vi.stubGlobal('crypto', { randomUUID: () => 'gen-id' });
   });
+
+  const getEditTileModal = () => {
+    const heading = screen.getByRole('heading', { name: /Science \/\/ 100/i });
+    return heading.closest('.max-w-lg') as HTMLElement;
+  };
 
   it('1) RENDERING: Tile modal includes the "AI Regen Tile" section', () => {
     render(<DirectorPanel gameState={baseGameState} onUpdateState={mockOnUpdateState} emitGameEvent={mockEmitGameEvent} addToast={mockAddToast} />);

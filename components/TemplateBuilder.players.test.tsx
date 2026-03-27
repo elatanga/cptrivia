@@ -3,7 +3,6 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 import { TemplateBuilder } from './TemplateBuilder';
-import { logger } from '../services/logger';
 
 // --- MOCKS ---
 declare const jest: any;
@@ -57,7 +56,8 @@ describe('TemplateBuilder: Player Configuration & Visibility (Card 1)', () => {
     });
   });
 
-  test('B) MAX PLAYERS: Cannot add more than 8 players', async () => {
+  it('B) MAX PLAYERS: Cannot add more than 8 players', async () => {
+    const { logger } = await import('../services/logger');
     render(<TemplateBuilder {...mockProps} />);
     
     // Default is 4 players. Add 4 more to reach 8.
@@ -77,10 +77,11 @@ describe('TemplateBuilder: Player Configuration & Visibility (Card 1)', () => {
     expect(screen.getByText(/MAX 8 REACHED/i)).toBeInTheDocument();
   });
 
-  test('C) CLAMPING: Clamps >8 players on initial load with error log', () => {
+  it('C) CLAMPING: Clamps >8 players on initial load with error log', async () => {
+    const { logger } = await import('../services/logger');
     const legacyTemplate: any = {
       topic: 'Legacy',
-      config: { playerCount: 10, playerNames: Array.from({length: 10}).map((_, i) => `P${i}`) },
+      config: { playerCount: 10, playerNames: Array.from({length: 10}).map((_, i) => `P${i}`), rowCount: 5, categoryCount: 4 },
       categories: [],
     };
     
@@ -92,8 +93,13 @@ describe('TemplateBuilder: Player Configuration & Visibility (Card 1)', () => {
     expect(screen.getByText(/Template Title/i)).toBeInTheDocument();
   });
 
-  test('D) DELETION: Delete icon removes specific player by stable ID', () => {
+  it('D) DELETION: Delete icon removes specific player by stable ID', async () => {
     render(<TemplateBuilder {...mockProps} />);
+    
+    await waitFor(() => {
+      const inputs = screen.queryAllByPlaceholderText('ENTER NAME');
+      expect(inputs.length).toBeGreaterThan(0);
+    });
     
     const inputs = screen.getAllByPlaceholderText('ENTER NAME') as HTMLInputElement[];
     fireEvent.change(inputs[1], { target: { value: 'TARGET DELETE' } });
