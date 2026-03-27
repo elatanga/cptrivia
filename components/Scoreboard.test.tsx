@@ -1,32 +1,33 @@
 
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import { vi } from 'vitest';
 import { Scoreboard } from './Scoreboard';
 import { Player, BoardViewSettings } from '../types';
 
 // Fix: Add global declarations for Jest variables
-declare const jest: any;
 declare const describe: any;
 declare const test: any;
 declare const expect: any;
 declare const beforeEach: any;
-declare const global: any;
-declare const require: any;
 
-// Mock services
-jest.mock('../services/soundService', () => ({
+// Mock services with vi.mock
+vi.mock('../services/soundService', () => ({
   soundService: {
-    playClick: jest.fn(),
+    playClick: vi.fn(),
   },
 }));
 
-jest.mock('../services/logger', () => ({
+vi.mock('../services/logger', () => ({
   logger: {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
   },
 }));
+
+// Import mocks after mocking
+import { logger } from '../services/logger';
 
 const generatePlayers = (count: number): Player[] => 
   Array.from({ length: count }).map((_, i) => ({
@@ -54,9 +55,9 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
       <Scoreboard 
         players={generatePlayers(8)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />
@@ -76,9 +77,9 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
       <Scoreboard 
         players={generatePlayers(8)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />
@@ -97,9 +98,9 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
       <Scoreboard 
         players={generatePlayers(4)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />
@@ -111,9 +112,9 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
       <Scoreboard 
         players={generatePlayers(5)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />
@@ -123,14 +124,13 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
   });
 
   test('D) AUDIT LOGGING: Reports layout mode and viewport upon initialization', () => {
-    const { logger } = require('../services/logger');
     render(
       <Scoreboard 
         players={generatePlayers(8)}
         selectedPlayerId="p0"
-        onAddPlayer={jest.fn()}
-        onUpdateScore={jest.fn()}
-        onSelectPlayer={jest.fn()}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
         gameActive={true}
         viewSettings={mockViewSettings}
       />

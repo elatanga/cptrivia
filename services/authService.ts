@@ -1366,6 +1366,78 @@ class AuthService {
     return rawToken;
   }
 
+  async createUserWithNotifications(
+    actorUsername: string,
+    userData: Partial<User> & { profile?: Partial<UserProfile> },
+    role: UserRole,
+    durationMinutes?: number,
+    channels?: DeliveryMethod[],
+  ): Promise<{ rawToken: string; user: User; delivery: Partial<Record<DeliveryMethod, ChannelDeliveryState>>; deliveryStatus?: string }> {
+    if (this.useAuthoritativeBackend()) {
+      try {
+        const result = await this.callBackend<{
+          rawToken: string;
+          user: User;
+          delivery: Partial<Record<DeliveryMethod, ChannelDeliveryState>>;
+          deliveryStatus?: string;
+        }>('createStudioUser', {
+          sessionId: this.requireActiveSessionId('User creation'),
+          userData,
+          role,
+          durationMinutes,
+          channels,
+        });
+        this.upsertSnapshotUser(result.user);
+        return {
+          rawToken: result.rawToken,
+          user: result.user,
+          delivery: result.delivery || {},
+          deliveryStatus: result.deliveryStatus,
+        };
+      } catch (error) {
+        throw this.mapCallableError(error, 'ERR_FORBIDDEN', 'Unable to create user.');
+      }
+    }
+
+    const rawToken = await this.createUser(actorUsername, userData, role, durationMinutes);
+    const createdUser = this.getUsers().find((entry) => entry.username.toLowerCase() === String(userData.username || '').toLowerCase());
+    if (!createdUser) {
+      throw new AppError('ERR_UNKNOWN', 'User creation succeeded but the record could not be loaded.', logger.getCorrelationId());
+    }
+
+    const requestedChannels: DeliveryMethod[] = [];
+    const requestedSeen: Record<DeliveryMethod, boolean> = { SMS: false, EMAIL: false };
+    const requestedSource = channels && channels.length ? channels : (['SMS', 'EMAIL'] as DeliveryMethod[]);
+    for (const channel of requestedSource) {
+      if (channel === 'SMS' || channel === 'EMAIL') {
+        const method: DeliveryMethod = channel;
+        if (!requestedSeen[method]) {
+          requestedSeen[method] = true;
+          requestedChannels.push(method);
+        }
+      }
+    }
+    const deliveryResult = await this.sendUserCredentials(actorUsername, createdUser.username, rawToken, requestedChannels);
+    const deliveryEntries = Object.values(deliveryResult.delivery || {});
+    const deliveryStatus =
+      deliveryEntries.length === 0
+        ? 'SKIPPED'
+        : deliveryEntries.some((entry) => entry?.status === 'SENT')
+          ? 'SENT'
+          : deliveryEntries.some((entry) => entry?.status === 'FAILED')
+            ? 'FAILED'
+            : deliveryEntries.every((entry) => entry?.status === 'SKIPPED')
+              ? 'SKIPPED'
+              : 'PENDING';
+
+    return {
+      rawToken,
+      user: deliveryResult.user,
+      delivery: deliveryResult.delivery,
+      deliveryStatus,
+    };
+  }
+
   async refreshToken(actorUsername: string, targetUsername: string): Promise<string> {
     if (this.useAuthoritativeBackend()) {
       try {
@@ -1438,7 +1510,18 @@ class AuthService {
     }
 
     const target = users[targetIdx];
-    const selectedChannels = (channels && channels.length ? channels : ['SMS', 'EMAIL']).filter((channel, index, array) => array.indexOf(channel) === index);
+    const selectedChannels: DeliveryMethod[] = [];
+    const selectedSeen: Record<DeliveryMethod, boolean> = { SMS: false, EMAIL: false };
+    const selectedSource = channels && channels.length ? channels : (['SMS', 'EMAIL'] as DeliveryMethod[]);
+    for (const channel of selectedSource) {
+      if (channel === 'SMS' || channel === 'EMAIL') {
+        const method: DeliveryMethod = channel;
+        if (!selectedSeen[method]) {
+          selectedSeen[method] = true;
+          selectedChannels.push(method);
+        }
+      }
+    }
     const credentialMessage = this.buildCredentialMessage(target, rawToken);
     const delivery: Partial<Record<DeliveryMethod, ChannelDeliveryState>> = {};
 
