@@ -41,10 +41,40 @@ describe('Special Moves Scoring Decorator (Phase 2)', () => {
   it('E) RESOLUTION: applies MEGA_STEAL block on AWARD (returns 0)', () => {
     const ctx: ScoringContext = { tileId: 'q1', moveType: 'MEGA_STEAL', outcome: 'AWARD' };
     const result = applySpecialMovesDecorator(100, ctx);
+    expect(result).toBe(100);
+  });
+
+  it('F) SAFE BET: applies +50% on AWARD', () => {
+    const ctx: ScoringContext = { tileId: 'q1', moveType: 'SAFE_BET', outcome: 'AWARD' };
+    const result = applySpecialMovesDecorator(200, ctx);
+    expect(result).toBe(300);
+  });
+
+  it('G) SAFE BET: applies zero penalty on FAIL', () => {
+    const ctx: ScoringContext = { tileId: 'q1', moveType: 'SAFE_BET', outcome: 'FAIL' };
+    const result = applySpecialMovesDecorator(200, ctx);
     expect(result).toBe(0);
   });
 
-  it('F) FAIL-OPEN: returns baseDelta for unknown move types', () => {
+  it('H) LOCKOUT: blocks steal score impact', () => {
+    const ctx: ScoringContext = { tileId: 'q1', moveType: 'LOCKOUT', outcome: 'STEAL' };
+    const result = applySpecialMovesDecorator(100, ctx);
+    expect(result).toBe(0);
+  });
+
+  it('I) SUPER SAVE: applies 3x on award', () => {
+    const ctx: ScoringContext = { tileId: 'q1', moveType: 'SUPER_SAVE', outcome: 'AWARD' };
+    const result = applySpecialMovesDecorator(100, ctx);
+    expect(result).toBe(300);
+  });
+
+  it('J) GOLDEN GAMBLE: applies 50% loss on fail', () => {
+    const ctx: ScoringContext = { tileId: 'q1', moveType: 'GOLDEN_GAMBLE', outcome: 'FAIL' };
+    const result = applySpecialMovesDecorator(200, ctx);
+    expect(result).toBe(-100);
+  });
+
+  it('K) FAIL-OPEN: returns baseDelta for unknown move types', () => {
     const ctx: ScoringContext = { tileId: 'q1', moveType: 'UNKNOWN' as any, outcome: 'AWARD' };
     const result = applySpecialMovesDecorator(100, ctx);
     expect(result).toBe(100);

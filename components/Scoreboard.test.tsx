@@ -46,11 +46,11 @@ const mockViewSettings: BoardViewSettings = {
 
 describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1440 });
   });
 
-  test('A) 8-PLAYER GRID: Renders all 8 players in a 2-column grid layout', () => {
+  it('A) 8-PLAYER GRID: Renders all 8 players in a 2-column grid layout', () => {
     render(
       <Scoreboard 
         players={generatePlayers(8)}
@@ -72,7 +72,7 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
     }
   });
 
-  test('B) NO SCROLL: Enforces overflow-hidden and removes scrollbars via style audit', () => {
+  it('B) NO SCROLL: Enforces overflow-hidden and removes scrollbars via style audit', () => {
     const { container } = render(
       <Scoreboard 
         players={generatePlayers(8)}
@@ -93,7 +93,7 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
     expect(list).toBeInTheDocument();
   });
 
-  test('C) LAYOUT SWITCHING: 1-column for 4 players, 2-column for 5 players', () => {
+  it('C) LAYOUT SWITCHING: 1-column for 4 players, 2-column for 5 players', () => {
     const { rerender } = render(
       <Scoreboard 
         players={generatePlayers(4)}
