@@ -63,8 +63,8 @@ describe('Director Panel: Add Player Feature', () => {
     // Rows and columns logic...
     
     fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
-    await waitFor(() => screen.getByText(/Save/i));
-    fireEvent.click(screen.getByText(/Save/i));
+    await waitFor(() => screen.getByRole('button', { name: /Save Template/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Save Template/i }));
     await waitFor(() => screen.getByText(/Play Show/i));
     fireEvent.click(screen.getByText(/Play Show/i));
     await waitFor(() => screen.getByText(/End Show/i));

@@ -77,7 +77,7 @@ describe('Mobile UX Enhancements', () => {
     fireEvent.click(screen.getByText(/Create Template/i));
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'UX Game' } });
     fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
-    fireEvent.click(screen.getByText('Save'));
+    fireEvent.click(screen.getByRole('button', { name: /Save Template/i }));
     await waitFor(() => screen.getByText('Play Show'));
     fireEvent.click(screen.getByText('Play Show'));
 

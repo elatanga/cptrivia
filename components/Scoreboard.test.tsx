@@ -1,11 +1,17 @@
 
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { vi } from 'vitest';
 import { Scoreboard } from './Scoreboard';
 import { Player, BoardViewSettings } from '../types';
 
-// Mock services
+// Fix: Add global declarations for Jest variables
+declare const describe: any;
+declare const test: any;
+declare const expect: any;
+declare const beforeEach: any;
+
+// Mock services with vi.mock
 vi.mock('../services/soundService', () => ({
   soundService: {
     playClick: vi.fn(),
@@ -19,6 +25,9 @@ vi.mock('../services/logger', () => ({
     warn: vi.fn(),
   },
 }));
+
+// Import mocks after mocking
+import { logger } from '../services/logger';
 
 const generatePlayers = (count: number): Player[] => 
   Array.from({ length: count }).map((_, i) => ({
@@ -114,8 +123,7 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
     expect(screen.getByTestId('scoreboard-root')).toHaveAttribute('data-layout', 'grid-2col');
   });
 
-  it('D) AUDIT LOGGING: Reports layout mode and viewport upon initialization', async () => {
-    const { logger } = await import('../services/logger');
+  test('D) AUDIT LOGGING: Reports layout mode and viewport upon initialization', () => {
     render(
       <Scoreboard 
         players={generatePlayers(8)}

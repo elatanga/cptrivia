@@ -392,7 +392,8 @@ const requireSession = async (sessionId, requiredRole = null) => {
     await sessionRef.delete().catch(() => undefined);
     throw new functions.https.HttpsError('permission-denied', 'Access revoked');
   }
-  if (user.expiresAt && Date.now() > new Date(toIso(user.expiresAt)).getTime()) {
+  const isTemporaryToken = user.tokenPolicy === 'TEMPORARY' || Boolean(user.expiresAt);
+  if (isTemporaryToken && user.expiresAt && Date.now() > new Date(toIso(user.expiresAt)).getTime()) {
     await sessionRef.delete().catch(() => undefined);
     throw new functions.https.HttpsError('unauthenticated', 'Session expired');
   }
@@ -443,7 +444,8 @@ const createUserRecord = async ({ actor, username, role, status, email, phone, p
   const tokenHash = hashToken(rawToken);
   const userId = crypto.randomUUID();
   const createdAt = nowIso();
-  const expiresAt = durationMinutes ? new Date(Date.now() + durationMinutes * 60000).toISOString() : null;
+  const isTemporaryToken = Number.isFinite(durationMinutes) && durationMinutes > 0;
+  const expiresAt = isTemporaryToken ? new Date(Date.now() + durationMinutes * 60000).toISOString() : null;
 
   const user = {
     id: userId,
@@ -465,6 +467,9 @@ const createUserRecord = async ({ actor, username, role, status, email, phone, p
     },
     createdAt,
     updatedAt: createdAt,
+    tokenPolicy: isTemporaryToken ? 'TEMPORARY' : 'PERMANENT',
+    tokenDurationMinutes: isTemporaryToken ? durationMinutes : null,
+    tokenIssuedAt: createdAt,
     expiresAt,
     createdBy: actor.username,
     credentialDelivery: {},
@@ -656,7 +661,8 @@ exports.loginWithToken = functions.https.onCall(async (data) => {
   if (user.status === 'REVOKED') {
     return { success: false, message: 'Account access revoked.', code: 'ERR_FORBIDDEN' };
   }
-  if (user.expiresAt && Date.now() > new Date(toIso(user.expiresAt)).getTime()) {
+  const isTemporaryToken = user.tokenPolicy === 'TEMPORARY' || Boolean(user.expiresAt);
+  if (isTemporaryToken && user.expiresAt && Date.now() > new Date(toIso(user.expiresAt)).getTime()) {
     return { success: false, message: 'Access token expired.', code: 'ERR_SESSION_EXPIRED' };
   }
   if (hashToken(token) !== user.tokenHash) {
@@ -752,6 +758,7 @@ exports.createStudioUser = functions.https.onCall(async (data) => {
   const userData = data && data.userData ? data.userData : {};
   const role = data && data.role;
   const durationMinutes = data && data.durationMinutes;
+  const requestedChannels = Array.isArray(data && data.channels) ? data.channels : [];
   const result = await createUserRecord({
     actor,
     username: userData.username,
@@ -762,8 +769,28 @@ exports.createStudioUser = functions.https.onCall(async (data) => {
     profile: userData.profile || {},
     durationMinutes,
   });
-  log('INFO', 'USER_PROVISIONING', 'User creation requested via backend service', correlationId, { actor: actor.username, username: result.user.username, role: result.user.role });
-  return { rawToken: result.rawToken, user: sanitizeUserForClient(result.user) };
+
+  const requiredChannels = [];
+  if (result.user.phone) requiredChannels.push('SMS');
+  if (result.user.email) requiredChannels.push('EMAIL');
+  const channels = Array.from(new Set([...requestedChannels, ...requiredChannels]));
+  const deliveryResult = channels.length > 0
+    ? await sendCredentialsToUser({ actor, targetUsername: result.user.username, rawToken: result.rawToken, channels, correlationId })
+    : { user: sanitizeUserForClient(result.user), delivery: {} };
+
+  const deliveryStatus = getRequestAggregateDeliveryStatus({ delivery: deliveryResult.delivery });
+  log('INFO', 'USER_PROVISIONING', 'User creation requested via backend service', correlationId, {
+    actor: actor.username,
+    username: result.user.username,
+    role: result.user.role,
+    deliveryStatus,
+  });
+  return {
+    rawToken: result.rawToken,
+    user: sanitizeUserForClient(deliveryResult.user),
+    delivery: serializeForClient(deliveryResult.delivery),
+    deliveryStatus,
+  };
 });
 
 exports.refreshStudioUserToken = functions.https.onCall(async (data) => {
