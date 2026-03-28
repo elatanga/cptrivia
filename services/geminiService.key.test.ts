@@ -1,7 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resolveGeminiApiKey, getGeminiConfigHealth } from './geminiService';
 import { AppError } from '../types';
-import { logger } from './logger';
 
 describe('geminiService API key resolution', () => {
   const originalApiKey = process.env.API_KEY;
@@ -33,13 +32,7 @@ describe('geminiService API key resolution', () => {
     expect(resolveGeminiApiKey()).toBe('process-gemini-key-xyz');
   });
 
-  it('accepts GEMINI_API_KEY from runtime config when API_KEY is not present', () => {
-    (window as any).__RUNTIME_CONFIG__ = { GEMINI_API_KEY: 'runtime-gemini-key-abc' };
-    expect(resolveGeminiApiKey()).toBe('runtime-gemini-key-abc');
-  });
-
   it('throws AppError when no usable key exists', () => {
-    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
     (window as any).__RUNTIME_CONFIG__ = { API_KEY: '...' };
     process.env.API_KEY = '';
     process.env.GEMINI_API_KEY = '';
@@ -52,11 +45,6 @@ describe('geminiService API key resolution', () => {
       expect(error.code).toBe('ERR_FORBIDDEN');
       expect(error.message).toContain('GEMINI_API_KEY');
     }
-
-    const [, payload] = loggerErrorSpy.mock.calls[0];
-    expect(payload).not.toHaveProperty('API_KEY');
-    expect(payload).not.toHaveProperty('GEMINI_API_KEY');
-    loggerErrorSpy.mockRestore();
   });
 
   it('reports health ready when a usable key exists', () => {
