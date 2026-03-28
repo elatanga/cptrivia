@@ -21,17 +21,12 @@ describe('Wildcard & Steals Logic Lock', () => {
     tileScale: 'M',
     scoreboardScale: 1.0,
     tilePaddingScale: 1.0,
-    questionModalSize: 'Large',
-    questionMaxWidthPercent: 86,
-    questionFontScale: 1,
-    questionContentPadding: 16,
-    multipleChoiceColumns: '2',
     updatedAt: ''
   };
 
   const players: Player[] = [
-    { id: 'p1', name: 'Alice', score: 100, color: '#fff', wildcardsUsed: 1, stealsCount: 2, specialMovesUsedCount: 1, specialMovesUsedNames: ['DOUBLE OR LOSE'] },
-    { id: 'p2', name: 'Bob', score: 200, color: '#fff', wildcardsUsed: 4, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] }
+    { id: 'p1', name: 'Alice', score: 100, color: '#fff', wildcardsUsed: 1, stealsCount: 2 },
+    { id: 'p2', name: 'Bob', score: 200, color: '#fff', wildcardsUsed: 4, stealsCount: 0 }
   ];
 
   it('1) RENDERS: Correct star color for partial wildcard usage (Orange)', () => {
@@ -51,15 +46,8 @@ describe('Wildcard & Steals Logic Lock', () => {
   it('3) RENDERS: Steals badge only for players with steals', () => {
     render(<Scoreboard players={players} selectedPlayerId={null} onAddPlayer={vi.fn()} onUpdateScore={vi.fn()} onSelectPlayer={vi.fn()} gameActive={true} viewSettings={mockViewSettings} />);
     
-    expect(screen.getByText('S 2')).toBeInTheDocument();
+    expect(screen.getByText('STEALS: 2')).toBeInTheDocument();
     // Bob has 0 steals, so no badge should render for him
-    expect(screen.queryByText('S 0')).not.toBeInTheDocument();
-  });
-
-  it('4) RENDERS: Special Moves badge only for players with usage', () => {
-    render(<Scoreboard players={players} selectedPlayerId={null} onAddPlayer={vi.fn()} onUpdateScore={vi.fn()} onSelectPlayer={vi.fn()} gameActive={true} viewSettings={mockViewSettings} />);
-
-    expect(screen.getByText('SM 1')).toBeInTheDocument();
-    expect(screen.queryByText('SM 0')).not.toBeInTheDocument();
+    expect(screen.queryByText('STEALS: 0')).not.toBeInTheDocument();
   });
 });

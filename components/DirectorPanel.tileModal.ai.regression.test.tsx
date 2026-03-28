@@ -66,11 +66,6 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
       tileScale: 'M',
       scoreboardScale: 1.0,
       tilePaddingScale: 1.0,
-      questionModalSize: 'Large',
-      questionMaxWidthPercent: 86,
-      questionFontScale: 1,
-      questionContentPadding: 16,
-      multipleChoiceColumns: '2',
       updatedAt: '',
     },
     lastPlays: [],
@@ -173,7 +168,7 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
       expect(q.isDoubleOrNothing).toBe(true);
     });
 
-    expect(mockAddToast).toHaveBeenCalledWith('success', 'Tile content regenerated.');
+    expect(mockAddToast).toHaveBeenCalledWith('success', expect.stringContaining('Question generated'));
   });
 
   it('4) FAILURE: Shows error toast and prevents state mutation (Snapshot Rollback)', async () => {
@@ -184,7 +179,7 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
     fireEvent.click(within(modal).getByRole('button', { name: /^Regen$/i }));
 
     await waitFor(() => {
-      expect(mockAddToast).toHaveBeenCalledWith('error', 'AI Failed: AI_TIMEOUT');
+      expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringContaining('Failed to generate'));
       // onUpdateState must NOT be called to avoid corrupted state
       expect(mockOnUpdateState).not.toHaveBeenCalled();
     });

@@ -15,16 +15,13 @@ import { ConfirmationModal } from './components/ConfirmationModal';
 import { EndGameCelebrationModal } from './components/EndGameCelebrationModal';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
-import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType } from './types';
+import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent } from './types';
 import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from './types';
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
 import { normalizePlayerName } from './services/utils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
-import { doesReturnResolveAsFail, isStealBlockedForMove, normalizeSpecialMoveType } from './modules/specialMoves/logic';
-import { getQuestionModalSpecialMoveModel, getSpecialMoveDisplayName } from './modules/specialMoves/modalSummary';
-import { deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
@@ -106,9 +103,8 @@ const App: React.FC = () => {
     events: []
   });
 
-  const [questionTimerEnabled, setQuestionTimerEnabled] = useState(false);
+  const [questionTimerEnabled, setQuestionTimerEnabled] = useState(true);
   const [questionTimerDurationSeconds, setQuestionTimerDurationSeconds] = useState(DEFAULT_QUESTION_TIMER_DURATION_SECONDS);
-  const [sessionTimerEnabled, setSessionTimerEnabled] = useState(false);
 
   const [questionTimer, setQuestionTimer] = useState<QuestionCountdownTimer>({
     durationSeconds: DEFAULT_QUESTION_TIMER_DURATION_SECONDS,
@@ -129,7 +125,6 @@ const App: React.FC = () => {
     endsAt: null,
     selectedPreset: null,
   });
-  const [activeTileMoveType, setActiveTileMoveType] = useState<SpecialMoveType | undefined>(undefined);
 
   const [timerAudio, setTimerAudio] = useState<TimerAudioSettings>({
     enabled: true,
@@ -141,56 +136,13 @@ const App: React.FC = () => {
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const specialMovesOverlay = useSpecialMovesOverlay(gameState.isGameStarted ? activeShow?.id : undefined);
-  const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
-  // Ref keeps the overlay current inside stable callbacks without being a dep.
-  const specialMovesOverlayRef = useRef(specialMovesOverlay);
-  useEffect(() => {
-    specialMovesOverlayRef.current = specialMovesOverlay;
-  }, [specialMovesOverlay]);
   const isBoardComplete = useMemo(() => isTriviaBoardComplete(gameState.categories), [gameState.categories]);
   const celebrationResult = useMemo(() => deriveEndGameCelebrationResult(gameState.players), [gameState.players]);
   const questionTimerDurationRef = useRef(questionTimerDurationSeconds);
-  const questionTimerEnabledRef = useRef(questionTimerEnabled);
-  const sessionTimerEnabledRef = useRef(sessionTimerEnabled);
-  const activeTileMoveTypeRef = useRef<SpecialMoveType | undefined>(activeTileMoveType);
 
   useEffect(() => {
     questionTimerDurationRef.current = questionTimerDurationSeconds;
   }, [questionTimerDurationSeconds]);
-
-  useEffect(() => {
-    questionTimerEnabledRef.current = questionTimerEnabled;
-  }, [questionTimerEnabled]);
-
-  useEffect(() => {
-    sessionTimerEnabledRef.current = sessionTimerEnabled;
-  }, [sessionTimerEnabled]);
-
-  useEffect(() => {
-    activeTileMoveTypeRef.current = activeTileMoveType;
-  }, [activeTileMoveType]);
-
-  useEffect(() => {
-    const activeTileId = gameState.activeQuestionId;
-    if (!activeTileId) {
-      if (activeTileMoveTypeRef.current) setActiveTileMoveType(undefined);
-      return;
-    }
-    if (activeTileMoveTypeRef.current) return;
-    const deployment = specialMovesOverlay?.deploymentsByTileId?.[activeTileId];
-    if (deployment?.status === 'ARMED') {
-      setActiveTileMoveType(normalizeSpecialMoveType(deployment.moveType));
-    }
-  }, [gameState.activeQuestionId, specialMovesOverlay]);
-
-  // Tracks remainingSeconds via ref so stopQuestionTimer can log it
-  // without capturing questionTimer.remainingSeconds as a dep (which
-  // would create a new callback reference every second while running).
-  const questionTimerRemainingRef = useRef(questionTimer.remainingSeconds);
-  const resolvingQuestionIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    questionTimerRemainingRef.current = questionTimer.remainingSeconds;
-  }, [questionTimer.remainingSeconds]);
 
   const handleSetQuestionTimerDuration = useCallback((seconds: number) => {
     const resolvedSeconds = resolveQuestionCountdownDuration(seconds);
@@ -389,11 +341,6 @@ const App: React.FC = () => {
   }, [deriveTimerAudio]);
 
   const startQuestionTimer = useCallback((questionId: string, durationSeconds?: number) => {
-    if (!questionTimerEnabledRef.current) {
-      logger.info('question_timer_start_blocked_disabled', { questionId });
-      return;
-    }
-
     const selectedDuration = durationSeconds ?? questionTimerDurationRef.current;
     const resolvedDuration = resolveQuestionCountdownDuration(selectedDuration);
     if (resolvedDuration !== Number(selectedDuration)) {
@@ -423,10 +370,6 @@ const App: React.FC = () => {
   }, []);
 
   const restartQuestionTimer = useCallback(() => {
-    if (!questionTimerEnabledRef.current) {
-      logger.info('question_timer_restart_blocked_disabled');
-      return;
-    }
     const questionId = gameStateRef.current.activeQuestionId;
     if (!questionId) return;
     logger.info('question_timer_restart', {
@@ -448,37 +391,6 @@ const App: React.FC = () => {
       endsAt: null,
     }));
   }, [questionTimer.remainingSeconds]);
-
-  const handleToggleQuestionTimerEnabled = useCallback((enabled: boolean) => {
-    const safeEnabled = enabled === true;
-    setQuestionTimerEnabled(safeEnabled);
-    if (!safeEnabled) {
-      setQuestionTimer((prev) => ({
-        ...prev,
-        remainingSeconds: 0,
-        isRunning: false,
-        isStopped: true,
-        startedAt: null,
-        endsAt: null,
-        activeQuestionId: null,
-      }));
-    }
-  }, []);
-
-  const handleToggleSessionTimerEnabled = useCallback((enabled: boolean) => {
-    const safeEnabled = enabled === true;
-    setSessionTimerEnabled(safeEnabled);
-    if (!safeEnabled) {
-      setSessionTimer((prev) => ({
-        ...prev,
-        remainingSeconds: 0,
-        isRunning: false,
-        isStopped: true,
-        startedAt: null,
-        endsAt: null,
-      }));
-    }
-  }, []);
 
   const setTimerSoundEnabled = useCallback((enabled: boolean) => {
     const svc = soundService as any;
@@ -566,32 +478,10 @@ const App: React.FC = () => {
       try {
         const payload = JSON.parse(e.newValue);
         const nextDuration = resolveQuestionCountdownDuration(payload.questionTimerDurationSeconds);
-        const nextQuestionEnabled = payload.questionTimerEnabled === true;
-        const nextSessionEnabled = payload.sessionTimerEnabled === true;
-        setQuestionTimerEnabled(nextQuestionEnabled);
-        setSessionTimerEnabled(nextSessionEnabled);
+        setQuestionTimerEnabled(payload.questionTimerEnabled !== false);
         setQuestionTimerDurationSeconds(nextDuration);
-        if (payload.questionTimer) {
-          setQuestionTimer(nextQuestionEnabled ? payload.questionTimer : {
-            ...payload.questionTimer,
-            remainingSeconds: 0,
-            isRunning: false,
-            isStopped: true,
-            startedAt: null,
-            endsAt: null,
-            activeQuestionId: null,
-          });
-        }
-        if (payload.sessionTimer) {
-          setSessionTimer(nextSessionEnabled ? payload.sessionTimer : {
-            ...payload.sessionTimer,
-            remainingSeconds: 0,
-            isRunning: false,
-            isStopped: true,
-            startedAt: null,
-            endsAt: null,
-          });
-        }
+        if (payload.questionTimer) setQuestionTimer(payload.questionTimer);
+        if (payload.sessionTimer) setSessionTimer(payload.sessionTimer);
       } catch (error: any) {
         logger.warn('timer_state_hydration_failed', { message: error?.message });
       }
@@ -607,13 +497,12 @@ const App: React.FC = () => {
       TIMER_STATE_STORAGE_KEY,
       JSON.stringify({
         questionTimerEnabled,
-        sessionTimerEnabled,
         questionTimerDurationSeconds,
         questionTimer,
         sessionTimer,
       })
     );
-  }, [questionTimerEnabled, sessionTimerEnabled, questionTimerDurationSeconds, questionTimer, sessionTimer]);
+  }, [questionTimerEnabled, questionTimerDurationSeconds, questionTimer, sessionTimer]);
 
   // UI State Persistence Effect
   useEffect(() => {
@@ -717,18 +606,6 @@ const App: React.FC = () => {
       let sessionExpired = false;
 
       setQuestionTimer((prev) => {
-        if (!questionTimerEnabledRef.current) {
-          if (!prev.isRunning && prev.isStopped && !prev.endsAt && prev.remainingSeconds === 0) return prev;
-          return {
-            ...prev,
-            remainingSeconds: 0,
-            isRunning: false,
-            isStopped: true,
-            startedAt: null,
-            endsAt: null,
-            activeQuestionId: null,
-          };
-        }
         if (!prev.isRunning || !prev.endsAt) return prev;
         const nextRemaining = Math.max(0, Math.ceil((prev.endsAt - now) / 1000));
         if (nextRemaining === prev.remainingSeconds) return prev;
@@ -749,17 +626,6 @@ const App: React.FC = () => {
       });
 
       setSessionTimer((prev) => {
-        if (!sessionTimerEnabledRef.current) {
-          if (!prev.isRunning && prev.isStopped && !prev.endsAt && prev.remainingSeconds === 0) return prev;
-          return {
-            ...prev,
-            remainingSeconds: 0,
-            isRunning: false,
-            isStopped: true,
-            startedAt: null,
-            endsAt: null,
-          };
-        }
         if (!prev.isRunning || prev.isStopped || !prev.endsAt || !gameStateRef.current.isGameStarted) return prev;
         const nextRemaining = Math.max(0, Math.ceil((prev.endsAt - now) / 1000));
         if (nextRemaining === prev.remainingSeconds) return prev;
@@ -787,12 +653,6 @@ const App: React.FC = () => {
   }, [canPlayTimerAudio, timerAudio.tickSoundEnabled, timerAudio.endSoundEnabled]);
 
   const handleStartSessionTimer = (preset: '15m' | '30m' | '1h' | '1h30m' | '2h') => {
-    if (!sessionTimerEnabledRef.current) {
-      logger.info('session_timer_start_blocked_disabled', { preset });
-      addToast('info', 'Enable Session Game Timer first.');
-      return;
-    }
-
     const duration = getPresetDuration(preset);
     const now = Date.now();
     const newTimer: SessionGameTimer = {
@@ -814,8 +674,6 @@ const App: React.FC = () => {
   };
 
   const handlePauseSessionTimer = () => {
-    if (!sessionTimerEnabledRef.current) return;
-
     setSessionTimer((prev) => {
       if (!prev.remainingSeconds) return prev;
       if (prev.isRunning) {
@@ -973,95 +831,6 @@ const App: React.FC = () => {
     }
 
     window.addEventListener('storage', handleStorageChange);
-
-    const initializeApp = async () => {
-       try {
-         const status = await authService.getBootstrapStatus();
-         setIsConfigured(status.masterReady);
-
-         if (status.masterReady) {
-            const storedSessionId = localStorage.getItem('cruzpham_active_session_id');
-            if (storedSessionId) {
-               const result = await authService.restoreSession(storedSessionId);
-               if (result.success && result.session) {
-                  setSession({ id: result.session.id, username: result.session.username, role: result.session.role });
-                  try {
-                    const uiStateRaw = localStorage.getItem('cruzpham_ui_state');
-                    if (uiStateRaw) {
-                      const uiState = JSON.parse(uiStateRaw);
-                      if (uiState.activeShowId) {
-                        const restoredShow = dataService.getShowById(uiState.activeShowId);
-                        if (restoredShow) setActiveShow(restoredShow);
-                      }
-                      if (uiState.viewMode) setViewMode(uiState.viewMode);
-                    }
-                  } catch (e) { logger.warn('hydrateUIStateFailed'); }
-               } else {
-                 localStorage.removeItem('cruzpham_active_session_id');
-                 localStorage.removeItem('cruzpham_ui_state');
-               }
-            }
-         }
-         
-         const savedState = localStorage.getItem('cruzpham_gamestate');
-         if (savedState) {
-           const parsed = JSON.parse(savedState);
-           parsed.viewSettings = sanitizeBoardViewSettings(parsed.viewSettings);
-           parsed.players = (parsed.players || []).map((p: Player) => ({
-             ...p,
-             stealsCount: Number(p?.stealsCount || 0),
-             specialMovesUsedCount: Number(p?.specialMovesUsedCount || 0),
-             specialMovesUsedNames: Array.isArray(p?.specialMovesUsedNames) ? p.specialMovesUsedNames : [],
-           }));
-           
-           if (!parsed.lastPlays) parsed.lastPlays = [];
-           if (!parsed.events) parsed.events = [];
-           
-           setGameState(parsed);
-           if (parsed.showTitle && !activeShow) {
-              setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: parsed.showTitle, createdAt: '' });
-           }
-         }
-
-         const savedTimerState = localStorage.getItem(TIMER_STATE_STORAGE_KEY);
-         if (savedTimerState) {
-           try {
-             const timerState = JSON.parse(savedTimerState);
-             const resolvedDuration = resolveQuestionCountdownDuration(timerState.questionTimerDurationSeconds);
-             const nextQuestionEnabled = timerState.questionTimerEnabled === true;
-             const nextSessionEnabled = timerState.sessionTimerEnabled === true;
-             setQuestionTimerEnabled(nextQuestionEnabled);
-             setSessionTimerEnabled(nextSessionEnabled);
-             setQuestionTimerDurationSeconds(resolvedDuration);
-             if (timerState.questionTimer) {
-               setQuestionTimer(nextQuestionEnabled ? timerState.questionTimer : {
-                 ...timerState.questionTimer,
-                 remainingSeconds: 0,
-                 isRunning: false,
-                 isStopped: true,
-                 startedAt: null,
-                 endsAt: null,
-                 activeQuestionId: null,
-               });
-             }
-             if (timerState.sessionTimer) {
-               setSessionTimer(nextSessionEnabled ? timerState.sessionTimer : {
-                 ...timerState.sessionTimer,
-                 remainingSeconds: 0,
-                 isRunning: false,
-                 isStopped: true,
-                 startedAt: null,
-                 endsAt: null,
-               });
-             }
-           } catch (error: any) {
-             logger.warn('timer_state_restore_failed', { message: error?.message });
-           }
-         }
-       } catch (e) {
-         console.error("System Initialization Failed", e);
-       } finally { setAuthChecked(true); }
-    };
     initializeApp();
     return () => window.removeEventListener('storage', handleStorageChange);
   }, [handleStorageChange, initializeApp]);
@@ -1143,12 +912,12 @@ const App: React.FC = () => {
     const timerEnabledFromTemplate = resolveTemplateTimerEnabled(template, questionTimerEnabled);
 
     const initPlayers: Player[] = (template.config.playerNames || []).slice(0, Math.max(0, targetPlayerCount)).map(name => ({
-      id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: []
+      id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0
     }));
 
     if (initPlayers.length === 0 && targetPlayerCount > 0) {
       for (let i = 0; i < targetPlayerCount; i++) {
-        initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] });
+        initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0 });
       }
     }
 
@@ -1160,7 +929,7 @@ const App: React.FC = () => {
       timerEnabled: timerEnabledFromTemplate,
     });
 
-    handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
+    setQuestionTimerEnabled(timerEnabledFromTemplate);
 
     const newState: GameState = {
       ...gameState,
@@ -1224,7 +993,6 @@ const App: React.FC = () => {
       endsAt: null,
       selectedPreset: null,
     });
-    setActiveTileMoveType(undefined);
     setViewMode('BOARD');
     setShowEndGameConfirm(false);
     setIsEndGameCelebrationOpen(false);
@@ -1238,18 +1006,6 @@ const App: React.FC = () => {
 
     soundService.playSound?.('tileOpen');
 
-    const deployment = specialMovesOverlayRef.current?.deploymentsByTileId?.[qId];
-    setActiveTileMoveType(deployment?.status === 'ARMED' ? normalizeSpecialMoveType(deployment.moveType) : undefined);
-
-    if (questionTimerEnabled) {
-      const selectedDuration = resolveQuestionCountdownDuration(questionTimerDurationRef.current);
-      startQuestionTimer(qId, selectedDuration);
-    }
-
-    // saveGameState FIRST (direct update) so the subsequent emitGameEvent
-    // functional updater receives the correct activeQuestionId in its `prev`.
-    saveGameState({ ...gameState, activeCategoryId: catId, activeQuestionId: qId });
-
     emitGameEvent('TILE_OPENED', {
        actor: { role: 'director' },
        context: { tileId: qId, categoryName: cat?.title, points: q?.points }
@@ -1257,11 +1013,14 @@ const App: React.FC = () => {
 
     if (questionTimerEnabled) {
       const selectedDuration = resolveQuestionCountdownDuration(questionTimerDurationRef.current);
+      startQuestionTimer(qId, selectedDuration);
       emitGameEvent('QUESTION_COUNTDOWN_START', {
         actor: { role: 'director' },
         context: { tileId: qId, note: `Question countdown auto-started (${selectedDuration}s)` }
       });
     }
+
+    saveGameState({ ...gameState, activeCategoryId: catId, activeQuestionId: qId });
   };
 
   const handleQuestionClose = (action: 'return' | 'void' | 'award' | 'steal', targetPlayerId?: string) => {
@@ -1271,44 +1030,36 @@ const App: React.FC = () => {
     const qIdx = activeCat?.questions.findIndex(q => q.id === current.activeQuestionId);
     const activeQ = activeCat?.questions[qIdx];
 
-    if (current.activeQuestionId && resolvingQuestionIdRef.current === current.activeQuestionId) {
-      logger.warn('question_close_deduped', { action, tileId: current.activeQuestionId });
-      return;
-    }
-
     if (!activeCat || !activeQ) {
-       setActiveTileMoveType(undefined);
        saveGameState({ ...current, activeQuestionId: null, activeCategoryId: null });
        return;
     }
 
-    resolvingQuestionIdRef.current = activeQ.id;
-
     const basePoints = (activeQ.isDoubleOrNothing ? activeQ.points * 2 : activeQ.points);
-    const tileMoveType = normalizeSpecialMoveType(
-      activeTileMoveTypeRef.current || specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType
-    );
-    const stealBlocked = isStealBlockedForMove(tileMoveType);
-    const resolvesAsFail = action === 'return' && doesReturnResolveAsFail(tileMoveType);
-
-    if (action === 'steal' && stealBlocked) {
-      logger.warn('special_move_steal_blocked', { tileId: activeQ.id, moveType: tileMoveType });
-      addToast('error', 'Steal is disabled for this special move.');
-      resolvingQuestionIdRef.current = null;
-      return;
-    }
-
-    const points = (action === 'award' || action === 'steal' || resolvesAsFail)
+    const tileMoveType = specialMovesOverlay?.deploymentsByTileId?.[activeQ.id]?.moveType;
+    const points = (action === 'award' || action === 'steal')
       ? applySpecialMovesDecorator(basePoints, {
           tileId: activeQ.id,
           moveType: tileMoveType,
-          outcome: action === 'award' ? 'AWARD' : action === 'steal' ? 'STEAL' : 'FAIL'
+          outcome: action === 'award' ? 'AWARD' : 'STEAL'
         })
       : basePoints;
-    const specialMoveName = getSpecialMoveDisplayName(tileMoveType);
-    const shouldTrackSpecialMoveUsage = Boolean(tileMoveType) && (action === 'award' || action === 'steal' || resolvesAsFail);
 
-    // "LAST 4 PLAYS" REAL-TIME LOG (RING BUFFER)
+    // LOG ANALYTICS (CANONICAL BUS)
+    const tileCtx = { tileId: activeQ.id, categoryName: activeCat.title, points: activeQ.points, categoryIndex: catIdx, rowIndex: qIdx };
+    if (action === 'award' && targetPlayerId) {
+       const p = current.players.find(pl => pl.id === targetPlayerId);
+       emitGameEvent('POINTS_AWARDED', { actor: { role: 'director' }, context: { ...tileCtx, playerName: p?.name, delta: points } });
+    } else if (action === 'steal' && targetPlayerId) {
+       const stealer = current.players.find(pl => pl.id === targetPlayerId);
+       const victim = current.players.find(pl => pl.id === current.selectedPlayerId);
+       emitGameEvent('POINTS_STOLEN', { actor: { role: 'director' }, context: { ...tileCtx, playerName: stealer?.name, delta: points, note: `Stolen from ${victim?.name}` } });
+    } else if (action === 'void') {
+       emitGameEvent('TILE_VOIDED', { actor: { role: 'director' }, context: { ...tileCtx, note: 'Question voided by producer' } });
+    } else if (action === 'return') {
+       emitGameEvent('QUESTION_RETURNED', { actor: { role: 'director' }, context: { ...tileCtx } });
+    }
+
     const newCategories = current.categories.map(c => {
       if (c.id !== current.activeCategoryId) return c;
       return {
@@ -1317,9 +1068,9 @@ const App: React.FC = () => {
           if (q.id !== current.activeQuestionId) return q;
           return {
             ...q,
-            isRevealed: false,
-            isAnswered: action === 'award' || action === 'steal' || resolvesAsFail,
-            isVoided: action === 'void' || resolvesAsFail
+            isRevealed: false, 
+            isAnswered: action === 'award' || action === 'steal',
+            isVoided: action === 'void'
           };
         })
       };
@@ -1335,38 +1086,15 @@ const App: React.FC = () => {
         if (p.id === targetPlayerId) {
           const isSteal = action === 'steal';
           const newStealsCount = isSteal ? (p.stealsCount || 0) + 1 : (p.stealsCount || 0);
-          const nextSpecialMovesUsedCount = shouldTrackSpecialMoveUsage ? (p.specialMovesUsedCount || 0) + 1 : (p.specialMovesUsedCount || 0);
-          const nextSpecialMovesUsedNames = shouldTrackSpecialMoveUsage && specialMoveName
-            ? [...(Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []), specialMoveName]
-            : (Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []);
           if (isSteal) stealerPlayerName = p.name;
           else awardedPlayerName = p.name;
-          return {
-            ...p,
-            score: p.score + points,
-            stealsCount: newStealsCount,
-            specialMovesUsedCount: nextSpecialMovesUsedCount,
-            specialMovesUsedNames: nextSpecialMovesUsedNames,
-          };
+          return { ...p, score: p.score + points, stealsCount: newStealsCount };
         }
         return p;
       });
-    } else if (resolvesAsFail && current.selectedPlayerId) {
-      newPlayers = newPlayers.map((p) => {
-        if (p.id !== current.selectedPlayerId) return p;
-        const nextSpecialMovesUsedCount = shouldTrackSpecialMoveUsage ? (p.specialMovesUsedCount || 0) + 1 : (p.specialMovesUsedCount || 0);
-        const nextSpecialMovesUsedNames = shouldTrackSpecialMoveUsage && specialMoveName
-          ? [...(Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []), specialMoveName]
-          : (Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []);
-        return {
-          ...p,
-          score: p.score + points,
-          specialMovesUsedCount: nextSpecialMovesUsedCount,
-          specialMovesUsedNames: nextSpecialMovesUsedNames,
-        };
-      });
     }
 
+    // "LAST 4 PLAYS" REAL-TIME LOG (RING BUFFER)
     let updatedPlays = current.lastPlays || [];
     try {
       const playEvent: PlayEvent = {
@@ -1422,56 +1150,11 @@ const App: React.FC = () => {
       lastPlays: updatedPlays
     };
     stopQuestionTimer();
-    setActiveTileMoveType(undefined);
-
-    // saveGameState FIRST (direct update, synchronous localStorage write) so the
-    // subsequent emitGameEvent functional updaters receive the correct closed/scored
-    // state in their `prev` argument, preventing stale-prev localStorage overwrites.
     saveGameState(newState);
-    resolvingQuestionIdRef.current = null;
-
-    // LOG ANALYTICS (CANONICAL BUS) — after saveGameState so prev is fresh
-    const tileCtx = {
-      tileId: activeQ.id,
-      categoryName: activeCat.title,
-      points: activeQ.points,
-      categoryIndex: catIdx,
-      rowIndex: qIdx,
-      specialMoveType: tileMoveType,
-      specialMoveName,
-    };
-    if (action === 'award' && targetPlayerId) {
-       const p = current.players.find(pl => pl.id === targetPlayerId);
-       emitGameEvent('POINTS_AWARDED', { actor: { role: 'director' }, context: { ...tileCtx, playerName: p?.name, delta: points } });
-    } else if (action === 'steal' && targetPlayerId) {
-       const stealer = current.players.find(pl => pl.id === targetPlayerId);
-       const victim = current.players.find(pl => pl.id === current.selectedPlayerId);
-       emitGameEvent('POINTS_STOLEN', { actor: { role: 'director' }, context: { ...tileCtx, playerName: stealer?.name, delta: points, note: `Stolen from ${victim?.name}` } });
-    } else if (action === 'void') {
-       emitGameEvent('TILE_VOIDED', { actor: { role: 'director' }, context: { ...tileCtx, note: 'Question voided by producer' } });
-    } else if (action === 'return') {
-       emitGameEvent('QUESTION_RETURNED', { actor: { role: 'director' }, context: { ...tileCtx } });
-      if (resolvesAsFail) {
-        const failedPlayer = current.players.find((p) => p.id === current.selectedPlayerId);
-        emitGameEvent('SCORE_ADJUSTED', {
-          actor: { role: 'director' },
-          context: {
-            ...tileCtx,
-            playerName: failedPlayer?.name,
-            playerId: failedPlayer?.id,
-            delta: points,
-            note: `Special move failure (${tileMoveType || 'UNKNOWN_MOVE'})`
-          }
-        });
-      }
-    }
 
     if ((action === 'award' || action === 'steal') && targetPlayerId) {
       const name = newPlayers.find(p => p.id === targetPlayerId)?.name || 'Unknown';
       addToast('success', `${points} Points to ${name} ${action === 'steal' ? '(Steal!)' : ''}`);
-    } else if (resolvesAsFail) {
-      const attemptedName = attemptedPlayer?.name || 'Unknown';
-      addToast('error', `${Math.abs(points)} points lost by ${attemptedName}`);
     }
   };
 
@@ -1495,17 +1178,7 @@ const App: React.FC = () => {
       uniqueName = `${finalName} ${count}`;
       count++;
     }
-    const newPlayer: Player = {
-      id: crypto.randomUUID(),
-      name: uniqueName,
-      score: 0,
-      color: '#fff',
-      wildcardsUsed: 0,
-      wildcardActive: false,
-      stealsCount: 0,
-      specialMovesUsedCount: 0,
-      specialMovesUsedNames: [],
-    };
+    const newPlayer: Player = { id: crypto.randomUUID(), name: uniqueName, score: 0, color: '#fff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0 };
     
     emitGameEvent('PLAYER_ADDED', {
       actor: { role: 'director' },
@@ -1597,7 +1270,7 @@ const App: React.FC = () => {
           questionTimer={questionTimer}
           questionTimerEnabled={questionTimerEnabled}
           questionTimerDurationSeconds={questionTimerDurationSeconds}
-          onQuestionTimerToggle={handleToggleQuestionTimerEnabled}
+          onQuestionTimerToggle={setQuestionTimerEnabled}
           onQuestionTimerDurationChange={handleSetQuestionTimerDuration}
           onQuestionTimerRestart={() => {
             restartQuestionTimer();
@@ -1608,8 +1281,6 @@ const App: React.FC = () => {
             emitGameEvent('QUESTION_COUNTDOWN_STOPPED', { actor: { role: 'director' }, context: { note: 'Question countdown stopped' } });
           }}
           sessionTimer={sessionTimer}
-          sessionTimerEnabled={sessionTimerEnabled}
-          onSessionTimerToggle={handleToggleSessionTimerEnabled}
           onSessionTimerStart={handleStartSessionTimer}
           onSessionTimerPause={handlePauseSessionTimer}
           onSessionTimerReset={handleResetSessionTimer}
@@ -1703,26 +1374,18 @@ const App: React.FC = () => {
                             <button onClick={() => { soundService.playClick(); setShowEndGameConfirm(true); }} type="button" className="text-[10px] md:text-xs uppercase text-red-500 hover:text-red-600 font-bold tracking-wider flex items-center gap-2"><Power className="w-3 h-3" /> End Show</button>
                             <button onClick={() => setViewMode('DIRECTOR')} className="text-[10px] md:text-xs uppercase font-bold text-zinc-500 hover:text-zinc-800 flex items-center gap-2 px-3 py-1.5 rounded transition-colors"><Grid className="w-3 h-3" /> Director</button>
                           </div>
-                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
+                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
                         </div>
                         <div className="order-1 md:order-2 flex-none h-auto lg:h-full w-full md:w-auto relative z-30">
                           <Scoreboard players={gameState.players} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
                         </div>
                         {activeQuestion && activeCategory && (
-                          (() => {
-                            const modalSpecialMove = getQuestionModalSpecialMoveModel(activeTileMoveType);
-                            const allowSteal = !isStealBlockedForMove(activeTileMoveType);
-                            return (
                           <QuestionModal 
                             question={activeQuestion} 
                             categoryTitle={activeCategory.title} 
                             players={gameState.players} 
                             selectedPlayerId={gameState.selectedPlayerId} 
                             timer={gameState.timer}
-                            viewSettings={gameState.viewSettings}
-                            allowSteal={allowSteal}
-                            stealDisabledReason={allowSteal ? undefined : 'Steal disabled by active special move'}
-                            specialMoveSummary={modalSpecialMove}
                             questionCountdownRemainingSeconds={questionTimer.remainingSeconds}
                             questionCountdownDurationSeconds={questionTimer.durationSeconds}
                             isQuestionCountdownRunning={questionTimer.isRunning && questionTimer.activeQuestionId === activeQuestion.id}
@@ -1747,8 +1410,6 @@ const App: React.FC = () => {
                               emitGameEvent('TIMER_FINISHED', { actor: { role: 'system' }, context: { tileId: activeQuestion.id, points: activeQuestion.points } });
                             }}
                           />
-                            );
-                          })()
                         )}
                       </div>
                     )}
@@ -1768,7 +1429,7 @@ const App: React.FC = () => {
                      questionTimer={questionTimer}
                      questionTimerEnabled={questionTimerEnabled}
                      questionTimerDurationSeconds={questionTimerDurationSeconds}
-                     onQuestionTimerToggle={handleToggleQuestionTimerEnabled}
+                     onQuestionTimerToggle={setQuestionTimerEnabled}
                      onQuestionTimerDurationChange={handleSetQuestionTimerDuration}
                      onQuestionTimerRestart={() => {
                        restartQuestionTimer();
@@ -1779,8 +1440,6 @@ const App: React.FC = () => {
                        emitGameEvent('QUESTION_COUNTDOWN_STOPPED', { actor: { role: 'director' }, context: { note: 'Question countdown stopped' } });
                      }}
                      sessionTimer={sessionTimer}
-                     sessionTimerEnabled={sessionTimerEnabled}
-                     onSessionTimerToggle={handleToggleSessionTimerEnabled}
                      onSessionTimerStart={handleStartSessionTimer}
                      onSessionTimerPause={handlePauseSessionTimer}
                      onSessionTimerReset={handleResetSessionTimer}
