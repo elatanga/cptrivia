@@ -4,7 +4,6 @@ import { render, screen } from '@testing-library/react';
 import { QuestionModal } from './QuestionModal';
 import { Question, Player, GameTimer } from '../types';
 import { logger } from '../services/logger';
-import { DEFAULT_BOARD_VIEW_SETTINGS } from '../services/boardViewSettings';
 
 // Mock types for tests
 declare const jest: any;
@@ -47,7 +46,7 @@ const mockTimer: GameTimer = {
   isRunning: false,
 };
 
-const setupModal = (questionOverrides: Partial<Question> = {}, viewSettingsOverrides: any = null) => {
+const setupModal = (questionOverrides: Partial<Question> = {}) => {
   const mockQuestion: Question = {
     id: 'q1',
     text: 'Standard Question?',
@@ -66,7 +65,6 @@ const setupModal = (questionOverrides: Partial<Question> = {}, viewSettingsOverr
       players={mockPlayers}
       selectedPlayerId="p1"
       timer={mockTimer}
-      viewSettings={viewSettingsOverrides}
       onClose={jest.fn()}
       onReveal={jest.fn()}
     />
@@ -136,41 +134,5 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
       "reveal_ui_rendered",
       expect.objectContaining({ tileId: 'q1', ts: expect.any(String) })
     );
-  });
-
-  test('G) SETTINGS FLOW: Applies dynamic modal size and content width from live settings', () => {
-    setupModal({}, {
-      ...DEFAULT_BOARD_VIEW_SETTINGS,
-      questionModalSize: 'Small',
-      questionMaxWidthPercent: 70,
-    });
-
-    const container = screen.getByTestId('luxury-container') as HTMLElement;
-    const viewport = screen.getByTestId('question-viewport') as HTMLElement;
-    expect(container.style.maxWidth).toBe('920px');
-    expect(viewport.style.maxWidth).toBe('70%');
-  });
-
-  test('H) HARDENING: Falls back safely when malformed display settings are supplied', () => {
-    setupModal(
-      {
-        options: ['Alpha', 'Beta', 'Gamma', 'Delta'],
-      },
-      {
-        questionModalSize: 'MASSIVE',
-        questionMaxWidthPercent: 500,
-        questionFontScale: -4,
-        questionContentPadding: -10,
-        multipleChoiceColumns: 'wat',
-      }
-    );
-
-    const container = screen.getByTestId('luxury-container') as HTMLElement;
-    const viewport = screen.getByTestId('question-viewport') as HTMLElement;
-    const grid = screen.getByTestId('answer-options-grid');
-    expect(container.style.maxWidth).toBe('1280px');
-    expect(viewport.style.maxWidth).toBe('100%');
-    expect(viewport.style.paddingLeft).toBe('4px');
-    expect(grid.className).toContain('sm:grid-cols-2');
   });
 });

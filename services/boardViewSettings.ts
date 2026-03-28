@@ -26,12 +26,6 @@ export const DEFAULT_BOARD_VIEW_SETTINGS: Omit<BoardViewSettings, 'updatedAt'> =
   tileScale: 'M',
   scoreboardScale: 1.0,
   tilePaddingScale: 1.0,
-  // Question Modal Display Defaults
-  questionModalSize: 'Large',
-  questionMaxWidthPercent: 90,
-  questionFontScale: 1.0,
-  questionContentPadding: 16,
-  multipleChoiceColumns: 'auto',
 };
 
 export const BOARD_VIEW_SETTINGS_OPTIONS = {
@@ -44,23 +38,6 @@ export const BOARD_VIEW_SETTINGS_OPTIONS = {
     1.2: 'Wide',
     1.4: 'Ultra',
   } as Record<number, string>,
-  // Question Modal Display Options
-  modalSizes: ['Small', 'Medium', 'Large', 'ExtraLarge'] as const,
-  modalSizeLabels: {
-    Small: 'Small',
-    Medium: 'Medium',
-    Large: 'Large',
-    ExtraLarge: 'Extra Large',
-  } as Record<string, string>,
-  maxWidthOptions: [60, 70, 80, 90, 100] as const,
-  fontScaleOptions: [0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5] as const,
-  paddingOptions: [4, 8, 12, 16, 20, 24] as const,
-  columnModeOptions: ['auto', '1', '2'] as const,
-  columnModeLabels: {
-    auto: 'Auto',
-    '1': '1 Column',
-    '2': '2 Columns',
-  } as Record<string, string>,
 };
 
 const isSizeScale = (value: unknown): value is SizeScale => {
@@ -76,26 +53,12 @@ export const sanitizeBoardViewSettings = (settings?: Partial<BoardViewSettings> 
   const base = getDefaultBoardViewSettings(typeof settings?.updatedAt === 'string' && settings.updatedAt ? settings.updatedAt : new Date().toISOString());
   if (!settings) return base;
 
-  const isValidModalSize = (val: unknown): val is 'Small' | 'Medium' | 'Large' | 'ExtraLarge' => {
-    return ['Small', 'Medium', 'Large', 'ExtraLarge'].includes(val as string);
-  };
-
-  const isValidColumnMode = (val: unknown): val is 'auto' | '1' | '2' => {
-    return ['auto', '1', '2'].includes(val as string);
-  };
-
   return {
     categoryTitleScale: isSizeScale(settings.categoryTitleScale) ? settings.categoryTitleScale : base.categoryTitleScale,
     playerNameScale: isSizeScale(settings.playerNameScale) ? settings.playerNameScale : base.playerNameScale,
     tileScale: isSizeScale(settings.tileScale) ? settings.tileScale : base.tileScale,
     scoreboardScale: sanitizeNearestOption(settings.scoreboardScale, PANEL_WIDTH_OPTIONS, base.scoreboardScale),
     tilePaddingScale: sanitizeNearestOption(settings.tilePaddingScale, TILE_DENSITY_OPTIONS, base.tilePaddingScale),
-    // Question Modal Settings
-    questionModalSize: isValidModalSize(settings.questionModalSize) ? settings.questionModalSize : base.questionModalSize,
-    questionMaxWidthPercent: clamp(isFiniteNumber(settings.questionMaxWidthPercent) ? settings.questionMaxWidthPercent : base.questionMaxWidthPercent, 60, 100),
-    questionFontScale: clamp(isFiniteNumber(settings.questionFontScale) ? settings.questionFontScale : base.questionFontScale, 0.8, 1.5),
-    questionContentPadding: clamp(isFiniteNumber(settings.questionContentPadding) ? settings.questionContentPadding : base.questionContentPadding, 4, 24),
-    multipleChoiceColumns: isValidColumnMode(settings.multipleChoiceColumns) ? settings.multipleChoiceColumns : base.multipleChoiceColumns,
     updatedAt: base.updatedAt,
   };
 };
@@ -117,24 +80,6 @@ export const sanitizeBoardViewSettingsPatch = (patch: Partial<BoardViewSettings>
   }
   if (patch.tilePaddingScale !== undefined) {
     next.tilePaddingScale = sanitizeNearestOption(patch.tilePaddingScale, TILE_DENSITY_OPTIONS, DEFAULT_BOARD_VIEW_SETTINGS.tilePaddingScale);
-  }
-  // Question Modal Display Settings
-  if (patch.questionModalSize !== undefined) {
-    const isValid = ['Small', 'Medium', 'Large', 'ExtraLarge'].includes(patch.questionModalSize as string);
-    next.questionModalSize = isValid ? (patch.questionModalSize as any) : DEFAULT_BOARD_VIEW_SETTINGS.questionModalSize;
-  }
-  if (patch.questionMaxWidthPercent !== undefined) {
-    next.questionMaxWidthPercent = clamp(isFiniteNumber(patch.questionMaxWidthPercent) ? patch.questionMaxWidthPercent : DEFAULT_BOARD_VIEW_SETTINGS.questionMaxWidthPercent, 60, 100);
-  }
-  if (patch.questionFontScale !== undefined) {
-    next.questionFontScale = clamp(isFiniteNumber(patch.questionFontScale) ? patch.questionFontScale : DEFAULT_BOARD_VIEW_SETTINGS.questionFontScale, 0.8, 1.5);
-  }
-  if (patch.questionContentPadding !== undefined) {
-    next.questionContentPadding = clamp(isFiniteNumber(patch.questionContentPadding) ? patch.questionContentPadding : DEFAULT_BOARD_VIEW_SETTINGS.questionContentPadding, 4, 24);
-  }
-  if (patch.multipleChoiceColumns !== undefined) {
-    const isValid = ['auto', '1', '2'].includes(patch.multipleChoiceColumns as string);
-    next.multipleChoiceColumns = isValid ? (patch.multipleChoiceColumns as any) : DEFAULT_BOARD_VIEW_SETTINGS.multipleChoiceColumns;
   }
   if (patch.updatedAt !== undefined) {
     next.updatedAt = typeof patch.updatedAt === 'string' && patch.updatedAt ? patch.updatedAt : new Date().toISOString();
@@ -165,23 +110,6 @@ export interface ScoreboardLayoutTokens {
   scoreboardScale: number;
   panelWidthCss: string;
   allowTwoColumn: boolean;
-}
-
-export interface QuestionDisplayLayoutTokens {
-  modalMaxWidthPx: number;
-  modalMaxHeightPx: number;
-  contentMaxWidthPercent: number;
-  contentPaddingPx: number;
-  questionMinFontPx: number;
-  questionMaxFontPx: number;
-  questionClampVw: number;
-  optionMinFontPx: number;
-  optionMaxFontPx: number;
-  optionClampVw: number;
-  answerMinFontPx: number;
-  answerMaxFontPx: number;
-  answerClampVw: number;
-  optionGridClass: string;
 }
 
 const getViewportCompactFactor = (viewportWidth: number) => {
@@ -250,61 +178,6 @@ export const getScoreboardLayoutTokens = (
     scoreboardScale: safe.scoreboardScale,
     panelWidthCss,
     allowTwoColumn,
-  };
-};
-
-export const getQuestionDisplayLayoutTokens = (
-  settings?: Partial<BoardViewSettings> | null,
-  optionCount = 0
-): QuestionDisplayLayoutTokens => {
-  const safe = sanitizeBoardViewSettings(settings);
-
-  const modalProfiles: Record<BoardViewSettings['questionModalSize'], { maxWidth: number; maxHeight: number }> = {
-    Small: { maxWidth: 920, maxHeight: 760 },
-    Medium: { maxWidth: 1120, maxHeight: 860 },
-    Large: { maxWidth: 1280, maxHeight: 920 },
-    ExtraLarge: { maxWidth: 1440, maxHeight: 980 },
-  };
-
-  const profile = modalProfiles[safe.questionModalSize] ?? modalProfiles[DEFAULT_BOARD_VIEW_SETTINGS.questionModalSize];
-  const fontScale = clamp(safe.questionFontScale, 0.8, 1.5);
-
-  const questionMinFontPx = clamp(Math.round(20 * fontScale), 16, 42);
-  const questionMaxFontPx = clamp(Math.round(84 * fontScale), 44, 124);
-  const questionClampVw = clamp(Number((4.5 * fontScale).toFixed(2)), 2.8, 6.4);
-
-  const optionMinFontPx = clamp(Math.round(14 * fontScale), 12, 28);
-  const optionMaxFontPx = clamp(Math.round(30 * fontScale), 22, 48);
-  const optionClampVw = clamp(Number((2.2 * fontScale).toFixed(2)), 1.8, 3.8);
-
-  const answerMinFontPx = clamp(Math.round(18 * fontScale), 14, 38);
-  const answerMaxFontPx = clamp(Math.round(62 * fontScale), 34, 98);
-  const answerClampVw = clamp(Number((3.2 * fontScale).toFixed(2)), 2.2, 5.2);
-
-  let optionGridClass = 'grid-cols-1';
-  if (safe.multipleChoiceColumns === '1') {
-    optionGridClass = 'grid-cols-1';
-  } else if (safe.multipleChoiceColumns === '2') {
-    optionGridClass = optionCount > 1 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1';
-  } else if (optionCount >= 2) {
-    optionGridClass = 'grid-cols-1 sm:grid-cols-2';
-  }
-
-  return {
-    modalMaxWidthPx: profile.maxWidth,
-    modalMaxHeightPx: profile.maxHeight,
-    contentMaxWidthPercent: clamp(safe.questionMaxWidthPercent, 60, 100),
-    contentPaddingPx: clamp(safe.questionContentPadding, 4, 24),
-    questionMinFontPx,
-    questionMaxFontPx,
-    questionClampVw,
-    optionMinFontPx,
-    optionMaxFontPx,
-    optionClampVw,
-    answerMinFontPx,
-    answerMaxFontPx,
-    answerClampVw,
-    optionGridClass,
   };
 };
 

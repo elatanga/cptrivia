@@ -27,8 +27,6 @@ export interface Player {
   wildcardsUsed?: number; 
   wildcardActive?: boolean; 
   stealsCount?: number; 
-  specialMovesUsedCount?: number;
-  specialMovesUsedNames?: string[];
 }
 
 export interface GameTimer {
@@ -46,13 +44,6 @@ export interface BoardViewSettings {
   // Layout Controls
   scoreboardScale: number; // Width multiplier (0.8 - 1.4)
   tilePaddingScale: number; // Spacing multiplier (0.5 - 1.5)
-  
-  // Question Modal Display Settings
-  questionModalSize: 'Small' | 'Medium' | 'Large' | 'ExtraLarge'; // Modal size preset
-  questionMaxWidthPercent: number; // Max content width (60-100% of modal)
-  questionFontScale: number; // Font size multiplier (0.8 - 1.5)
-  questionContentPadding: number; // Padding around question (4-24px)
-  multipleChoiceColumns: 'auto' | '1' | '2'; // Grid column mode
   
   // Metadata
   updatedAt: string;
@@ -145,8 +136,6 @@ export interface GameAnalyticsEvent {
     after?: any;
     message?: string;
     note?: string;
-    specialMoveType?: SpecialMoveType;
-    specialMoveName?: string;
   };
 }
 
@@ -469,19 +458,7 @@ export interface GameTemplate {
   lastModified?: string;
 }
 
-export type SpecialMoveType =
-  | 'DOUBLE_TROUBLE'
-  | 'TRIPLE_THREAT'
-  | 'SABOTAGE'
-  | 'MEGA_STEAL'
-  | 'DOUBLE_WINS_OR_NOTHING'
-  | 'TRIPLE_WINS_OR_NOTHING'
-  | 'SAFE_BET'
-  | 'LOCKOUT'
-  | 'SUPER_SAVE'
-  | 'GOLDEN_GAMBLE'
-  | 'SHIELD_BOOST'
-  | 'FINAL_SHOT';
+export type SpecialMoveType = 'DOUBLE_TROUBLE' | 'TRIPLE_THREAT' | 'SABOTAGE' | 'MEGA_STEAL';
 
 export interface SMSDeployment {
   moveType: SpecialMoveType;

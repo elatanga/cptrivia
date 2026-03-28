@@ -6,19 +6,17 @@ import { logger } from '../services/logger';
 import { getTriviaBoardLayoutTokens, sanitizeBoardViewSettings } from '../services/boardViewSettings';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { useViewportWidth } from '../hooks/useViewportWidth';
-import { getTileSpecialMoveBadgeModel } from '../modules/specialMoves/tileTagState';
 
 interface Props {
   categories: Category[];
   onSelectQuestion: (catId: string, qId: string) => void;
   viewSettings: BoardViewSettings;
   overlay?: SMSOverlayDoc | null;
-  resolvedSpecialMoveTileIds?: Set<string>;
   sessionTimerActive?: boolean;
   sessionTimeRemaining?: number;
 }
 
-export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay, resolvedSpecialMoveTileIds, sessionTimerActive, sessionTimeRemaining }) => {
+export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay, sessionTimerActive, sessionTimeRemaining }) => {
   const onSelectQuestionRef = useRef(onSelectQuestion);
   const previousSessionTimerActiveRef = useRef<boolean | null>(null);
 
@@ -99,8 +97,6 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
               if (!q) return <div key={`empty-${cat.id}-${rowIdx}`} className="bg-transparent" />;
               const isPlayable = !q.isAnswered && !q.isVoided;
               const isArmed = overlay?.deploymentsByTileId?.[q.id]?.status === 'ARMED';
-              const isResolved = !!resolvedSpecialMoveTileIds?.has(q.id);
-              const specialMoveBadge = getTileSpecialMoveBadgeModel(!!isArmed, isResolved);
               
               return (
                 <button 
@@ -124,17 +120,6 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                     padding: 'var(--tile-inner-padding-px)'
                   }}
                 >
-                    {specialMoveBadge.showTag && (
-                      <span
-                        data-testid={`special-move-tile-tag-${q.id}`}
-                        data-state={specialMoveBadge.visualState}
-                        className={`absolute top-2 left-2 pointer-events-none rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider border ${specialMoveBadge.tone === 'red'
-                          ? 'bg-red-700/95 text-red-100 border-red-400/70'
-                          : 'bg-zinc-800/90 text-zinc-300 border-zinc-500/60 grayscale'}`}
-                      >
-                        {specialMoveBadge.label}
-                      </span>
-                    )}
                     {isArmed && isPlayable && (
                       <span className="absolute top-2 right-2 text-gold-300 drop-shadow-md pointer-events-none">
                         <Zap className="w-4 h-4 md:w-5 md:h-5" />
@@ -155,7 +140,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
           </React.Fragment>
       ))}
     </div>
-  ), [categories, colCount, rowCount, overlay, resolvedSpecialMoveTileIds, layoutTokens.categoryLineClamp]);
+  ), [categories, colCount, rowCount, overlay, layoutTokens.categoryLineClamp]);
 
   return (
     <div 

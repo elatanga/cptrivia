@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_BOARD_VIEW_SETTINGS,
-  getQuestionDisplayLayoutTokens,
   getScoreboardLayoutTokens,
   getTriviaBoardLayoutTokens,
   sanitizeBoardViewSettings,
@@ -66,46 +65,6 @@ describe('boardViewSettings hardening', () => {
     expect(tokens.categoryPaddingPx).toBeGreaterThanOrEqual(4);
     expect(tokens.tileInnerPaddingPx).toBeGreaterThanOrEqual(2);
     expect(tokens.tileInnerPaddingPx).toBeLessThanOrEqual(10);
-  });
-
-  it('normalizes malformed question display settings to safe defaults', () => {
-    const sanitized = sanitizeBoardViewSettings({
-      ...DEFAULT_BOARD_VIEW_SETTINGS,
-      questionModalSize: 'HUGE' as any,
-      questionMaxWidthPercent: 999,
-      questionFontScale: 0.01,
-      questionContentPadding: -100,
-      multipleChoiceColumns: '3' as any,
-      updatedAt: 'x',
-    });
-
-    expect(sanitized.questionModalSize).toBe(DEFAULT_BOARD_VIEW_SETTINGS.questionModalSize);
-    expect(sanitized.questionMaxWidthPercent).toBe(100);
-    expect(sanitized.questionFontScale).toBe(0.8);
-    expect(sanitized.questionContentPadding).toBe(4);
-    expect(sanitized.multipleChoiceColumns).toBe('auto');
-  });
-
-  it('derives safe question modal layout tokens from sanitized settings', () => {
-    const tokens = getQuestionDisplayLayoutTokens(
-      {
-        ...DEFAULT_BOARD_VIEW_SETTINGS,
-        questionModalSize: 'ExtraLarge',
-        questionMaxWidthPercent: 95,
-        questionFontScale: 1.3,
-        questionContentPadding: 20,
-        multipleChoiceColumns: '2',
-        updatedAt: 'x',
-      },
-      4
-    );
-
-    expect(tokens.modalMaxWidthPx).toBe(1440);
-    expect(tokens.contentMaxWidthPercent).toBe(95);
-    expect(tokens.contentPaddingPx).toBe(20);
-    expect(tokens.questionMinFontPx).toBeGreaterThanOrEqual(16);
-    expect(tokens.questionMaxFontPx).toBeLessThanOrEqual(124);
-    expect(tokens.optionGridClass).toBe('grid-cols-1 sm:grid-cols-2');
   });
 });
 

@@ -120,11 +120,6 @@ describe('Golden Path: Wildcard & Steals Logic Lock', () => {
         tileScale: 'M', 
         scoreboardScale: 1.0, 
         tilePaddingScale: 1.0, 
-        questionModalSize: 'Large',
-        questionMaxWidthPercent: 86,
-        questionFontScale: 1,
-        questionContentPadding: 16,
-        multipleChoiceColumns: '2',
         updatedAt: '' 
       },
       lastPlays: [],
@@ -202,10 +197,8 @@ describe('Golden Path: Wildcard & Steals Logic Lock', () => {
       
       // 2. Verify Bob has Steals Badge and Points
       const bobItem = within(scoreboard).getByText('BOB').closest('div')?.parentElement;
-      expect(within(bobScoreCard(bobItem!)).getByText('S 1')).toBeInTheDocument();
-      const currentState = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
-      const bobScore = String(currentState.players?.find((p: any) => p.name === 'BOB')?.score ?? '0');
-      expect(within(scoreboard).getByText(bobScore)).toBeInTheDocument();
+      expect(within(bobScoreCard(bobItem!)).getByText('STEALS: 1')).toBeInTheDocument();
+      expect(within(bobItem!).getByText('500')).toBeInTheDocument();
     });
 
     // Helper to find score card content correctly

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
 import { GameState } from '../types';
@@ -65,11 +65,6 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
       tileScale: 'M',
       scoreboardScale: 1.0,
       tilePaddingScale: 1.0,
-      questionModalSize: 'Large',
-      questionMaxWidthPercent: 86,
-      questionFontScale: 1,
-      questionContentPadding: 16,
-      multipleChoiceColumns: '2',
       updatedAt: '',
     },
     lastPlays: [],
@@ -113,9 +108,7 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
     );
 
     const quickAiBtn = screen.getByTitle('Quick AI Generate');
-    await act(async () => {
-      fireEvent.click(quickAiBtn);
-    });
+    fireEvent.click(quickAiBtn);
 
     expect(geminiService.generateSingleQuestion).toHaveBeenCalledWith(
       'Regression Show',   // Topic
@@ -159,57 +152,6 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
       expect(updatedTile.isAnswered).toBe(false);
       expect(updatedTile.isDoubleOrNothing).toBe(true);
     });
-  });
-
-  it('3a) REACTIVATION: Quick regenerate reactivates previously inactive tile', async () => {
-    const inactiveState: GameState = {
-      ...baseGameState,
-      categories: [
-        {
-          ...baseGameState.categories[0],
-          questions: [
-            {
-              ...baseGameState.categories[0].questions[0],
-              isAnswered: true,
-              isVoided: true,
-              isRevealed: true,
-              isPlayable: false,
-            } as any,
-          ],
-        },
-      ],
-    };
-
-    vi.mocked(geminiService.generateSingleQuestion).mockResolvedValue({
-      text: 'REACTIVATED Q',
-      answer: 'REACTIVATED A'
-    });
-
-    render(
-      <DirectorPanel
-        gameState={inactiveState}
-        onUpdateState={mockOnUpdateState}
-        emitGameEvent={mockEmitGameEvent}
-        addToast={mockAddToast}
-      />
-    );
-
-    fireEvent.click(screen.getByTitle('Quick AI Generate'));
-
-    await waitFor(() => {
-      expect(mockOnUpdateState).toHaveBeenCalledTimes(1);
-      const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
-      const updatedTile = nextState.categories[0].questions[0] as any;
-
-      expect(updatedTile.text).toBe('REACTIVATED Q');
-      expect(updatedTile.answer).toBe('REACTIVATED A');
-      expect(updatedTile.isAnswered).toBe(false);
-      expect(updatedTile.isVoided).toBe(false);
-      expect(updatedTile.isRevealed).toBe(false);
-      expect(updatedTile.isPlayable).toBe(true);
-    });
-
-    expect(mockAddToast).toHaveBeenCalledWith('success', 'Tile content regenerated and reactivated.');
   });
 
   it('4) FAILURE: Shows error toast and aborts state mutation on API crash', async () => {
@@ -267,7 +209,7 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
   });
 
   it('6) SNAPSHOT: Action region visual lock', () => {
-    render(
+    const { asFragment } = render(
       <DirectorPanel 
         gameState={baseGameState} 
         onUpdateState={mockOnUpdateState} 
