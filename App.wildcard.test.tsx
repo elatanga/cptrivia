@@ -141,9 +141,7 @@ describe('Wildcard Feature Tests', () => {
     
     // Check name color did NOT change
     const pNameAfter1 = screen.getByText(/Player 1/i);
-    // Color is set inline via style, not as a class. When not selected, it's rgb(161 161 170) (zinc-400)
-    const style = window.getComputedStyle(pNameAfter1);
-    expect(style.color).toBe('rgb(161, 161, 170)'); // Not red, not white
+    expect(pNameAfter1).toHaveClass('text-zinc-400'); // Assuming not selected, if selected text-white. Should NOT be red.
 
     // 6. Go back and increment to 4
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
