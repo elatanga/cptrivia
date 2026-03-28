@@ -173,7 +173,7 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
       expect(q.isDoubleOrNothing).toBe(true);
     });
 
-    expect(mockAddToast).toHaveBeenCalledWith('success', expect.stringContaining('Tile content regenerated'));
+    expect(mockAddToast).toHaveBeenCalledWith('success', 'Tile content regenerated.');
   });
 
   it('4) FAILURE: Shows error toast and prevents state mutation (Snapshot Rollback)', async () => {
@@ -184,7 +184,7 @@ describe('DirectorPanel: Edit Tile Modal AI Regression', () => {
     fireEvent.click(within(modal).getByRole('button', { name: /^Regen$/i }));
 
     await waitFor(() => {
-      expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringContaining('AI Failed'));
+      expect(mockAddToast).toHaveBeenCalledWith('error', 'AI Failed: AI_TIMEOUT');
       // onUpdateState must NOT be called to avoid corrupted state
       expect(mockOnUpdateState).not.toHaveBeenCalled();
     });

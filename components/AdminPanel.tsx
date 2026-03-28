@@ -11,7 +11,7 @@ interface Props {
 }
 
 export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) => {
-  const buildEmptyUserForm = () => ({ username: '', role: 'PRODUCER' as UserRole, status: 'ACTIVE' as UserStatus, duration: '', email: '', phone: '', tiktok: '', firstName: '', lastName: '', notes: '', sendSms: true, sendEmail: true });
+  const buildEmptyUserForm = () => ({ username: '', role: 'PRODUCER' as UserRole, status: 'ACTIVE' as UserStatus, duration: '', email: '', phone: '', tiktok: '', firstName: '', lastName: '', notes: '', sendSms: true, sendEmail: false });
   const [activeTab, setActiveTab] = useState<'USERS' | 'INBOX' | 'AUDIT'>('USERS');
   const [users, setUsers] = useState<User[]>([]);
   const [requests, setRequests] = useState<TokenRequest[]>([]);
@@ -72,11 +72,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
     e.preventDefault();
     try {
       const duration = newUser.duration ? parseInt(newUser.duration) : undefined;
-      const channels: DeliveryMethod[] = [];
-      if (newUser.phone) channels.push('SMS');
-      if (newUser.email) channels.push('EMAIL');
-
-      const result = await authService.createUserWithNotifications(currentUser, {
+      const token = await authService.createUser(currentUser, { 
         username: newUser.username,
         status: newUser.status,
         email: newUser.email,
@@ -88,18 +84,17 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
           notes: newUser.notes,
           source: 'MANUAL_CREATE' as UserSource
         }
-      }, newUser.role, duration, channels);
+      }, newUser.role, duration);
 
-      const failedChannels = Object.entries(result.delivery || {})
-        .filter(([, state]) => state?.status === 'FAILED')
-        .map(([method]) => method);
-
-      if (failedChannels.length > 0) {
-        addToast('error', `User created, but credential delivery failed for ${failedChannels.join(' and ')}.`);
-      } else {
-        addToast('success', 'User created.');
-      }
-      setCredentialModal({ username: result.user.username, token: result.rawToken, delivery: result.delivery });
+      const channels: DeliveryMethod[] = [];
+      if (newUser.sendSms) channels.push('SMS');
+      if (newUser.sendEmail) channels.push('EMAIL');
+      const deliveryResult = channels.length > 0
+        ? await authService.sendUserCredentials(currentUser, newUser.username, token, channels)
+        : undefined;
+      
+      addToast('success', 'User created.');
+      setCredentialModal({ username: newUser.username, token, delivery: deliveryResult?.delivery });
       
       setIsCreating(false);
       setNewUser(buildEmptyUserForm());

@@ -61,7 +61,8 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     
     fireEvent.click(screen.getByText(/Create Template/i));
     await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
-    fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Save Button Test' } });
+
+    fireEvent.change(screen.getByPlaceholderText(/Show or Game Topic/i), { target: { value: 'Save Button Test' } });
     fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     await waitFor(() => screen.getByText(/Live Builder Preview/i));
   };
@@ -80,8 +81,13 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     // Test clickability
     fireEvent.click(saveBtn);
     
+    // Successful click should trigger logging
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /save template/i })).toBeInTheDocument();
+        const matchingCall = (screen.getByTestId ? null : (console as any).info); // placeholder for verifying logic
+        // Verify logger was called via mock
+        // Fix: require usage in test context
+        const { logger } = require('./services/logger');
+        expect(logger.info).toHaveBeenCalledWith("template_save_click", expect.any(Object));
     });
   });
 
@@ -122,7 +128,11 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     fireEvent.click(saveBtn);
     
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /save template/i })).toBeInTheDocument();
+        // Fix: require usage in test context
+        const { logger } = require('./services/logger');
+        expect(logger.error).toHaveBeenCalledWith("template_save_failed", expect.objectContaining({
+            message: 'Persistence Failed'
+        }));
     });
 
     spy.mockRestore();

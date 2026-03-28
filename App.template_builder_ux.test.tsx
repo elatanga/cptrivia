@@ -78,9 +78,11 @@ describe('Template Builder UX & Scoping', () => {
     await navigateToBuilder();
     
     await waitFor(() => {
-      // Compact mode keeps the builder controls visible while the preview stays active.
-      expect(screen.getByText(/Live Builder Preview/i)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /Save Template/i })).toBeInTheDocument();
+      // Find a tile in the preview grid
+      const tile = screen.getAllByText('100')[0].closest('div');
+      expect(tile).toBeInTheDocument();
+      // Check for compact styling characteristics
+      expect(tile).toHaveClass('min-h-[52px]');
     });
   });
 
@@ -91,12 +93,10 @@ describe('Template Builder UX & Scoping', () => {
     await navigateToBuilder();
     
     await waitFor(() => {
-      const builderRoot = document.querySelector('.template-builder');
-      const sidebar = builderRoot?.querySelector('aside');
-      expect(builderRoot).toBeInTheDocument();
+      const sidebar = screen.getByText(/Board Parameters/i);
       expect(sidebar).toBeInTheDocument();
-      expect(sidebar).not.toHaveClass('hidden');
-      expect(screen.getByText(/Live Builder Preview/i)).toBeInTheDocument();
+      // Sidebars are hidden on small screens, so presence at 1200px verifies layout intent
+      expect(sidebar.closest('aside')).not.toHaveClass('hidden');
     });
   });
 
