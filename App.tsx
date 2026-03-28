@@ -855,14 +855,11 @@ const App: React.FC = () => {
      setSystemStatusError(null);
      try {
        const status = await authService.getBootstrapStatus();
-       const requiresBootstrap = !status.masterReady || Boolean(status.recoveryArmed);
-       setIsConfigured(!requiresBootstrap);
+       setIsConfigured(status.masterReady);
 
-       if (requiresBootstrap) {
+       if (!status.masterReady) {
          logger.warn('bootstrap_visible_backend_uninitialized', {
-           reason: status.recoveryArmed ? 'recovery_armed' : 'backend_uninitialized',
            bootstrapCompleted: status.bootstrapCompleted ?? false,
-           recoveryArmed: Boolean(status.recoveryArmed),
            initializedAt: status.initializedAt ?? null,
          });
        } else {
@@ -941,14 +938,18 @@ const App: React.FC = () => {
          message: e?.message,
          code: e?.code,
        });
-       // Transport failures are distinct from business state and must not unlock bootstrap.
+       // ERR_NETWORK = transport failure (CORS, fetch blocked, connection timeout, etc.)
+       // These are NOT server initialization failures, so we allow local bootstrap to proceed
        if (isBootstrapTransportFailure) {
-         logger.warn('bootstrap_status_transport_failure', {
-           fallbackMode: 'blocked_bootstrap',
+         logger.warn('bootstrap_network_unavailable_using_local', {
+           fallbackMode: 'local_authority',
            isTransport: true,
            message: bootstrapErrorMessage,
          });
-         setSystemStatusError('Cannot reach the authoritative system status service. Check network/CORS and retry. Bootstrap remains locked until backend status is confirmed.');
+         // Don't set systemStatusError; allow Bootstrap screen to show with local mode
+         // The app will complete and isConfigured will default to false,
+         // which triggers the Bootstrap screen. This allows user to bootstrap locally
+         // even when backend is temporarily unreachable or has CORS issues.
        } else {
          // Unexpected/unclassified error; show recovery UI
          logger.error('bootstrap_unexpected_error', { 

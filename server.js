@@ -17,16 +17,11 @@ process.on('unhandledRejection', (reason, promise) => {
 
 const app = express();
 
-// 2. Enable CORS
-// Option A: Allow EVERYTHING (Good for debugging, risky for production)
-// app.use(cors());
-
 // Option B: Restricted (Recommended)
 app.use(cors({
   origin: [
     "https://cptrivia-test--cruzpham-trivia-prod.us-central1.hosted.app",
-    "https://cruzpham-trivia-prod.web.app",
-    /\.hosted\.app$/// Add your production URL too
+    /\.hosted\.app$/ // Matches any Firebase hosting preview URL
   ],
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
@@ -61,7 +56,6 @@ app.get("/runtime-config.js", (req, res) => {
   const enableFirebaseAnonAuth = deployedRuntime ? "false" : String(process.env.ENABLE_FIREBASE_ANON_AUTH || "false");
   const functionsRegion = String(process.env.FUNCTIONS_REGION || "us-central1");
   const functionsBaseUrl = String(process.env.FUNCTIONS_BASE_URL || "");
-  const geminiApiKey = String(process.env.GEMINI_API_KEY || process.env.API_KEY || "");
 
   if (deployedRuntime && String(process.env.ALLOW_LOCAL_MOCKS || '').toLowerCase() === 'true') {
     console.warn("RUNTIME WARNING: ALLOW_LOCAL_MOCKS requested in deployed runtime and has been forced off.");
@@ -80,8 +74,7 @@ app.get("/runtime-config.js", (req, res) => {
       FIREBASE_APP_ID: "${safe(process.env.FIREBASE_APP_ID)}",
       FUNCTIONS_REGION: "${safe(functionsRegion)}",
       FUNCTIONS_BASE_URL: "${safe(functionsBaseUrl)}",
-      API_KEY: "${safe(geminiApiKey)}",
-      GEMINI_API_KEY: "${safe(geminiApiKey)}",
+      API_KEY: "${safe(process.env.API_KEY)}",
       BUILD_ENV: "${safe(process.env.BUILD_ENV || "production")}",
       BUILD_VERSION: "${safe(process.env.BUILD_VERSION || "unknown")}",
       ALLOW_LOCAL_MOCKS: "${safe(allowLocalMocks)}",

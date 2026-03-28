@@ -18,7 +18,6 @@ export interface RuntimeConfigShape {
   FUNCTIONS_REGION?: string;
   FUNCTIONS_BASE_URL?: string;
   API_KEY?: string;
-  GEMINI_API_KEY?: string;
   BUILD_ENV?: string;
   BUILD_VERSION?: string;
   ALLOW_LOCAL_MOCKS?: string | boolean;

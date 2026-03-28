@@ -72,6 +72,7 @@ describe('Bootstrap Error Handling & Transport Distinction', () => {
       bootstrapCompleted: true,
       initializedAt: new Date().toISOString(),
     };
+    localStorage.setItem('cruzpham_sys_bootstrap', JSON.stringify(bootstrapState));
 
     vi.spyOn(authService, 'getBootstrapStatus').mockResolvedValue(bootstrapState);
 
@@ -85,7 +86,7 @@ describe('Bootstrap Error Handling & Transport Distinction', () => {
 
   // --- 2. TRANSPORT FAILURES (NETWORK / CORS) ---
 
-  it('3) Shows fatal error (not bootstrap) when fetch throws network error', async () => {
+  it('3) Shows Bootstrap (not fatal error) when fetch throws network error', async () => {
     const networkError = new Error('Failed to fetch');
     networkError.name = 'TypeError';
 
@@ -93,15 +94,17 @@ describe('Bootstrap Error Handling & Transport Distinction', () => {
 
     render(<App />);
 
+    // Wait for authChecked to become true
     await waitFor(() => {
-      expect(screen.getByText(/Unable to Verify Studio Status/i)).toBeInTheDocument();
+      expect(screen.getByText(/SYSTEM BOOTSTRAP/i)).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/SYSTEM BOOTSTRAP/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/Bootstrap remains locked until backend status is confirmed/i)).toBeInTheDocument();
+    // Should NOT show fatal error
+    expect(screen.queryByText(/Unable to Verify Studio Status/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Bootstrap is hidden until/i)).not.toBeInTheDocument();
   });
 
-  it('4) Shows fatal error when fetch throws CORS error', async () => {
+  it('4) Shows Bootstrap when fetch throws CORS error', async () => {
     const corsError = new Error('Cross-Origin Request Blocked');
     corsError.name = 'TypeError';
 
@@ -110,13 +113,14 @@ describe('Bootstrap Error Handling & Transport Distinction', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Unable to Verify Studio Status/i)).toBeInTheDocument();
+      expect(screen.getByText(/SYSTEM BOOTSTRAP/i)).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/SYSTEM BOOTSTRAP/i)).not.toBeInTheDocument();
+    // Should NOT show fatal error
+    expect(screen.queryByText(/Unable to Verify Studio Status/i)).not.toBeInTheDocument();
   });
 
-  it('5) Shows fatal error when backend endpoint is unreachable (ERR_NETWORK)', async () => {
+  it('5) Shows Bootstrap when backend endpoint is unreachable (ERR_NETWORK)', async () => {
     const { AppError } = await import('./types');
     const networkError = new AppError('ERR_NETWORK', 'Cannot reach the system backend. Check your connection and try again.');
 
@@ -125,10 +129,10 @@ describe('Bootstrap Error Handling & Transport Distinction', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Unable to Verify Studio Status/i)).toBeInTheDocument();
+      expect(screen.getByText(/SYSTEM BOOTSTRAP/i)).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/SYSTEM BOOTSTRAP/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unable to Verify Studio Status/i)).not.toBeInTheDocument();
   });
 
   // --- 3. UNEXPECTED ERRORS (should show fatal screen) ---
@@ -207,7 +211,7 @@ describe('Bootstrap Error Handling & Transport Distinction', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Unable to Verify Studio Status/i)).toBeInTheDocument();
+      expect(screen.getByText(/SYSTEM BOOTSTRAP/i)).toBeInTheDocument();
     });
 
     expect(logger.error).toHaveBeenCalledWith(
@@ -218,9 +222,9 @@ describe('Bootstrap Error Handling & Transport Distinction', () => {
     );
 
     expect(logger.warn).toHaveBeenCalledWith(
-      'bootstrap_status_transport_failure',
+      'bootstrap_network_unavailable_using_local',
       expect.objectContaining({
-        fallbackMode: 'blocked_bootstrap',
+        fallbackMode: 'local_authority',
         isTransport: true,
         message: 'Cannot reach backend',
       })
@@ -249,7 +253,7 @@ describe('Bootstrap Error Handling & Transport Distinction', () => {
 
   // --- 6. NON-OK RESPONSE HANDLING ---
 
-  it('11) Handles non-200 responses with fatal status screen', async () => {
+  it('11) Handles non-200 responses gracefully', async () => {
     const { AppError } = await import('./types');
     const backendError = new AppError(
       'ERR_NETWORK',
@@ -260,46 +264,32 @@ describe('Bootstrap Error Handling & Transport Distinction', () => {
 
     render(<App />);
 
+    // Since it's ERR_NETWORK, should show Bootstrap, not error screen
     await waitFor(() => {
-      expect(screen.getByText(/Unable to Verify Studio Status/i)).toBeInTheDocument();
+      expect(screen.getByText(/SYSTEM BOOTSTRAP/i)).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/SYSTEM BOOTSTRAP/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unable to Verify Studio Status/i)).not.toBeInTheDocument();
   });
 
   // --- 7. RECOVERY FROM TEMPORARY FAILURES ---
 
-  it('12) Shows bootstrap when backend explicitly reports recoveryArmed=true', async () => {
-    vi.spyOn(authService, 'getBootstrapStatus').mockResolvedValue({
-      masterReady: true,
-      bootstrapCompleted: true,
-      recoveryArmed: true,
-      initializedAt: new Date().toISOString(),
-    });
+  it('12) Allows user to proceed with Bootstrap even when backend unavailable', async () => {
+    const { AppError } = await import('./types');
+
+    vi.spyOn(authService, 'getBootstrapStatus').mockRejectedValue(
+      new AppError('ERR_NETWORK', 'Cannot reach backend')
+    );
 
     render(<App />);
 
     await waitFor(() => {
       expect(screen.getByText(/SYSTEM BOOTSTRAP/i)).toBeInTheDocument();
     });
-    expect(screen.queryByText(/Studio Access/i)).not.toBeInTheDocument();
-  });
 
-  it('13) Keeps bootstrap hidden after cache clear when backend reports initialized and recovery disabled', async () => {
-    localStorage.clear();
-    vi.spyOn(authService, 'getBootstrapStatus').mockResolvedValue({
-      masterReady: true,
-      bootstrapCompleted: true,
-      recoveryArmed: false,
-      initializedAt: new Date().toISOString(),
-    });
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/Studio Access/i)).toBeInTheDocument();
-    });
-    expect(screen.queryByText(/SYSTEM BOOTSTRAP/i)).not.toBeInTheDocument();
+    // User can still see the bootstrap form and should be able to interact
+    expect(screen.getByPlaceholderText(/e.g. master_admin/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Initialize Studio/i })).toBeInTheDocument();
   });
 });
 

@@ -11,8 +11,6 @@ window.__RUNTIME_CONFIG__ = {
   FIREBASE_APP_ID: "...",
   FUNCTIONS_REGION: "us-central1",
   FUNCTIONS_BASE_URL: "",
-  API_KEY: "...",
-  GEMINI_API_KEY: "...",
   BUILD_ENV: "production",
   BUILD_VERSION: "v1",
   ALLOW_LOCAL_MOCKS: "false",

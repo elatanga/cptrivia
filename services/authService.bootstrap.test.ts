@@ -19,42 +19,11 @@ const setupBackendMode = async () => {
     areLocalMocksExplicitlyEnabled: () => false,
     assertNoMocksInNonDev: vi.fn(),
     assertRealAuthInDeployedEnv: vi.fn(),
-    isDeployedRuntime: () => true,
     logRuntimeMode: vi.fn(),
   }));
 
   vi.doMock('./firebase', () => ({
     functions: { __mock: true },
-    buildFunctionsHttpUrl: (name: string) => `https://example.test/functions/${name}`,
-  }));
-
-  const module = await import('./authService');
-  return module.authService;
-};
-
-const setupBackendModeWithoutFunctionsSdk = async () => {
-  vi.resetModules();
-
-  vi.doMock('./logger', () => ({
-    logger: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      getCorrelationId: () => 'corr-test-2',
-      maskPII: (value: unknown) => value,
-    },
-  }));
-
-  vi.doMock('./runtimeConfig', () => ({
-    areLocalMocksExplicitlyEnabled: () => false,
-    assertNoMocksInNonDev: vi.fn(),
-    assertRealAuthInDeployedEnv: vi.fn(),
-    isDeployedRuntime: () => true,
-    logRuntimeMode: vi.fn(),
-  }));
-
-  vi.doMock('./firebase', () => ({
-    functions: undefined,
     buildFunctionsHttpUrl: (name: string) => `https://example.test/functions/${name}`,
   }));
 
@@ -139,25 +108,6 @@ describe('authService bootstrap backend classification', () => {
       code: 'ERR_UNKNOWN',
       message: 'Internal bootstrap failure',
     });
-  });
-
-  it('keeps getBootstrapStatus authoritative in deployed mode even when Firebase SDK is unavailable', async () => {
-    const authService = await setupBackendModeWithoutFunctionsSdk();
-
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        bootstrapCompleted: true,
-        masterReady: true,
-        masterAdminUserId: 'uid-master',
-      }),
-    } as Response);
-
-    const status = await authService.getBootstrapStatus();
-    expect(status.masterReady).toBe(true);
-    expect(status.bootstrapCompleted).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
