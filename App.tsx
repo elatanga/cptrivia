@@ -20,7 +20,6 @@ import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from './
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
 import { normalizePlayerName } from './services/utils';
-import { getInitialAutoSelectedPlayer, getNextPlayerSelection } from './services/playerSelectionCycle';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
 import { doesReturnResolveAsFail, isStealBlockedForMove, normalizeSpecialMoveType } from './modules/specialMoves/logic';
@@ -230,33 +229,6 @@ const App: React.FC = () => {
     showTimerExpiredPrompt,
     showEndGameConfirm,
   ]);
-
-  useEffect(() => {
-    if (!gameState.isGameStarted) return;
-
-    const hasValidSelection = Boolean(
-      gameState.selectedPlayerId && gameState.players.some((p) => p.id === gameState.selectedPlayerId)
-    );
-    if (hasValidSelection) return;
-
-    const nextSelectedPlayerId = getInitialAutoSelectedPlayer(gameState.players, gameState.selectedPlayerId);
-    if (!nextSelectedPlayerId) return;
-
-    if (gameState.selectedPlayerId) {
-      logger.info('scoreboard_selection_invalid_fallback_first', {
-        from: gameState.selectedPlayerId,
-        to: nextSelectedPlayerId,
-        playersCount: gameState.players.length,
-      });
-    } else {
-      logger.info('scoreboard_selection_auto_initial', {
-        to: nextSelectedPlayerId,
-        playersCount: gameState.players.length,
-      });
-    }
-
-    saveGameState({ ...gameState, selectedPlayerId: nextSelectedPlayerId });
-  }, [gameState.isGameStarted, gameState.players, gameState.selectedPlayerId]);
 
   // Layout Logging
   useEffect(() => {
@@ -1440,35 +1412,12 @@ const App: React.FC = () => {
       });
     }
 
-    const hadInvalidSelection = Boolean(
-      current.selectedPlayerId && !newPlayers.some((p) => p.id === current.selectedPlayerId)
-    );
-    const nextSelectedPlayerId = getNextPlayerSelection(newPlayers, current.selectedPlayerId);
-
-    if (hadInvalidSelection) {
-      logger.info('scoreboard_selection_invalid_fallback_first', {
-        from: current.selectedPlayerId,
-        to: nextSelectedPlayerId,
-        reason: 'play_completion',
-      });
-    }
-
-    if (nextSelectedPlayerId !== current.selectedPlayerId) {
-      logger.info('scoreboard_selection_auto_advance', {
-        from: current.selectedPlayerId,
-        to: nextSelectedPlayerId,
-        action,
-        tileId: activeQ.id,
-      });
-    }
-
     const newState: GameState = {
       ...current,
       categories: newCategories,
       players: newPlayers,
       activeQuestionId: null,
       activeCategoryId: null,
-      selectedPlayerId: nextSelectedPlayerId,
       timer: { ...current.timer, endTime: null, isRunning: false },
       lastPlays: updatedPlays
     };
@@ -1579,12 +1528,6 @@ const App: React.FC = () => {
 
   const handleSelectPlayer = (id: string) => {
     const p = gameState.players.find(pl => pl.id === id);
-    if (gameState.selectedPlayerId !== id) {
-      logger.info('scoreboard_selection_manual_override', {
-        from: gameState.selectedPlayerId,
-        to: id,
-      });
-    }
     soundService.playSelect();
     emitGameEvent('PLAYER_SELECTED', {
        actor: { role: 'director' },
