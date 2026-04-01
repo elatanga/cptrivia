@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { AppShell } from './components/AppShell';
 import { ToastContainer } from './components/Toast';
 import { LoginScreen } from './components/LoginScreen';
+import { BootstrapScreen } from './components/BootstrapScreen';
 import { ShowSelection } from './components/ShowSelection';
 import { TemplateDashboard } from './components/TemplateDashboard';
 import { GameBoard } from './components/GameBoard';
@@ -28,6 +29,7 @@ import { deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTag
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
+import { firebaseConfigError, missingKeys } from './services/firebase';
 
 const QUESTION_TIMER_DURATION_OPTIONS = [5, 7, 8, 10, 15] as const;
 const DEFAULT_QUESTION_TIMER_DURATION_SECONDS = 10;
@@ -62,8 +64,8 @@ const App: React.FC = () => {
   // App Boot State
   const [isConfigured, setIsConfigured] = useState(false);
   const [authChecked, setAuthChecked] = useState(false); 
+  const [systemStatusError, setSystemStatusError] = useState<string | null>(null);
   
-  const [bootstrapToken, setBootstrapToken] = useState<string | null>(null);
 
   const [session, setSession] = useState<{ id: string; username: string; role: UserRole } | null>(null);
   const [activeShow, setActiveShow] = useState<Show | null>(null);
@@ -712,20 +714,25 @@ const App: React.FC = () => {
   // Admin Polling
   useEffect(() => {
     let interval: number;
-    if (session?.role === 'ADMIN' || session?.role === 'MASTER_ADMIN') {
-        const check = () => {
-            const reqs = authService.getRequests();
-            const pending = reqs.filter(r => r.status === 'PENDING').length;
-            setPendingRequests(prev => {
-                if (pending > prev) {
-                    soundService.playToast('info');
-                    addToast('info', `New Request: ${pending} Pending`);
-                }
-                return pending;
-            });
+    if (session?.role === 'MASTER_ADMIN') {
+        const check = async () => {
+            try {
+              const pending = await authService.getPendingRequestCount(session.username);
+              setPendingRequests(prev => {
+                  if (pending > prev) {
+                      soundService.playToast('info');
+                      addToast('info', `New Request: ${pending} Pending`);
+                  }
+                  return pending;
+              });
+            } catch {
+              setPendingRequests(0);
+            }
         };
-        check(); 
-        interval = window.setInterval(check, 30000); 
+        void check(); 
+        interval = window.setInterval(() => { void check(); }, 30000); 
+    } else {
+      setPendingRequests(0);
     }
     return () => clearInterval(interval);
   }, [session]);
@@ -871,6 +878,120 @@ const App: React.FC = () => {
     });
   };
 
+  const initializeApp = useCallback(async () => {
+     setAuthChecked(false);
+     setSystemStatusError(null);
+     try {
+       const status = await authService.getBootstrapStatus();
+       setIsConfigured(status.masterReady);
+
+       if (!status.masterReady) {
+         logger.warn('bootstrap_visible_backend_uninitialized', {
+           bootstrapCompleted: status.bootstrapCompleted ?? false,
+           initializedAt: status.initializedAt ?? null,
+         });
+       } else {
+         logger.info('bootstrap_suppressed_backend_initialized', {
+           bootstrapCompleted: status.bootstrapCompleted ?? true,
+           initializedAt: status.initializedAt ?? null,
+         });
+
+         const storedSessionId = localStorage.getItem('cruzpham_active_session_id') || (() => {
+           try {
+             const legacySession = localStorage.getItem('cruzpham_user_session');
+             if (!legacySession) return null;
+             const parsed = JSON.parse(legacySession);
+             return typeof parsed?.id === 'string' ? parsed.id : null;
+           } catch {
+             return null;
+           }
+         })();
+         if (storedSessionId) {
+           const result = await authService.restoreSession(storedSessionId);
+           if (result.success && result.session) {
+             setSession({ id: result.session.id, username: result.session.username, role: result.session.role });
+             try {
+               const uiStateRaw = localStorage.getItem('cruzpham_ui_state');
+               if (uiStateRaw) {
+                 const uiState = JSON.parse(uiStateRaw);
+                 if (uiState.activeShowId) {
+                   const restoredShow = dataService.getShowById(uiState.activeShowId);
+                   if (restoredShow) setActiveShow(restoredShow);
+                 }
+                 if (uiState.viewMode) setViewMode(uiState.viewMode);
+               }
+             } catch (e) { logger.warn('hydrateUIStateFailed'); }
+           } else {
+             localStorage.removeItem('cruzpham_active_session_id');
+             localStorage.removeItem('cruzpham_user_session');
+             localStorage.removeItem('cruzpham_ui_state');
+           }
+         }
+       }
+       
+       const savedState = localStorage.getItem('cruzpham_gamestate');
+       if (savedState) {
+         const parsed = JSON.parse(savedState);
+         parsed.viewSettings = sanitizeBoardViewSettings(parsed.viewSettings);
+         
+         if (!parsed.lastPlays) parsed.lastPlays = [];
+         if (!parsed.events) parsed.events = [];
+         
+         setGameState(parsed);
+         if (parsed.showTitle) {
+            setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: parsed.showTitle, createdAt: '' });
+         }
+       }
+
+       const savedTimerState = localStorage.getItem(TIMER_STATE_STORAGE_KEY);
+       if (savedTimerState) {
+         try {
+           const timerState = JSON.parse(savedTimerState);
+           const resolvedDuration = resolveQuestionCountdownDuration(timerState.questionTimerDurationSeconds);
+           setQuestionTimerEnabled(timerState.questionTimerEnabled !== false);
+           setQuestionTimerDurationSeconds(resolvedDuration);
+           if (timerState.questionTimer) setQuestionTimer(timerState.questionTimer);
+           if (timerState.sessionTimer) setSessionTimer(timerState.sessionTimer);
+         } catch (error: any) {
+           logger.warn('timer_state_restore_failed', { message: error?.message });
+         }
+       }
+     } catch (e: any) {
+       const bootstrapErrorMessage = String(e?.message || '');
+       const isBootstrapTransportFailure = e?.code === 'ERR_NETWORK'
+         || e?.name === 'TypeError'
+         || /cors|cross-origin|failed to fetch|network/i.test(bootstrapErrorMessage);
+
+       logger.error('bootstrap_error_occurred', {
+         message: e?.message,
+         code: e?.code,
+       });
+       // ERR_NETWORK = transport failure (CORS, fetch blocked, connection timeout, etc.)
+       // These are NOT server initialization failures, so we allow local bootstrap to proceed
+       if (isBootstrapTransportFailure) {
+         logger.warn('bootstrap_network_unavailable_using_local', {
+           fallbackMode: 'local_authority',
+           isTransport: true,
+           message: bootstrapErrorMessage,
+         });
+         // Don't set systemStatusError; allow Bootstrap screen to show with local mode
+         // The app will complete and isConfigured will default to false,
+         // which triggers the Bootstrap screen. This allows user to bootstrap locally
+         // even when backend is temporarily unreachable or has CORS issues.
+       } else {
+         // Unexpected/unclassified error; show recovery UI
+         logger.error('bootstrap_unexpected_error', { 
+           code: e?.code,
+           message: e?.message,
+         });
+         setSystemStatusError('Unable to verify system status. Please try again or contact support.');
+       }
+       console.error('System Initialization Error', e);
+     } finally {
+       setAuthChecked(true);
+     }
+  }, []);
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('view') === 'director') {
@@ -971,7 +1092,7 @@ const App: React.FC = () => {
     };
     initializeApp();
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
+  }, [handleStorageChange, initializeApp]);
 
   const addToast = (type: ToastMessage['type'], message: string) => {
     setToasts(prev => [...prev, { id: Math.random().toString(), type, message }]);
@@ -980,18 +1101,6 @@ const App: React.FC = () => {
 
   // --- ACTIONS ---
 
-  const handleBootstrap = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const token = await authService.bootstrapMasterAdmin('admin');
-      setBootstrapToken(token);
-      setIsConfigured(true);
-      addToast('success', 'Master Admin Created Successfully');
-    } catch (e: any) {
-      addToast('error', e.message);
-      if (e.code === 'ERR_BOOTSTRAP_COMPLETE') setTimeout(() => window.location.reload(), 2000);
-    }
-  };
 
   const handlePopout = () => {
     const width = 1024;
@@ -1484,6 +1593,17 @@ const App: React.FC = () => {
     saveGameState({ ...gameState, selectedPlayerId: id });
   };
 
+  const activeCategory = gameState.categories.find(c => c.id === gameState.activeCategoryId);
+  const activeQuestion = activeCategory?.questions.find(q => q.id === gameState.activeQuestionId);
+  const isMasterAdmin = session?.role === 'MASTER_ADMIN';
+  const showShortcuts = viewMode === 'BOARD' && gameState.isGameStarted;
+
+  useEffect(() => {
+    if (viewMode === 'ADMIN' && !isMasterAdmin) {
+      setViewMode('BOARD');
+    }
+  }, [viewMode, isMasterAdmin]);
+
   if (!authChecked) return (
     <div className="h-screen w-screen flex items-center justify-center bg-black text-white">
       <div className="flex flex-col items-center gap-4">
@@ -1493,26 +1613,30 @@ const App: React.FC = () => {
     </div>
   );
 
-  if (!isConfigured) return (
-    <div className="h-screen w-screen flex items-center justify-center bg-black text-white">
+  if (systemStatusError) return (
+    <div className="h-screen w-screen flex items-center justify-center bg-black text-white px-4">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
-      <div className="max-w-md w-full p-8 border border-gold-600 rounded-2xl bg-zinc-900 text-center relative overflow-hidden">
-        <h1 className="text-3xl font-serif text-gold-500 mb-4">SYSTEM BOOTSTRAP</h1>
-        <button onClick={handleBootstrap} className="w-full bg-gold-600 text-black font-bold py-3 rounded uppercase tracking-wider hover:bg-gold-500">Create Master Admin</button>
+      <div className="w-full max-w-lg bg-zinc-900 border border-red-900/60 rounded-2xl p-8 shadow-2xl text-center">
+        <p className="text-[10px] uppercase tracking-[0.3em] font-black text-red-400">System Initialization Error</p>
+        <h2 className="mt-4 text-3xl font-serif text-white">Unable to Verify Studio Status</h2>
+        <p className="mt-4 text-sm text-zinc-300 leading-relaxed">{systemStatusError}</p>
+        <p className="mt-2 text-xs text-zinc-500">Bootstrap is hidden until the authoritative backend confirms that the system is uninitialized.</p>
+        <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
+          <button onClick={() => { void initializeApp(); }} className="px-5 py-3 rounded-xl bg-gold-600 hover:bg-gold-500 text-black font-black uppercase tracking-[0.2em] text-xs">
+            Retry Status Check
+          </button>
+          <a href="mailto:support@cruzpham.com" className="px-5 py-3 rounded-xl border border-zinc-700 hover:border-zinc-500 text-zinc-300 font-black uppercase tracking-[0.2em] text-xs">
+            Contact Support
+          </a>
+        </div>
       </div>
     </div>
   );
 
-  if (bootstrapToken) return (
+  if (!isConfigured) return (
     <div className="h-screen w-screen flex items-center justify-center bg-black text-white">
-      <div className="max-w-md w-full p-8 border border-red-600 rounded-2xl bg-zinc-900 text-center">
-         <h1 className="text-3xl font-serif text-red-500 mb-4">MASTER TOKEN GENERATED</h1>
-         <div className="bg-black p-4 rounded border border-zinc-700 flex items-center justify-between mb-8">
-           <code className="text-gold-500 font-mono text-lg">{bootstrapToken}</code>
-           <button onClick={() => navigator.clipboard.writeText(bootstrapToken)} className="text-zinc-500 hover:text-white"><Copy className="w-5 h-5"/></button>
-         </div>
-         <button onClick={() => setBootstrapToken(null)} className="w-full bg-zinc-800 text-white font-bold py-3 rounded uppercase tracking-wider">I have saved it safely</button>
-      </div>
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <BootstrapScreen onComplete={() => setIsConfigured(true)} addToast={addToast} />
     </div>
   );
 
@@ -1557,10 +1681,6 @@ const App: React.FC = () => {
     );
   }
 
-  const activeCategory = gameState.categories.find(c => c.id === gameState.activeCategoryId);
-  const activeQuestion = activeCategory?.questions.find(q => q.id === gameState.activeQuestionId);
-  const isAdmin = session?.role === 'ADMIN' || session?.role === 'MASTER_ADMIN';
-  const showShortcuts = viewMode === 'BOARD' && gameState.isGameStarted;
 
   return (
     <AppShell activeShowTitle={gameState.showTitle || (activeShow ? activeShow.title : undefined)} username={session?.username} onLogout={handleLogout} shortcuts={showShortcuts ? <ShortcutsPanel /> : null}>
@@ -1601,7 +1721,7 @@ const App: React.FC = () => {
           {!activeShow ? (
             <>
                <ShowSelection username={session.username} onSelectShow={setActiveShow} />
-               {isAdmin && (
+               {isMasterAdmin && (
                  <div className="absolute bottom-4 right-4">
                    <button onClick={() => setViewMode('ADMIN')} className="flex items-center gap-2 text-xs font-bold uppercase text-zinc-500 hover:text-gold-500 bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-full relative group">
                      <Shield className="w-3 h-3" /> Admin Console
@@ -1609,7 +1729,7 @@ const App: React.FC = () => {
                    </button>
                  </div>
                )}
-               {viewMode === 'ADMIN' && <div className="fixed inset-0 z-50"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
+               {viewMode === 'ADMIN' && isMasterAdmin && <div className="fixed inset-0 z-50"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
             </>
           ) : (
             <>
@@ -1618,7 +1738,7 @@ const App: React.FC = () => {
                    <div className="bg-zinc-900 border border-zinc-800 p-1 rounded-full flex gap-1">
                      <button onClick={() => setViewMode('BOARD')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'BOARD' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:text-white'}`}><Monitor className="w-3 h-3" /> Board</button>
                      <button onClick={() => setViewMode('DIRECTOR')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'DIRECTOR' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}><Grid className="w-3 h-3" /> Director</button>
-                     {isAdmin && <button onClick={() => setViewMode('ADMIN')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'ADMIN' ? 'bg-purple-600 text-white' : 'text-zinc-500 hover:text-white'}`}><Shield className="w-3 h-3" /> Admin</button>}
+                      {isMasterAdmin && <button onClick={() => setViewMode('ADMIN')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'ADMIN' ? 'bg-purple-600 text-white' : 'text-zinc-500 hover:text-white'}`}><Shield className="w-3 h-3" /> Admin</button>}
                    </div>
                  </div>
                )}
@@ -1728,7 +1848,7 @@ const App: React.FC = () => {
                      onDecreaseTimerVolume={decreaseTimerVolume}
                    />
                  </div>
-                 {viewMode === 'ADMIN' && <div className="absolute inset-0 z-50 bg-zinc-950"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
+                 {viewMode === 'ADMIN' && isMasterAdmin && <div className="absolute inset-0 z-50 bg-zinc-950"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
                </div>
             </>
           )}

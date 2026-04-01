@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Lock, ArrowRight, Loader2, Key, HelpCircle } from 'lucide-react';
+import { Lock, ArrowRight, Loader2, Key, HelpCircle, Copy } from 'lucide-react';
 import { authService } from '../services/authService';
 import { TokenRequestModal } from './TokenRequestModal';
 import { Session } from '../types';
@@ -15,6 +15,9 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess, addToast }) => {
   const [token, setToken] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showRequestModal, setShowRequestModal] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
+  const [recoveryResult, setRecoveryResult] = useState<{ username: string; rawToken: string } | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,6 +33,26 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess, addToast }) => {
       }
     } catch (err) {
       addToast('error', 'Authentication service unavailable');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRecoverMaster = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!username.trim() || !recoveryCode.trim()) return;
+
+    setIsLoading(true);
+    try {
+      const result = await authService.completeMasterRecovery(username.trim(), recoveryCode.trim());
+      setUsername(result.username);
+      setToken(result.rawToken);
+      setRecoveryResult(result);
+      setRecoveryCode('');
+      setShowRecovery(false);
+      addToast('success', 'Master recovery complete. Save the new token now.');
+    } catch (err: any) {
+      addToast('error', err?.message || 'Recovery failed');
     } finally {
       setIsLoading(false);
     }
@@ -91,15 +114,78 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess, addToast }) => {
             </button>
           </form>
 
+          {recoveryResult && (
+            <div className="mt-5 rounded-xl border border-purple-500/40 bg-purple-950/20 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] font-black text-purple-300">Master Recovery Complete</div>
+                  <p className="text-xs text-zinc-400 mt-1">This regenerated token is shown once. Store it safely before continuing.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard.writeText(recoveryResult.rawToken).then(() => addToast('success', 'Master token copied'))}
+                  className="text-gold-400 hover:text-white flex items-center gap-1 text-xs font-bold uppercase"
+                >
+                  <Copy className="w-3 h-3" /> Copy
+                </button>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-black px-3 py-2 text-purple-300 font-mono text-sm break-all">{recoveryResult.rawToken}</div>
+            </div>
+          )}
+
           <div className="mt-8 pt-6 border-t border-gold-900/20 text-center">
-            <p className="text-zinc-500 text-xs mb-3">New Producer?</p>
-            <button 
-              onClick={() => setShowRequestModal(true)}
-              className="group text-gold-500 hover:text-gold-300 text-sm font-medium flex items-center justify-center gap-2 mx-auto transition-colors"
-            >
-              <span className="border-b border-transparent group-hover:border-gold-300">Get Token</span> <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-            </button>
+            <div className="space-y-3">
+              <div>
+                <p className="text-zinc-500 text-xs mb-3">New Producer?</p>
+                <button 
+                  onClick={() => setShowRequestModal(true)}
+                  className="group text-gold-500 hover:text-gold-300 text-sm font-medium flex items-center justify-center gap-2 mx-auto transition-colors"
+                >
+                  <span className="border-b border-transparent group-hover:border-gold-300">Get Token</span> <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                </button>
+              </div>
+
+              <div className="pt-3 border-t border-zinc-800/80">
+                <button
+                  type="button"
+                  onClick={() => setShowRecovery((prev) => !prev)}
+                  className="text-purple-300 hover:text-white text-xs uppercase tracking-wider font-bold"
+                >
+                  {showRecovery ? 'Hide Master Recovery' : 'Master Admin Recovery'}
+                </button>
+              </div>
+            </div>
           </div>
+
+          {showRecovery && (
+            <form onSubmit={handleRecoverMaster} className="mt-5 rounded-xl border border-purple-500/30 bg-black/40 p-4 space-y-4">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.2em] font-black text-purple-300 mb-1">Recovery Code</div>
+                <p className="text-xs text-zinc-500 mb-3">For the Master Admin only. Enter the issued time-bound recovery code to regenerate the master token.</p>
+              </div>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full bg-zinc-900/80 border border-zinc-800 focus:border-purple-400 text-white p-3 rounded-lg outline-none transition-all placeholder:text-zinc-700"
+                placeholder="Master Admin username"
+              />
+              <input
+                type="password"
+                value={recoveryCode}
+                onChange={(e) => setRecoveryCode(e.target.value)}
+                className="w-full bg-zinc-900/80 border border-zinc-800 focus:border-purple-400 text-white p-3 rounded-lg outline-none transition-all placeholder:text-zinc-700"
+                placeholder="Paste recovery code"
+              />
+              <button
+                type="submit"
+                disabled={isLoading || !username || !recoveryCode}
+                className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider text-sm"
+              >
+                {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Key className="w-4 h-4" /> Recover Master Token</>}
+              </button>
+            </form>
+          )}
         </div>
       </div>
 

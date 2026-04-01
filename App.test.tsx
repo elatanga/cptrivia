@@ -1,14 +1,12 @@
 import React from 'react';
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import App from './App';
 import { authService } from './services/authService';
-import { soundService } from './services/soundService';
 
 declare const jest: any;
 declare const describe: any;
 declare const test: any;
 declare const expect: any;
-declare const beforeAll: any;
 declare const beforeEach: any;
 
 // --- MOCKS ---
@@ -77,7 +75,12 @@ describe('CRUZPHAM STUDIOS Core Logic', () => {
     test('Points are doubled when awarding a Double Or Nothing tile', async () => {
       // Setup authenticated state with a pre-defined game
       await authService.bootstrapMasterAdmin('admin');
-      const token = await authService.login('admin', 'mk-placeholder'); // Mocked login
+
+      // Mock session restore so the app skips the login screen
+      jest.spyOn(authService, 'restoreSession').mockResolvedValue({
+        success: true,
+        session: { id: 'sess-123', username: 'admin', role: 'MASTER_ADMIN', createdAt: Date.now(), userAgent: 'test' } as any
+      });
       
       const mockGameState = {
         showTitle: 'Test Show',
@@ -105,21 +108,26 @@ describe('CRUZPHAM STUDIOS Core Logic', () => {
       await waitFor(() => screen.getByText(/Alice/i));
       
       // Modal should be open due to activeQuestionId
-      await waitFor(() => screen.getByText(/Award/i));
+      await waitFor(() => expect(screen.getByTitle(/Award \(ENTER\)/i)).toBeInTheDocument());
       
       // Award to Alice
-      const awardBtn = screen.getByText(/Award/i).closest('button');
-      fireEvent.click(awardBtn!);
+      fireEvent.click(screen.getByTitle(/Award \(ENTER\)/i));
       
       // Assert Alice has 200 points (100 * 2)
       await waitFor(() => {
-        const score = screen.getByText('200');
+        const score = within(screen.getByTestId('scoreboard-root')).getByText('200');
         expect(score).toBeInTheDocument();
       });
     });
 
     test('Points are NOT doubled when awarding a normal tile', async () => {
         await authService.bootstrapMasterAdmin('admin');
+
+        // Mock session restore so the app skips the login screen
+        jest.spyOn(authService, 'restoreSession').mockResolvedValue({
+          success: true,
+          session: { id: 'sess-123', username: 'admin', role: 'MASTER_ADMIN', createdAt: Date.now(), userAgent: 'test' } as any
+        });
         
         const mockGameState = {
           showTitle: 'Test Show',
@@ -144,12 +152,13 @@ describe('CRUZPHAM STUDIOS Core Logic', () => {
         
         render(<App />);
         
-        await waitFor(() => screen.getByText(/Award/i));
-        fireEvent.click(screen.getByText(/Award/i).closest('button')!);
+        await waitFor(() => expect(screen.getByTitle(/Award \(ENTER\)/i)).toBeInTheDocument());
+        fireEvent.click(screen.getByTitle(/Award \(ENTER\)/i));
         
         await waitFor(() => {
-          expect(screen.getByText('100')).toBeInTheDocument();
-          expect(screen.queryByText('200')).not.toBeInTheDocument();
+          const scoreboard = screen.getByTestId('scoreboard-root');
+          expect(within(scoreboard).getByText('100')).toBeInTheDocument();
+          expect(within(scoreboard).queryByText('200')).not.toBeInTheDocument();
         });
       });
   });

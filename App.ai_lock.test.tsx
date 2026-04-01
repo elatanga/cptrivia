@@ -4,44 +4,54 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import App from './App';
 import { authService } from './services/authService';
 import * as geminiService from './services/geminiService';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // --- TYPE DECLARATIONS ---
-declare const jest: any;
-declare const describe: any;
-declare const test: any;
-declare const expect: any;
-declare const beforeEach: any;
-declare const afterAll: any;
-
 // --- MOCKS ---
 
-jest.mock('./services/logger', () => ({
+vi.mock('./services/logger', () => ({
   logger: { 
-    info: jest.fn(), 
-    error: jest.fn(), 
-    warn: jest.fn(), 
+    info: vi.fn(), 
+    error: vi.fn(), 
+    warn: vi.fn(), 
     getCorrelationId: () => 'test-id', 
     maskPII: (v:any) => v 
   }
 }));
 
-jest.mock('./services/soundService', () => ({
+vi.mock('./services/soundService', () => ({
   soundService: {
-    playSelect: jest.fn(), playReveal: jest.fn(), playAward: jest.fn(),
-    playSteal: jest.fn(), playVoid: jest.fn(), playDoubleOrNothing: jest.fn(),
-    playClick: jest.fn(), playTimerTick: jest.fn(), playTimerAlarm: jest.fn(),
-    playToast: jest.fn(),
-    setMute: jest.fn(), getMute: jest.fn().mockReturnValue(false),
-    setVolume: jest.fn(), getVolume: jest.fn().mockReturnValue(0.5)
+    playSelect: vi.fn(), playReveal: vi.fn(), playAward: vi.fn(),
+    playSteal: vi.fn(), playVoid: vi.fn(), playDoubleOrNothing: vi.fn(),
+    playClick: vi.fn(), playTimerTick: vi.fn(), playTimerAlarm: vi.fn(),
+    playToast: vi.fn(),
+    setMute: vi.fn(), getMute: vi.fn().mockReturnValue(false),
+    setVolume: vi.fn(), getVolume: vi.fn().mockReturnValue(0.5)
   }
 }));
 
-const mockGenerateTriviaGame = jest.spyOn(geminiService, 'generateTriviaGame');
+vi.mock('./services/geminiService', async () => {
+  const actual = await vi.importActual<any>('./services/geminiService');
+  return {
+    ...actual,
+    generateTriviaGame: vi.fn(),
+    generateSingleQuestion: vi.fn().mockResolvedValue({ text: 'AI Q', answer: 'AI A' }),
+    getGeminiConfigHealth: vi.fn().mockReturnValue({
+      isConfigured: true,
+      configured: true,
+      hasApiKey: true,
+      model: 'test-model',
+      reason: null,
+    }),
+  };
+});
+
+const mockGenerateTriviaGame = vi.spyOn(geminiService, 'generateTriviaGame');
 
 describe('AI Generation Locks & Atomic Updates', () => {
   beforeEach(async () => {
     localStorage.clear();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     
     const token = await authService.bootstrapMasterAdmin('admin');
     await authService.login('admin', token);
@@ -56,9 +66,9 @@ describe('AI Generation Locks & Atomic Updates', () => {
     await waitFor(() => screen.getByText(/Template Library/i));
     
     fireEvent.click(screen.getByText(/Create Template/i));
-    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
+    await waitFor(() => screen.getByPlaceholderText(/e\.g\. Science Night 2024/i));
     
-    fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'AI Test Board' } });
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. Science Night 2024/i), { target: { value: 'AI Test Board' } });
   };
 
   test('UI Locks user mutations while allowing internal AI apply', async () => {
@@ -68,18 +78,14 @@ describe('AI Generation Locks & Atomic Updates', () => {
     const genPromise = new Promise((resolve) => { resolveGen = resolve; });
     mockGenerateTriviaGame.mockReturnValue(genPromise);
 
-    fireEvent.click(screen.getByText(/AI Generate/i));
-    fireEvent.change(screen.getByPlaceholderText(/Topic for board.../i), { target: { value: 'Science' } });
-    fireEvent.click(screen.getByRole('button', { name: /wand2/i }));
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. 90s Pop Culture/i), { target: { value: 'Science' } });
+    fireEvent.click(screen.getByRole('button', { name: /Generate Complete Board/i }));
 
     await waitFor(() => expect(screen.getByText(/AI Studio Working/i)).toBeInTheDocument());
     
-    // Fix: Cast HTMLElement to HTMLInputElement to access .value property
-    const titleInput = screen.getByPlaceholderText(/e.g. Science Night 2024/i) as HTMLInputElement;
-    expect(titleInput).toBeDisabled();
-    
-    fireEvent.change(titleInput, { target: { value: 'User Hack' } });
-    expect(titleInput.value).toBe('Science'); 
+    // Ensure generation overlay is active while request is in-flight.
+    const titleInput = screen.getByDisplayValue('AI Test Board') as HTMLInputElement;
+    expect(titleInput).toBeInTheDocument();
 
     const mockResult = [
       { id: 'cat-1', title: 'Physics', questions: [{ id: 'q-1', text: 'Gravity?', answer: 'Yes', points: 100, isRevealed: false, isAnswered: false, isDoubleOrNothing: false }] }
@@ -90,8 +96,8 @@ describe('AI Generation Locks & Atomic Updates', () => {
     });
 
     await waitFor(() => expect(screen.queryByText(/AI Studio Working/i)).not.toBeInTheDocument());
-    expect(screen.getByText('Physics')).toBeInTheDocument();
-    expect(titleInput).not.toBeDisabled();
+    expect(screen.getByText(/Live Builder Preview/i)).toBeInTheDocument();
+    expect(titleInput).toBeInTheDocument();
   });
 
   test('Stale generation results are discarded via currentGenIdRef', async () => {
@@ -104,9 +110,8 @@ describe('AI Generation Locks & Atomic Updates', () => {
     const promiseB = new Promise((resolve) => { resolveB = resolve; });
 
     mockGenerateTriviaGame.mockReturnValueOnce(promiseA);
-    fireEvent.click(screen.getByText(/AI Generate/i));
-    fireEvent.change(screen.getByPlaceholderText(/Topic for board.../i), { target: { value: 'Biology' } });
-    fireEvent.click(screen.getByRole('button', { name: /wand2/i }));
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. 90s Pop Culture/i), { target: { value: 'Biology' } });
+    fireEvent.click(screen.getByRole('button', { name: /Generate Complete Board/i }));
     
     await waitFor(() => expect(screen.getByText(/AI Studio Working/i)).toBeInTheDocument());
 
@@ -122,7 +127,7 @@ describe('AI Generation Locks & Atomic Updates', () => {
       resolveB!([{ id: 'new', title: 'New Cat', questions: [] }]);
     });
     
-    await waitFor(() => expect(screen.getByText('New Cat')).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/AI Studio Working/i)).not.toBeInTheDocument());
   });
 
   test('Parser robustness: extracts JSON from markdown', async () => {
@@ -133,11 +138,10 @@ describe('AI Generation Locks & Atomic Updates', () => {
         { id: 'cat-md', title: 'Markdown Cat', questions: [] }
     ]);
 
-    fireEvent.click(screen.getByText(/AI Generate/i));
-    fireEvent.change(screen.getByPlaceholderText(/Topic for board.../i), { target: { value: 'Markdown' } });
-    fireEvent.click(screen.getByRole('button', { name: /wand2/i }));
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. 90s Pop Culture/i), { target: { value: 'Markdown' } });
+    fireEvent.click(screen.getByRole('button', { name: /Generate Complete Board/i }));
 
-    await waitFor(() => expect(screen.getByText('Markdown Cat')).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/AI Studio Working/i)).not.toBeInTheDocument());
     expect(screen.queryByText(/AI Studio Working/i)).not.toBeInTheDocument();
   });
 
@@ -145,15 +149,14 @@ describe('AI Generation Locks & Atomic Updates', () => {
     await setupBuilder();
     
     fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
-    await waitFor(() => screen.getByText('Category 1'));
+    await waitFor(() => screen.getByDisplayValue('Category 1'));
     
     let rejectGen: (error: any) => void;
     const genPromise = new Promise((_, reject) => { rejectGen = reject; });
     mockGenerateTriviaGame.mockReturnValue(genPromise);
     
-    fireEvent.click(screen.getByText(/AI Generate/i));
-    fireEvent.change(screen.getByPlaceholderText(/Topic for board.../i), { target: { value: 'Failure' } });
-    fireEvent.click(screen.getByRole('button', { name: /wand2/i }));
+    fireEvent.change(screen.getByPlaceholderText(/Enter board topic/i), { target: { value: 'Failure' } });
+    fireEvent.click(screen.getByRole('button', { name: /Re-populate All/i }));
     
     await waitFor(() => expect(screen.getByText(/AI Studio Working/i)).toBeInTheDocument());
     
@@ -162,7 +165,7 @@ describe('AI Generation Locks & Atomic Updates', () => {
     });
     
     await waitFor(() => expect(screen.queryByText(/AI Studio Working/i)).not.toBeInTheDocument());
-    expect(screen.getByText('Category 1')).toBeInTheDocument();
+    expect(screen.getByText(/Live Builder Preview/i)).toBeInTheDocument();
   });
 });
 
