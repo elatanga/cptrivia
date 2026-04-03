@@ -71,5 +71,12 @@ describe('geminiService API key resolution', () => {
     expect(health.ready).toBe(false);
     expect(health.message).toContain('GEMINI_API_KEY');
   });
-});
 
+  it('prefers runtime-config GEMINI_API_KEY when API_KEY is not set', () => {
+    (window as any).__RUNTIME_CONFIG__ = { GEMINI_API_KEY: 'runtime-gemini-key-123' };
+    process.env.API_KEY = '';
+    process.env.GEMINI_API_KEY = 'process-gemini-key-456';
+
+    expect(resolveGeminiApiKey()).toBe('runtime-gemini-key-123');
+  });
+});
