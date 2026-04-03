@@ -1,21 +1,34 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { resolveGeminiApiKey, getGeminiConfigHealth } from './geminiService';
+import { resolveGeminiApiKey, resolveGeminiModel, getGeminiConfigHealth } from './geminiService';
 import { AppError } from '../types';
 
 describe('geminiService API key resolution', () => {
   const originalApiKey = process.env.API_KEY;
   const originalGeminiApiKey = process.env.GEMINI_API_KEY;
+  const originalGeminiModel = process.env.GEMINI_MODEL;
 
   beforeEach(() => {
     process.env.API_KEY = '';
     process.env.GEMINI_API_KEY = '';
+    process.env.GEMINI_MODEL = '';
     (window as any).__RUNTIME_CONFIG__ = undefined;
   });
 
   afterEach(() => {
     process.env.API_KEY = originalApiKey;
     process.env.GEMINI_API_KEY = originalGeminiApiKey;
+    process.env.GEMINI_MODEL = originalGeminiModel;
     (window as any).__RUNTIME_CONFIG__ = undefined;
+  });
+
+  it('resolves official Gemini 3.1 model when configured', () => {
+    (window as any).__RUNTIME_CONFIG__ = { GEMINI_MODEL: 'gemini-3.1-pro-preview' };
+    expect(resolveGeminiModel()).toBe('gemini-3.1-pro-preview');
+  });
+
+  it('falls back to Gemini 3.1 Pro when model is outdated', () => {
+    process.env.GEMINI_MODEL = 'gemini-3-flash-preview';
+    expect(resolveGeminiModel()).toBe('gemini-3.1-pro-preview');
   });
 
   it('prefers runtime-config API_KEY when present', () => {
