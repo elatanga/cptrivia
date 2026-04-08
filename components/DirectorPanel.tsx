@@ -15,7 +15,7 @@ import { getTeamsValidationError as getTeamsModeValidationError } from '../servi
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
-import { deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState, getTileSpecialMoveTagText } from '../modules/specialMoves/tileTagState';
+import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState, getTileSpecialMoveTagText } from '../modules/specialMoves/tileTagState';
 
 interface Props {
   gameState: GameState;
@@ -714,6 +714,7 @@ export const DirectorPanel: React.FC<Props> = ({
     version: 1
   };
   const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
+  const resolvedSpecialMoveLabelsByTileId = useMemo(() => deriveResolvedSpecialMoveLabelsByTileId(gameState.events), [gameState.events]);
 
   const isEndgameMove = (moveType: SpecialMoveType) => moveType === 'DOUBLE_WINS_OR_NOTHING' || moveType === 'TRIPLE_WINS_OR_NOTHING';
   const isTileMove = (moveType: SpecialMoveType) => !isEndgameMove(moveType);
@@ -2206,7 +2207,7 @@ export const DirectorPanel: React.FC<Props> = ({
                       const deployment = currentOverlay.deploymentsByTileId[q.id];
                       const isArmed = deployment?.status === 'ARMED';
                       const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, resolvedSpecialMoveTileIds.has(q.id));
-                      const specialMoveTagText = getTileSpecialMoveTagText(deployment?.moveType, specialMoveTagState);
+                      const specialMoveTagText = getTileSpecialMoveTagText(deployment?.moveType, specialMoveTagState, resolvedSpecialMoveLabelsByTileId[q.id]);
                       const isPlayable = !q.isAnswered && !q.isVoided;
                       const giftTileDisabledReason = isGiftActivatedMove(selectedMoveType)
                         ? getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, q.id)

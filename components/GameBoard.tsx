@@ -14,11 +14,12 @@ interface Props {
   viewSettings: BoardViewSettings;
   overlay?: SMSOverlayDoc | null;
   resolvedSpecialMoveTileIds?: Set<string>;
+  resolvedSpecialMoveLabelsByTileId?: Record<string, string>;
   sessionTimerActive?: boolean;
   sessionTimeRemaining?: number;
 }
 
-export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay, resolvedSpecialMoveTileIds, sessionTimerActive, sessionTimeRemaining }) => {
+export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay, resolvedSpecialMoveTileIds, resolvedSpecialMoveLabelsByTileId, sessionTimerActive, sessionTimeRemaining }) => {
   const onSelectQuestionRef = useRef(onSelectQuestion);
   const previousSessionTimerActiveRef = useRef<boolean | null>(null);
 
@@ -102,7 +103,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
               const moveType = overlay?.deploymentsByTileId?.[q.id]?.moveType;
               const isResolved = !!resolvedSpecialMoveTileIds?.has(q.id);
               const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, isResolved);
-              const specialMoveTagText = getTileSpecialMoveTagText(moveType, specialMoveTagState);
+              const specialMoveTagText = getTileSpecialMoveTagText(moveType, specialMoveTagState, resolvedSpecialMoveLabelsByTileId?.[q.id]);
 
               return (
                 <button 
@@ -158,7 +159,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
           </React.Fragment>
       ))}
     </div>
-  ), [categories, colCount, rowCount, overlay, resolvedSpecialMoveTileIds, layoutTokens.categoryLineClamp]);
+  ), [categories, colCount, rowCount, overlay, resolvedSpecialMoveTileIds, resolvedSpecialMoveLabelsByTileId, layoutTokens.categoryLineClamp]);
 
   return (
     <div 
