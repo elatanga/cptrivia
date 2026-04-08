@@ -4,41 +4,51 @@ import { soundService } from '../services/soundService';
 import { ConnectionStatus } from './ConnectionStatus';
 import { HelpModal } from './HelpModal';
 
+// Realistic Champagne Bottle Icon (premium style)
 const ChampagneBottleIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
     aria-label="Champagne Bottle"
     viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
+    fill="currentColor"
     className={className}
   >
-    <path d="M10 2h4" />
-    <path d="M11 2v3" />
-    <path d="M13 2v3" />
-    <path d="M10 6h4" />
-    <path d="M9 6c0 3 1 4 1 6v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2v-7c0-2 1-3 1-6" />
-    <path d="M10 13h4" />
+    {/* Bottle foil/wrap */}
+    <rect x="9.5" y="1.5" width="5" height="1.5" rx="0.3" fill="currentColor" opacity="0.8" />
+    {/* Cork */}
+    <rect x="10.5" y="2.8" width="3" height="2" rx="0.4" fill="currentColor" opacity="0.9" />
+    {/* Neck */}
+    <path d="M11 4.8 L10.5 6.5 L13.5 6.5 L13 4.8 Z" fill="currentColor" opacity="0.7" />
+    {/* Bottle body - glass appearance */}
+    <path d="M9.5 6.5 Q8 8 8.5 12 L8 16 Q8 18 10 20 L14 20 Q16 18 16 16 L15.5 12 Q16 8 14.5 6.5 Z"
+          fill="currentColor" opacity="0.4" stroke="currentColor" strokeWidth="0.5" />
+    {/* Bottle shine/highlight */}
+    <ellipse cx="10.5" cy="10" rx="1" ry="4" fill="white" opacity="0.3" />
+    {/* Bottom punt */}
+    <ellipse cx="12" cy="20" rx="2" ry="0.5" fill="currentColor" opacity="0.6" />
   </svg>
 );
 
-const ChampagneGlassIcon: React.FC<{ className?: string }> = ({ className }) => (
+// Realistic Champagne Flute Icon (premium style)
+const ChampagneFlute: React.FC<{ className?: string }> = ({ className }) => (
   <svg
-    aria-label="Champagne Glass"
+    aria-label="Champagne Flute"
     viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
+    fill="currentColor"
     className={className}
   >
-    <path d="M8 3h8l-1.5 7a2.6 2.6 0 0 1-5 0L8 3Z" />
-    <path d="M12 10v7" />
-    <path d="M9 21h6" />
-    <path d="M7.5 3h9" />
+    {/* Glass bowl - gradient illusion */}
+    <path d="M7 3 L8 7 Q8 9 9 11 L15 11 Q16 9 16 7 L17 3"
+          fill="currentColor" opacity="0.4" stroke="currentColor" strokeWidth="0.5" />
+    {/* Glass shine */}
+    <ellipse cx="9.5" cy="6" rx="1.2" ry="2.5" fill="white" opacity="0.4" />
+    {/* Stem - thin line */}
+    <line x1="11" y1="11" x2="11.5" y2="18" stroke="currentColor" strokeWidth="0.8" opacity="0.6" />
+    {/* Base */}
+    <ellipse cx="12" cy="19" rx="2.5" ry="1" fill="currentColor" opacity="0.5" stroke="currentColor" strokeWidth="0.5" />
+    {/* Bubbles - champagne bubbles */}
+    <circle cx="10" cy="7" r="0.4" fill="white" opacity="0.6" />
+    <circle cx="13" cy="8" r="0.3" fill="white" opacity="0.5" />
+    <circle cx="12" cy="9" r="0.35" fill="white" opacity="0.55" />
   </svg>
 );
 
@@ -95,16 +105,21 @@ export const AppShell: React.FC<AppShellProps> = ({ children, activeShowTitle, u
       <ConnectionStatus />
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
 
-      {/* HEADER: Sticky on Mobile, Fixed on Desktop */}
-      <header className="sticky top-0 lg:static flex-none h-14 md:h-16 z-40 bg-black/95 backdrop-blur-sm lg:bg-gradient-to-b lg:from-black lg:via-black/95 lg:to-transparent px-4 md:px-6 flex items-center justify-between border-b border-gold-900/30">
-          {/* Left: Branding */}
-          <div className="flex items-center gap-2 min-w-0">
-            <ChampagneBottleIcon className="w-4 h-4 md:w-5 md:h-5 text-gold-500/90 drop-shadow-[0_0_8px_rgba(255,215,0,0.25)]" />
-            <h1 className="text-lg md:text-2xl font-serif font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-gold-300 via-gold-500 to-gold-300 drop-shadow-sm truncate cursor-pointer hover:opacity-80 transition-opacity" onClick={() => soundService.playClick()}>
-              CP JEOPARDY
-            </h1>
-            <ChampagneGlassIcon className="w-4 h-4 md:w-5 md:h-5 text-gold-400/95 drop-shadow-[0_0_8px_rgba(255,215,0,0.25)]" />
-          </div>
+       {/* HEADER: Sticky on Mobile, Fixed on Desktop */}
+       <header className="sticky top-0 lg:static flex-none h-14 md:h-16 z-40 bg-black/95 backdrop-blur-sm lg:bg-gradient-to-b lg:from-black lg:via-black/95 lg:to-transparent px-4 md:px-6 flex items-center justify-between border-b border-gold-900/30">
+           {/* Left: Branding */}
+           <div className="flex items-center gap-2 min-w-0">
+             <ChampagneBottleIcon className="w-4 h-4 md:w-5 md:h-5 text-gold-500/90 drop-shadow-[0_0_8px_rgba(255,215,0,0.25)]" />
+             <div className="flex flex-col items-start leading-tight cursor-pointer hover:opacity-80 transition-opacity" onClick={() => soundService.playClick()}>
+               <h1 className="text-xl md:text-2xl font-black tracking-tighter text-gold-300 font-sans">
+                 CPJS
+               </h1>
+               <p className="text-[8px] md:text-[10px] font-bold tracking-widest uppercase text-gold-500/80">
+                 CruzPham Jeopardy Studios
+               </p>
+             </div>
+             <ChampagneFlute className="w-4 h-4 md:w-5 md:h-5 text-gold-400/95 drop-shadow-[0_0_8px_rgba(255,215,0,0.25)]" />
+           </div>
 
           {/* Center: Show Title (Desktop) */}
           {activeShowTitle && (
