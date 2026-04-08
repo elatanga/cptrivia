@@ -31,6 +31,29 @@ export interface Player {
   specialMovesUsedNames?: string[];
 }
 
+export type PlayMode = 'INDIVIDUALS' | 'TEAMS';
+export type TeamPlayStyle = 'TEAM_PLAYS_AS_ONE' | 'TEAM_MEMBERS_TAKE_TURNS';
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  score?: number;
+  orderIndex?: number;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  members: TeamMember[];
+  score: number;
+  activeMemberId?: string;
+}
+
+export interface TeamModeConfig {
+  enabled: boolean;
+  teamPlayStyle: TeamPlayStyle;
+}
+
 export interface GameTimer {
   duration: number; 
   endTime: number | null; 
@@ -155,6 +178,9 @@ export interface GameState {
   isGameStarted: boolean;
   categories: Category[];
   players: Player[];
+  playMode?: PlayMode;
+  teamPlayStyle?: TeamPlayStyle;
+  teams?: Team[];
   activeQuestionId: null | string;
   activeCategoryId: null | string;
   selectedPlayerId: null | string;
@@ -391,6 +417,9 @@ export type Difficulty = 'easy' | 'medium' | 'hard' | 'mixed';
 export interface TemplateConfig {
   playerCount: number;
   playerNames?: string[];
+  playMode?: PlayMode;
+  teamPlayStyle?: TeamPlayStyle;
+  teams?: Team[];
   categoryCount: number;
   rowCount: number;
   pointScale?: number;
