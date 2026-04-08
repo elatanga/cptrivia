@@ -75,6 +75,47 @@ describe('TemplateBuilder Teams Mode', () => {
     expect(screen.getByDisplayValue('MEMBER 1')).toBeInTheDocument();
   });
 
+  it('supports adding teams and players from Builder step after board generation path', () => {
+    const initialTemplate: any = {
+      id: 't-1',
+      topic: 'Existing Teams',
+      categories: [
+        {
+          id: 'c1',
+          title: 'Cat 1',
+          questions: [
+            { id: 'q1', text: 'Q1', answer: 'A1', points: 100, isRevealed: false, isAnswered: false, isDoubleOrNothing: false },
+          ],
+        },
+      ],
+      config: {
+        playerCount: 0,
+        playerNames: [],
+        categoryCount: 1,
+        rowCount: 1,
+        playMode: 'TEAMS',
+        teamPlayStyle: 'TEAM_PLAYS_AS_ONE',
+        teams: [],
+      },
+    };
+
+    render(
+      <TemplateBuilder
+        showId="show-1"
+        initialTemplate={initialTemplate}
+        onClose={() => undefined}
+        onSave={() => undefined}
+        addToast={() => undefined}
+      />
+    );
+
+    expect(screen.getByTestId('builder-teams-setup')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('builder-add-team-button'));
+    expect(screen.getByDisplayValue('TEAM 1')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('+ PLAYER'));
+    expect(screen.getByDisplayValue('MEMBER 2')).toBeInTheDocument();
+  });
+
   it('prevents AI generation when Team Mode is invalid instead of failing later on save', () => {
     const addToast = vi.fn();
 
@@ -188,6 +229,54 @@ describe('TemplateBuilder Teams Mode', () => {
       );
       expect(onSave).toHaveBeenCalled();
     });
+  });
+
+  it('keeps Save Template disabled until teams setup is valid, then enables it', () => {
+    const initialTemplate: any = {
+      id: 't-save-gate',
+      topic: 'Teams Save Gate',
+      categories: [
+        {
+          id: 'c1',
+          title: 'Cat 1',
+          questions: [
+            { id: 'q1', text: 'Q1', answer: 'A1', points: 100, isRevealed: false, isAnswered: false, isDoubleOrNothing: false },
+          ],
+        },
+      ],
+      config: {
+        playerCount: 0,
+        playerNames: [],
+        categoryCount: 1,
+        rowCount: 1,
+        playMode: 'TEAMS',
+        teamPlayStyle: 'TEAM_MEMBERS_TAKE_TURNS',
+        teams: [
+          {
+            id: 't1',
+            name: 'TEAM 1',
+            score: 0,
+            members: [{ id: 'm1', name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+          },
+        ],
+      },
+    };
+
+    render(
+      <TemplateBuilder
+        showId="show-1"
+        initialTemplate={initialTemplate}
+        onClose={() => undefined}
+        onSave={() => undefined}
+        addToast={() => undefined}
+      />
+    );
+
+    const saveBtn = screen.getByTestId('save-template-button');
+    expect(saveBtn).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId('builder-add-team-button'));
+    expect(saveBtn).not.toBeDisabled();
   });
 });
 

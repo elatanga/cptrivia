@@ -264,6 +264,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
   const getTeamsValidationError = (): string | null => getTeamsModeValidationError(playMode, teamPlayStyle, teamConfigs);
 
   const teamValidationError = getTeamsValidationError();
+  const canSaveTemplate = !isLocked && !isSaving && !(playMode === 'TEAMS' && !!teamValidationError);
 
   const handleSave = async () => {
     if (isLocked || isSaving) return;
@@ -708,8 +709,10 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                           <p className="text-[9px] text-zinc-500 mt-1">Configure team rosters and team play style.</p>
                         </div>
                         <button
+                          type="button"
                           disabled={isLocked}
                           onClick={handleAddTeam}
+                          data-testid="template-add-team-button"
                           className="text-[10px] text-gold-500 hover:text-white font-bold transition-all flex items-center gap-1"
                         >
                           <Plus className="w-3 h-3" /> ADD TEAM
@@ -750,8 +753,8 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                                 className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[11px] uppercase text-white"
                                 placeholder={`TEAM ${teamIndex + 1}`}
                               />
-                              <button onClick={() => handleAddTeamMember(team.id)} className="text-[10px] text-gold-500 hover:text-white font-bold px-2 py-1 border border-zinc-800 rounded">+ MEMBER</button>
-                              <button onClick={() => handleRemoveTeam(team.id)} className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 border border-zinc-800 rounded">REMOVE</button>
+                              <button type="button" onClick={() => handleAddTeamMember(team.id)} className="text-[10px] text-gold-500 hover:text-white font-bold px-2 py-1 border border-zinc-800 rounded">+ MEMBER</button>
+                              <button type="button" onClick={() => handleRemoveTeam(team.id)} className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 border border-zinc-800 rounded">REMOVE</button>
                             </div>
                             <div className="space-y-1">
                               {team.members.map((member, memberIndex) => (
@@ -762,7 +765,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                                     className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-zinc-200"
                                     placeholder={`MEMBER ${memberIndex + 1}`}
                                   />
-                                  <button onClick={() => handleRemoveTeamMember(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1">X</button>
+                                  <button type="button" onClick={() => handleRemoveTeamMember(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1">X</button>
                                 </div>
                               ))}
                             </div>
@@ -904,7 +907,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
            )}
            <button 
              ref={saveBtnRef}
-             disabled={isLocked || isSaving} 
+             disabled={!canSaveTemplate} 
              onClick={handleSave} 
              data-testid="save-template-button"
              className="bg-gold-600 hover:bg-gold-500 text-black font-roboto font-bold px-4 md:px-6 py-2 rounded-lg flex items-center gap-2 shadow-xl transition-all active:scale-95 border-b-2 border-gold-800"
@@ -958,6 +961,65 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                  <button onClick={() => setIsAutoFit(!isAutoFit)} className={`p-1 rounded ${isAutoFit ? 'text-gold-500 bg-gold-950/30' : 'text-zinc-600 bg-zinc-900'}`}>{isAutoFit ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</button>
               </div>
            </div>
+
+           {playMode === 'TEAMS' && (
+             <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-3 space-y-3" data-testid="builder-teams-setup">
+               <div className="flex items-center justify-between gap-2">
+                 <h4 className="text-[10px] text-zinc-400 uppercase tracking-widest font-black">Teams Setup</h4>
+                 <button
+                   type="button"
+                   disabled={isLocked}
+                   onClick={handleAddTeam}
+                   data-testid="builder-add-team-button"
+                   className="text-[10px] text-gold-500 hover:text-white font-black border border-zinc-700 rounded px-2 py-1 disabled:opacity-40"
+                 >
+                   + TEAM
+                 </button>
+               </div>
+               <p className="text-[9px] text-zinc-500 uppercase tracking-wide">
+                 Add players to each team before continuing.
+               </p>
+               <p className="text-[9px] text-zinc-500 uppercase tracking-wide">
+                 {teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+                   ? 'Players Take Turns requires matching player counts across teams.'
+                   : 'Team Plays As One allows different player counts.'}
+               </p>
+               {teamValidationError && (
+                 <p className="text-[9px] text-amber-300 uppercase tracking-wide font-black border border-amber-600/30 bg-amber-950/20 rounded px-2 py-1">
+                   {teamValidationError}
+                 </p>
+               )}
+
+               <div className="space-y-2 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
+                 {teamConfigs.map((team, teamIndex) => (
+                   <div key={team.id} className="border border-zinc-800 rounded p-2 bg-black/20 space-y-1.5">
+                     <div className="flex items-center gap-2">
+                       <input
+                         value={team.name}
+                         onChange={(e) => handleTeamNameChange(team.id, e.target.value)}
+                         className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-white"
+                         placeholder={`TEAM ${teamIndex + 1}`}
+                       />
+                       <button type="button" onClick={() => handleAddTeamMember(team.id)} className="text-[9px] text-gold-400 border border-zinc-700 rounded px-2 py-1">+ PLAYER</button>
+                       <button type="button" onClick={() => handleRemoveTeam(team.id)} className="text-[9px] text-red-400 border border-zinc-700 rounded px-2 py-1">DEL</button>
+                     </div>
+                     {(team.members || []).map((member, memberIndex) => (
+                       <div key={member.id} className="flex items-center gap-2">
+                         <input
+                           value={member.name}
+                           onChange={(e) => handleTeamMemberNameChange(team.id, member.id, e.target.value)}
+                           className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[9px] uppercase text-zinc-200"
+                           placeholder={`PLAYER ${memberIndex + 1}`}
+                         />
+                         <button type="button" onClick={() => handleRemoveTeamMember(team.id, member.id)} className="text-[9px] text-zinc-500 hover:text-red-400 px-1">X</button>
+                       </div>
+                     ))}
+                     <div className="text-[9px] text-zinc-500 uppercase">{team.name || `TEAM ${teamIndex + 1}`} ({(team.members || []).length} players)</div>
+                   </div>
+                 ))}
+               </div>
+             </div>
+           )}
 
            <div className="pt-4 border-t border-zinc-900">
               <button onClick={handleResetBuilder} className="w-full text-left p-2.5 rounded hover:bg-red-950/20 text-[10px] font-roboto font-bold uppercase text-zinc-300 flex items-center gap-2 transition-colors"><RotateCcw className="w-3.5 h-3.5 text-red-500" /> Reset Board</button>
