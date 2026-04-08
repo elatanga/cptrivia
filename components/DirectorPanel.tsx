@@ -11,6 +11,7 @@ import { CategoryRegenerationMode, isTileActive, preserveTileStateOnRegenerate, 
 import { DirectorAiRegenerator } from './DirectorAiRegenerator';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
 import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
+import { getTeamsValidationError as getTeamsModeValidationError } from '../services/teamsMode';
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
@@ -1009,6 +1010,9 @@ export const DirectorPanel: React.FC<Props> = ({
 
   const isTeamsMode = (gameState.playMode || 'INDIVIDUALS') === 'TEAMS';
   const canEditTeams = !gameState.isGameStarted;
+  const teamsValidationError = isTeamsMode
+    ? getTeamsModeValidationError('TEAMS', gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE', gameState.teams || [])
+    : null;
 
   const setTeamsState = (teams: Team[], teamPlayStyle?: TeamPlayStyle) => {
     const normalizedTeams = teams.map((team, teamIndex) => ({
@@ -1093,6 +1097,15 @@ export const DirectorPanel: React.FC<Props> = ({
       addToast('error', 'Team play style cannot change during active gameplay.');
       return;
     }
+
+    if (teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS') {
+      const nextError = getTeamsModeValidationError('TEAMS', teamPlayStyle, gameState.teams || []);
+      if (nextError) {
+        addToast('error', nextError);
+        return;
+      }
+    }
+
     setTeamsState(gameState.teams || [], teamPlayStyle);
   };
 
@@ -1793,9 +1806,15 @@ export const DirectorPanel: React.FC<Props> = ({
 
                   <div className="text-[10px] text-zinc-500 uppercase">
                     {gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS'
-                      ? 'Team members take turns: individual points display under each team with a team total.'
-                      : 'Team plays as one: score is tracked only at the team level.'}
+                      ? 'Team members take turns: all teams must have the same number of players and rotate by member index across teams.'
+                      : 'Team plays as one: teams can have different numbers of players and score is tracked at the team level.'}
                   </div>
+
+                  {teamsValidationError && (
+                    <div className="text-[10px] text-amber-300 uppercase font-bold tracking-wide border border-amber-500/30 bg-amber-950/20 rounded-lg px-3 py-2">
+                      {teamsValidationError}
+                    </div>
+                  )}
 
                   <div className="flex justify-end">
                     <button

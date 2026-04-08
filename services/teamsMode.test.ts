@@ -4,6 +4,9 @@ import {
   DEFAULT_PLAY_MODE,
   DEFAULT_TEAM_PLAY_STYLE,
   applyScoreDeltaByMode,
+  buildTeamMemberTurnSequence,
+  getNextTeamTurnSelection,
+  getTeamsValidationError,
   normalizeGameStateForTeams,
   normalizeTemplateConfigForTeams,
   rotateActiveMemberForTeamById,
@@ -97,6 +100,136 @@ describe('teamsMode helpers', () => {
     expect(next.playMode).toBe('INDIVIDUALS');
     expect(next.teamPlayStyle).toBe('TEAM_PLAYS_AS_ONE');
     expect(next.teams).toEqual([]);
+  });
+
+  it('validates equal team sizes for TEAM_MEMBERS_TAKE_TURNS', () => {
+    const teams = [
+      makeTeam({ id: 't1', members: [{ id: 'a1', name: 'A1', score: 0, orderIndex: 0 }] }),
+      makeTeam({ id: 't2', members: [{ id: 'b1', name: 'B1', score: 0, orderIndex: 0 }] }),
+    ];
+
+    expect(getTeamsValidationError('TEAMS', 'TEAM_MEMBERS_TAKE_TURNS', teams)).toBeNull();
+  });
+
+  it('fails validation for TEAM_MEMBERS_TAKE_TURNS when team sizes mismatch', () => {
+    const teams = [
+      makeTeam({ id: 't1', members: [{ id: 'a1', name: 'A1', score: 0, orderIndex: 0 }] }),
+      makeTeam({
+        id: 't2',
+        members: [
+          { id: 'b1', name: 'B1', score: 0, orderIndex: 0 },
+          { id: 'b2', name: 'B2', score: 0, orderIndex: 1 },
+        ],
+      }),
+    ];
+
+    expect(getTeamsValidationError('TEAMS', 'TEAM_MEMBERS_TAKE_TURNS', teams)).toContain('same number of players');
+  });
+
+  it('allows mismatched team sizes in TEAM_PLAYS_AS_ONE', () => {
+    const teams = [
+      makeTeam({ id: 't1', members: [{ id: 'a1', name: 'A1', score: 0, orderIndex: 0 }] }),
+      makeTeam({
+        id: 't2',
+        members: [
+          { id: 'b1', name: 'B1', score: 0, orderIndex: 0 },
+          { id: 'b2', name: 'B2', score: 0, orderIndex: 1 },
+        ],
+      }),
+    ];
+
+    expect(getTeamsValidationError('TEAMS', 'TEAM_PLAYS_AS_ONE', teams)).toBeNull();
+  });
+
+  it('builds round-robin team-member turn order by member index across teams', () => {
+    const teams = [
+      makeTeam({
+        id: 'A',
+        members: [
+          { id: 'A1', name: 'A1', score: 0, orderIndex: 0 },
+          { id: 'A2', name: 'A2', score: 0, orderIndex: 1 },
+        ],
+      }),
+      makeTeam({
+        id: 'B',
+        members: [
+          { id: 'B1', name: 'B1', score: 0, orderIndex: 0 },
+          { id: 'B2', name: 'B2', score: 0, orderIndex: 1 },
+        ],
+      }),
+      makeTeam({
+        id: 'C',
+        members: [
+          { id: 'C1', name: 'C1', score: 0, orderIndex: 0 },
+          { id: 'C2', name: 'C2', score: 0, orderIndex: 1 },
+        ],
+      }),
+    ];
+
+    const sequence = buildTeamMemberTurnSequence(teams);
+    expect(sequence.map((entry) => `${entry.teamId}:${entry.memberId}`)).toEqual([
+      'A:A1', 'B:B1', 'C:C1',
+      'A:A2', 'B:B2', 'C:C2',
+    ]);
+  });
+
+  it('wraps to first participant after last team/member in turn sequence', () => {
+    const teams = [
+      makeTeam({
+        id: 'A',
+        activeMemberId: 'A2',
+        members: [
+          { id: 'A1', name: 'A1', score: 0, orderIndex: 0 },
+          { id: 'A2', name: 'A2', score: 0, orderIndex: 1 },
+        ],
+      }),
+      makeTeam({
+        id: 'B',
+        members: [
+          { id: 'B1', name: 'B1', score: 0, orderIndex: 0 },
+          { id: 'B2', name: 'B2', score: 0, orderIndex: 1 },
+        ],
+      }),
+      makeTeam({
+        id: 'C',
+        activeMemberId: 'C2',
+        members: [
+          { id: 'C1', name: 'C1', score: 0, orderIndex: 0 },
+          { id: 'C2', name: 'C2', score: 0, orderIndex: 1 },
+        ],
+      }),
+    ];
+
+    expect(getNextTeamTurnSelection(teams, 'C')).toBe('A');
+  });
+
+  it('resumes auto-advance from manually selected participant position', () => {
+    const teams = [
+      makeTeam({
+        id: 'A',
+        members: [
+          { id: 'A1', name: 'A1', score: 0, orderIndex: 0 },
+          { id: 'A2', name: 'A2', score: 0, orderIndex: 1 },
+        ],
+      }),
+      makeTeam({
+        id: 'B',
+        activeMemberId: 'B2',
+        members: [
+          { id: 'B1', name: 'B1', score: 0, orderIndex: 0 },
+          { id: 'B2', name: 'B2', score: 0, orderIndex: 1 },
+        ],
+      }),
+      makeTeam({
+        id: 'C',
+        members: [
+          { id: 'C1', name: 'C1', score: 0, orderIndex: 0 },
+          { id: 'C2', name: 'C2', score: 0, orderIndex: 1 },
+        ],
+      }),
+    ];
+
+    expect(getNextTeamTurnSelection(teams, 'B')).toBe('C');
   });
 });
 

@@ -95,6 +95,46 @@ describe('TemplateBuilder Teams Mode', () => {
     expect(screen.getByText(/Add at least one team/i)).toBeInTheDocument();
   });
 
+  it('blocks TEAM_MEMBERS_TAKE_TURNS when team sizes do not match', () => {
+    render(
+      <TemplateBuilder
+        showId="show-1"
+        onClose={() => undefined}
+        onSave={() => undefined}
+        addToast={() => undefined}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Teams'));
+    fireEvent.click(screen.getByText(/ADD TEAM/i));
+    fireEvent.click(screen.getByText(/ADD TEAM/i));
+    fireEvent.click(screen.getAllByText('+ MEMBER')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /Team members take turns/i }));
+
+    expect(screen.getByText(/In Team Members Take Turns mode/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Generate Complete Board/i })).toBeDisabled();
+  });
+
+  it('allows TEAM_PLAYS_AS_ONE with mismatched team sizes', () => {
+    render(
+      <TemplateBuilder
+        showId="show-1"
+        onClose={() => undefined}
+        onSave={() => undefined}
+        addToast={() => undefined}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Teams'));
+    fireEvent.click(screen.getByText(/ADD TEAM/i));
+    fireEvent.click(screen.getByText(/ADD TEAM/i));
+    fireEvent.click(screen.getAllByText('+ MEMBER')[0]);
+    fireEvent.change(screen.getByPlaceholderText(/e.g. 90s Pop Culture/i), { target: { value: 'Flexible Teams' } });
+    fireEvent.click(screen.getByRole('button', { name: /Team plays as one/i }));
+
+    expect(screen.getByRole('button', { name: /Generate Complete Board/i })).not.toBeDisabled();
+  });
+
   it('keeps team config intact through generate questions and Save Template', async () => {
     const onSave = vi.fn();
     (generateTriviaGame as any).mockResolvedValue(validGeneratedCategories);
@@ -110,8 +150,11 @@ describe('TemplateBuilder Teams Mode', () => {
 
     fireEvent.click(screen.getByText('Teams'));
     fireEvent.click(screen.getByText(/ADD TEAM/i));
+    fireEvent.click(screen.getByText(/ADD TEAM/i));
     fireEvent.change(screen.getByDisplayValue('TEAM 1'), { target: { value: 'Red Team' } });
-    fireEvent.change(screen.getByDisplayValue('MEMBER 1'), { target: { value: 'Ana' } });
+    fireEvent.change(screen.getByDisplayValue('TEAM 2'), { target: { value: 'Blue Team' } });
+    fireEvent.change(screen.getAllByPlaceholderText('MEMBER 1')[0], { target: { value: 'Ana' } });
+    fireEvent.change(screen.getAllByPlaceholderText('MEMBER 1')[1], { target: { value: 'Ben' } });
     fireEvent.click(screen.getByRole('button', { name: /Team members take turns/i }));
     fireEvent.change(screen.getByPlaceholderText(/e.g. 90s Pop Culture/i), { target: { value: 'Team Trivia Night' } });
 
@@ -134,6 +177,10 @@ describe('TemplateBuilder Teams Mode', () => {
             expect.objectContaining({
               name: 'RED TEAM',
               members: [expect.objectContaining({ name: 'ANA', orderIndex: 0 })],
+            }),
+            expect.objectContaining({
+              name: 'BLUE TEAM',
+              members: [expect.objectContaining({ name: 'BEN', orderIndex: 0 })],
             }),
           ],
         }),

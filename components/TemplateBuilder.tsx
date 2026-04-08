@@ -7,6 +7,7 @@ import { dataService } from '../services/dataService';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { normalizePlayerName } from '../services/utils';
+import { getTeamsValidationError as getTeamsModeValidationError } from '../services/teamsMode';
 
 type GenerationStatus = 'IDLE' | 'GENERATING' | 'APPLYING' | 'COMPLETE' | 'FAILED' | 'CANCELED';
 
@@ -260,20 +261,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     }));
   };
 
-  const getTeamsValidationError = (): string | null => {
-    if (playMode !== 'TEAMS') return null;
-    if (teamConfigs.length === 0) return 'Add at least one team.';
-
-    for (const team of teamConfigs) {
-      if (!String(team.name || '').trim()) return 'Every team must have a name.';
-      if (!Array.isArray(team.members) || team.members.length === 0) return `Team ${team.name || 'Unnamed'} must have at least one member.`;
-      for (const member of team.members) {
-        if (!String(member.name || '').trim()) return `All members in ${team.name || 'team'} need names.`;
-      }
-    }
-
-    return null;
-  };
+  const getTeamsValidationError = (): string | null => getTeamsModeValidationError(playMode, teamPlayStyle, teamConfigs);
 
   const teamValidationError = getTeamsValidationError();
 
@@ -748,8 +736,8 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                       </div>
                       <div className="text-[9px] text-zinc-500 mb-3 uppercase tracking-wide">
                         {teamPlayStyle === 'TEAM_PLAYS_AS_ONE'
-                          ? 'Team plays as one: score is tracked at the team level.'
-                          : 'Team members take turns: individual points display under the team and team total is also shown.'}
+                          ? 'Team plays as one: teams can have different numbers of players and score is tracked at the team level.'
+                          : 'Team members take turns: individual points display under the team, team total is shown, and all teams must have the same number of players.'}
                       </div>
 
                       <div className="space-y-2 overflow-y-auto pr-1 custom-scrollbar">
