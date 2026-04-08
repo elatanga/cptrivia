@@ -14,7 +14,7 @@ import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
-import { deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState } from '../modules/specialMoves/tileTagState';
+import { deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState, getTileSpecialMoveTagText } from '../modules/specialMoves/tileTagState';
 
 interface Props {
   gameState: GameState;
@@ -2187,6 +2187,7 @@ export const DirectorPanel: React.FC<Props> = ({
                       const deployment = currentOverlay.deploymentsByTileId[q.id];
                       const isArmed = deployment?.status === 'ARMED';
                       const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, resolvedSpecialMoveTileIds.has(q.id));
+                      const specialMoveTagText = getTileSpecialMoveTagText(deployment?.moveType, specialMoveTagState);
                       const isPlayable = !q.isAnswered && !q.isVoided;
                       const giftTileDisabledReason = isGiftActivatedMove(selectedMoveType)
                         ? getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, q.id)
@@ -2215,7 +2216,7 @@ export const DirectorPanel: React.FC<Props> = ({
                                 ? 'bg-red-700/90 border-red-400/70 text-red-100'
                                 : 'bg-zinc-800/90 border-zinc-500/60 text-zinc-300 grayscale'}`}
                             >
-                              SPECIAL MOVE!
+                              {specialMoveTagText}
                             </div>
                           )}
                           <div className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
