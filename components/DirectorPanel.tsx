@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, Edit, Save, X, RefreshCw, Wand2, MonitorOff, ExternalLink, RotateCcw, Play, Pause, Timer, Type, Layout, Star, Trash2, AlertTriangle, UserPlus, Check, BarChart3, Info, Hash, Clock, History, Copy, Trash, Download, ChevronDown, ChevronUp, Sparkles, Sliders, Loader2, Minus, Plus, ShieldAlert, Volume2 } from 'lucide-react';
-import { GameState, Question, Difficulty, Category, BoardViewSettings, Player, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType } from '../types';
+import { GameState, Question, Difficulty, Category, BoardViewSettings, Player, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType, Team, TeamPlayStyle } from '../types';
 import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from '../types';
 import { generateSingleQuestion, generateCategoryQuestions } from '../services/geminiService';
 import { logger } from '../services/logger';
@@ -118,7 +118,7 @@ export const DirectorPanel: React.FC<Props> = ({
     searchText: string;
   };
 
-  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'SOUND_BOARD' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
+  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'TEAMS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'SOUND_BOARD' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
   const [editingQuestion, setEditingQuestion] = useState<{cIdx: number, qIdx: number} | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [selectedMoveType, setSelectedMoveType] = useState<SpecialMoveType>('DOUBLE_TROUBLE');
@@ -1007,6 +1007,156 @@ export const DirectorPanel: React.FC<Props> = ({
     addToast('success', `Added ${name}`);
   };
 
+  const isTeamsMode = (gameState.playMode || 'INDIVIDUALS') === 'TEAMS';
+  const canEditTeams = !gameState.isGameStarted;
+
+  const setTeamsState = (teams: Team[], teamPlayStyle?: TeamPlayStyle) => {
+    const normalizedTeams = teams.map((team, teamIndex) => ({
+      ...team,
+      name: normalizePlayerName(team.name) || `TEAM ${teamIndex + 1}`,
+      score: Number(team.score || 0),
+      members: (team.members || []).map((member, memberIndex) => ({
+        ...member,
+        name: normalizePlayerName(member.name) || `MEMBER ${memberIndex + 1}`,
+        score: Number(member.score || 0),
+        orderIndex: memberIndex,
+      })),
+      activeMemberId: team.members?.some((member) => member.id === team.activeMemberId)
+        ? team.activeMemberId
+        : team.members?.[0]?.id,
+    }));
+
+    const contestants = normalizedTeams.map((team) => ({
+      id: team.id,
+      name: team.name,
+      score: Number(team.score || 0),
+      color: '#ffffff',
+      wildcardsUsed: 0,
+      wildcardActive: false,
+      stealsCount: 0,
+      specialMovesUsedCount: 0,
+      specialMovesUsedNames: [],
+    }));
+
+    onUpdateState({
+      ...gameState,
+      playMode: 'TEAMS',
+      teamPlayStyle: teamPlayStyle || gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE',
+      teams: normalizedTeams,
+      players: contestants,
+      selectedPlayerId: contestants.some((player) => player.id === gameState.selectedPlayerId)
+        ? gameState.selectedPlayerId
+        : contestants[0]?.id || null,
+    });
+  };
+
+  const handleToggleTeamsMode = (enabled: boolean) => {
+    if (!canEditTeams) {
+      addToast('error', 'Teams setup is locked once gameplay starts.');
+      return;
+    }
+
+    if (!enabled) {
+      onUpdateState({
+        ...gameState,
+        playMode: 'INDIVIDUALS',
+        teamPlayStyle: gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE',
+        teams: gameState.teams || [],
+      });
+      return;
+    }
+
+    const seedTeams = (gameState.teams && gameState.teams.length > 0)
+      ? gameState.teams
+      : [
+          {
+            id: crypto.randomUUID(),
+            name: 'TEAM 1',
+            score: 0,
+            members: [{ id: crypto.randomUUID(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+            activeMemberId: undefined,
+          },
+          {
+            id: crypto.randomUUID(),
+            name: 'TEAM 2',
+            score: 0,
+            members: [{ id: crypto.randomUUID(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+            activeMemberId: undefined,
+          },
+        ];
+
+    setTeamsState(seedTeams, gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE');
+  };
+
+  const handleUpdateTeamPlayStyle = (teamPlayStyle: TeamPlayStyle) => {
+    if (!canEditTeams) {
+      addToast('error', 'Team play style cannot change during active gameplay.');
+      return;
+    }
+    setTeamsState(gameState.teams || [], teamPlayStyle);
+  };
+
+  const handleAddTeamConfig = () => {
+    if (!canEditTeams) return;
+    const nextTeams = [
+      ...(gameState.teams || []),
+      {
+        id: crypto.randomUUID(),
+        name: `TEAM ${(gameState.teams || []).length + 1}`,
+        score: 0,
+        members: [{ id: crypto.randomUUID(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+        activeMemberId: undefined,
+      },
+    ];
+    setTeamsState(nextTeams);
+  };
+
+  const handleRemoveTeamConfig = (teamId: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).filter((team) => team.id !== teamId));
+  };
+
+  const handleUpdateTeamName = (teamId: string, name: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).map((team) => team.id === teamId ? { ...team, name } : team));
+  };
+
+  const handleAddTeamMemberConfig = (teamId: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).map((team) => {
+      if (team.id !== teamId) return team;
+      const members = [
+        ...(team.members || []),
+        { id: crypto.randomUUID(), name: `MEMBER ${(team.members || []).length + 1}`, score: 0, orderIndex: (team.members || []).length },
+      ];
+      return { ...team, members, activeMemberId: team.activeMemberId || members[0]?.id };
+    }));
+  };
+
+  const handleUpdateTeamMemberConfig = (teamId: string, memberId: string, name: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).map((team) => {
+      if (team.id !== teamId) return team;
+      return {
+        ...team,
+        members: (team.members || []).map((member) => member.id === memberId ? { ...member, name } : member),
+      };
+    }));
+  };
+
+  const handleRemoveTeamMemberConfig = (teamId: string, memberId: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).map((team) => {
+      if (team.id !== teamId) return team;
+      const members = (team.members || []).filter((member) => member.id !== memberId);
+      return {
+        ...team,
+        members,
+        activeMemberId: members.some((member) => member.id === team.activeMemberId) ? team.activeMemberId : members[0]?.id,
+      };
+    }));
+  };
+
   const handleUpdateViewSettings = (updates: Partial<BoardViewSettings>) => {
     const currentSettings = sanitizeBoardViewSettings(gameState.viewSettings);
     const sanitizedPatch = sanitizeBoardViewSettingsPatch(updates);
@@ -1417,6 +1567,9 @@ export const DirectorPanel: React.FC<Props> = ({
           <button onClick={() => setActiveTab('PLAYERS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'PLAYERS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <Users className="w-4 h-4" /> Players
           </button>
+          <button onClick={() => setActiveTab('TEAMS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'TEAMS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
+            <Users className="w-4 h-4" /> Teams
+          </button>
           <button aria-label="Moves Tab" onClick={() => setActiveTab('MOVES')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <ShieldAlert className="w-4 h-4" /> Special Moves
           </button>
@@ -1592,6 +1745,112 @@ export const DirectorPanel: React.FC<Props> = ({
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'TEAMS' && (
+          <div className="space-y-6 animate-in fade-in duration-300 max-w-7xl mx-auto">
+            <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg">
+              <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                <Users className="w-4 h-4" /> Teams Mode
+              </h3>
+              <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Configure teams and team play style.</p>
+              {!canEditTeams && (
+                <p className="text-[10px] text-amber-300 uppercase font-bold mt-2">Teams setup is locked after gameplay starts.</p>
+              )}
+            </div>
+
+            <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between gap-3 bg-black/40 border border-zinc-800 rounded-lg px-3 py-2">
+                <span className="text-[11px] uppercase tracking-wider font-black text-zinc-300">Teams mode enabled</span>
+                <button
+                  onClick={() => handleToggleTeamsMode(!isTeamsMode)}
+                  className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-widest ${isTeamsMode ? 'bg-cyan-600 text-black' : 'bg-zinc-700 text-zinc-200'}`}
+                >
+                  {isTeamsMode ? 'On' : 'Off'}
+                </button>
+              </div>
+
+              {isTeamsMode && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      disabled={!canEditTeams}
+                      onClick={() => handleUpdateTeamPlayStyle('TEAM_PLAYS_AS_ONE')}
+                      className={`py-2 rounded text-[10px] font-bold border transition-all ${gameState.teamPlayStyle === 'TEAM_PLAYS_AS_ONE' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                    >
+                      Team plays as one
+                    </button>
+                    <button
+                      disabled={!canEditTeams}
+                      onClick={() => handleUpdateTeamPlayStyle('TEAM_MEMBERS_TAKE_TURNS')}
+                      className={`py-2 rounded text-[10px] font-bold border transition-all ${gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                    >
+                      Team members take turns
+                    </button>
+                  </div>
+
+                  <div className="text-[10px] text-zinc-500 uppercase">
+                    {gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+                      ? 'Team members take turns: individual points display under each team with a team total.'
+                      : 'Team plays as one: score is tracked only at the team level.'}
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      disabled={!canEditTeams}
+                      onClick={handleAddTeamConfig}
+                      className="bg-gold-600 hover:bg-gold-500 text-black font-black px-4 py-2 rounded-xl text-[10px] flex items-center gap-2 uppercase disabled:opacity-40"
+                    >
+                      <Plus className="w-3 h-3" /> Add Team
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {(gameState.teams || []).map((team) => (
+                      <div key={team.id} className="bg-black/40 border border-zinc-800 rounded-xl p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <input
+                            disabled={!canEditTeams}
+                            value={team.name}
+                            onChange={(e) => handleUpdateTeamName(team.id, e.target.value)}
+                            className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[11px] uppercase text-white"
+                            placeholder="TEAM NAME"
+                          />
+                          <span className="text-[10px] px-2 py-1 rounded border border-blue-700/40 bg-blue-900/20 text-blue-300 uppercase font-black">
+                            {gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'TURN MODE' : 'PLAYS AS ONE'}
+                          </span>
+                          <button disabled={!canEditTeams} onClick={() => handleAddTeamMemberConfig(team.id)} className="text-[10px] text-gold-500 hover:text-white font-bold px-2 py-1 border border-zinc-800 rounded">+ MEMBER</button>
+                          <button disabled={!canEditTeams} onClick={() => handleRemoveTeamConfig(team.id)} className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 border border-zinc-800 rounded">REMOVE</button>
+                        </div>
+
+                        <div className="space-y-1">
+                          {(team.members || []).map((member) => (
+                            <div key={member.id} className="flex items-center gap-2">
+                              <input
+                                disabled={!canEditTeams}
+                                value={member.name}
+                                onChange={(e) => handleUpdateTeamMemberConfig(team.id, member.id, e.target.value)}
+                                className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-zinc-200"
+                                placeholder="MEMBER NAME"
+                              />
+                              <button disabled={!canEditTeams} onClick={() => handleRemoveTeamMemberConfig(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1">X</button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-2 text-[9px] text-zinc-500 uppercase">{team.name || 'TEAM'} ({(team.members || []).length} members)</div>
+                      </div>
+                    ))}
+                    {(gameState.teams || []).length === 0 && (
+                      <div className="text-[10px] text-zinc-500 uppercase border border-dashed border-zinc-800 rounded-lg p-3 text-center">
+                        No teams configured.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
