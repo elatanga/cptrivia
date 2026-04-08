@@ -4,6 +4,21 @@ const SPECIAL_MOVE_NOTE_REGEX = /double|triple|safe bet|lockout|super save|golde
 
 export type TileSpecialMoveTagState = 'none' | 'armed' | 'resolved';
 
+const SPECIAL_MOVE_LABELS: Record<string, string> = {
+  DOUBLE_TROUBLE: 'DOUBLE OR LOSE',
+  TRIPLE_THREAT: 'TRIPLE OR LOSE',
+  SABOTAGE: 'SAFE BET',
+  SAFE_BET: 'SAFE BET',
+  MEGA_STEAL: 'LOCKOUT',
+  LOCKOUT: 'LOCKOUT',
+  SUPER_SAVE: 'SUPER SAVE',
+  GOLDEN_GAMBLE: 'GOLDEN GAMBLE',
+  SHIELD_BOOST: 'SHIELD BOOST',
+  FINAL_SHOT: 'FINAL SHOT',
+  DOUBLE_WINS_OR_NOTHING: 'DOUBLE WINS OR NOTHING',
+  TRIPLE_WINS_OR_NOTHING: 'TRIPLE WINS OR NOTHING',
+};
+
 const isSpecialMoveContext = (event: GameAnalyticsEvent): boolean => {
   const context = event.context || {};
   if (context.specialMoveType || context.specialMoveName) return true;
@@ -28,5 +43,14 @@ export const getTileSpecialMoveTagState = (isArmed: boolean, wasResolved: boolea
   if (wasResolved) return 'resolved';
   if (isArmed) return 'armed';
   return 'none';
+};
+
+export const getTileSpecialMoveTagText = (
+  moveType: string | undefined,
+  state: TileSpecialMoveTagState
+): string => {
+  if (state === 'resolved') return 'MOVE RESOLVED';
+  if (!moveType) return 'SPECIAL MOVE';
+  return SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ');
 };
 
