@@ -86,4 +86,57 @@ describe('DirectorAiRegenerator: Board-Wide Logic', () => {
       expect(mockOnUpdateState).not.toHaveBeenCalled(); // No changes applied
     });
   });
+
+  it('C) TRANSFORM: applies optional post-success state transform before update', async () => {
+    const aiResult = [{
+      id: 'ai-gen-id', title: 'New Science',
+      questions: [{ id: 'ai-gen-q', text: 'New AI Q', answer: 'New AI A', points: 5000, isRevealed: false, isAnswered: false, isDoubleOrNothing: false }]
+    }];
+    vi.mocked(geminiService.generateTriviaGame).mockResolvedValue(aiResult);
+
+    const transformState = vi.fn((state: GameState) => ({
+      ...state,
+      players: [{ id: 'p1', name: 'TEAM A', score: 0, color: '#fff' }],
+    }));
+
+    render(
+      <DirectorAiRegenerator
+        gameState={baseState}
+        onUpdateState={mockOnUpdateState}
+        addToast={mockAddToast}
+        onTransformSuccessfulState={transformState}
+      />
+    );
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'New Topic' } });
+    fireEvent.click(screen.getByText('Regenerate All'));
+
+    await waitFor(() => {
+      expect(transformState).toHaveBeenCalledTimes(1);
+      const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
+      expect(nextState.players[0].score).toBe(0);
+    });
+  });
+
+  it('D) TRANSFORM: does not invoke post-success transform on regeneration failure', async () => {
+    vi.mocked(geminiService.generateTriviaGame).mockRejectedValue(new Error('Rate Limit'));
+    const transformState = vi.fn((state: GameState) => state);
+
+    render(
+      <DirectorAiRegenerator
+        gameState={baseState}
+        onUpdateState={mockOnUpdateState}
+        addToast={mockAddToast}
+        onTransformSuccessfulState={transformState}
+      />
+    );
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Broken' } });
+    fireEvent.click(screen.getByText('Regenerate All'));
+
+    await waitFor(() => {
+      expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringContaining('Rate Limit'));
+      expect(transformState).not.toHaveBeenCalled();
+    });
+  });
 });

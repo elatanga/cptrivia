@@ -22,10 +22,21 @@ import { normalizePlayerName } from './services/utils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
 import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specialMoves/logic';
-import { deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
+import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { getNextPlayerSelection, getInitialAutoSelectedPlayer } from './services/playerSelectionCycler';
+import {
+  DEFAULT_PLAY_MODE,
+  DEFAULT_TEAM_PLAY_STYLE,
+  applyScoreDeltaByMode,
+  buildContestantsFromTeams,
+  getNextTeamTurnSelection,
+  getTeamsValidationError,
+  normalizeGameStateForTeams,
+  normalizeTemplateConfigForTeams,
+  rotateActiveMemberForTeamById,
+} from './services/teamsMode';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
 
 const QUESTION_TIMER_DURATION_OPTIONS = [5, 7, 8, 10, 15] as const;
@@ -131,6 +142,9 @@ const App: React.FC = () => {
     isGameStarted: false,
     categories: [],
     players: [],
+    playMode: DEFAULT_PLAY_MODE,
+    teamPlayStyle: DEFAULT_TEAM_PLAY_STYLE,
+    teams: [],
     activeQuestionId: null,
     activeCategoryId: null,
     selectedPlayerId: null,
@@ -182,6 +196,7 @@ const App: React.FC = () => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const specialMovesOverlay = useSpecialMovesOverlay(gameState.isGameStarted ? activeShow?.id : undefined);
   const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
+  const resolvedSpecialMoveLabelsByTileId = useMemo(() => deriveResolvedSpecialMoveLabelsByTileId(gameState.events), [gameState.events]);
   // Ref keeps the overlay current inside stable callbacks without being a dep.
   const specialMovesOverlayRef = useRef(specialMovesOverlay);
   useEffect(() => {
@@ -619,7 +634,8 @@ const App: React.FC = () => {
 
   const handleStorageChange = useCallback((e: StorageEvent) => {
     if (e.key === 'cruzpham_gamestate' && e.newValue) {
-      setGameState(JSON.parse(e.newValue));
+      const parsed = normalizeGameStateForTeams(JSON.parse(e.newValue));
+      setGameState(parsed);
       return;
     }
 
@@ -955,13 +971,20 @@ const App: React.FC = () => {
              specialMovesUsedCount: Number(p?.specialMovesUsedCount || 0),
              specialMovesUsedNames: Array.isArray(p?.specialMovesUsedNames) ? p.specialMovesUsedNames : [],
            }));
+           const normalized = normalizeGameStateForTeams(parsed as GameState);
+           if (normalized.playMode === 'TEAMS' && normalized.players.length === 0 && (normalized.teams || []).length > 0) {
+             normalized.players = buildContestantsFromTeams(normalized.teams || []);
+           }
+           if (normalized.players.length > 0 && !normalized.players.some((player) => player.id === normalized.selectedPlayerId)) {
+             normalized.selectedPlayerId = normalized.players[0].id;
+           }
            
-           if (!parsed.lastPlays) parsed.lastPlays = [];
-           if (!parsed.events) parsed.events = [];
+           if (!normalized.lastPlays) normalized.lastPlays = [];
+           if (!normalized.events) normalized.events = [];
            
-           setGameState(parsed);
-           if (parsed.showTitle && !activeShow) {
-              setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: parsed.showTitle, createdAt: '' });
+           setGameState(normalized);
+           if (normalized.showTitle && !activeShow) {
+              setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: normalized.showTitle, createdAt: '' });
            }
          }
 
@@ -1093,14 +1116,47 @@ const App: React.FC = () => {
       };
     });
 
+    const normalizedTemplateConfig = normalizeTemplateConfigForTeams(template.config);
+    const templateTeamsValidationError = getTeamsValidationError(
+      normalizedTemplateConfig.playMode || DEFAULT_PLAY_MODE,
+      normalizedTemplateConfig.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE,
+      normalizedTemplateConfig.teams || []
+    );
+    if (templateTeamsValidationError) {
+      logger.warn('template_play_blocked_invalid_teams', {
+        templateId: template.id,
+        reason: templateTeamsValidationError,
+        playMode: normalizedTemplateConfig.playMode,
+        teamPlayStyle: normalizedTemplateConfig.teamPlayStyle,
+      });
+      addToast('error', templateTeamsValidationError);
+      return;
+    }
+
+    const isTeamsMode = normalizedTemplateConfig.playMode === 'TEAMS' && (normalizedTemplateConfig.teams || []).length > 0;
     const targetPlayerCount = resolveTemplatePlayerCount(template);
     const timerEnabledFromTemplate = resolveTemplateTimerEnabled(template, questionTimerEnabled);
 
-    const initPlayers: Player[] = (template.config.playerNames || []).slice(0, Math.max(0, targetPlayerCount)).map(name => ({
-      id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: []
-    }));
+    const initTeams = isTeamsMode
+      ? (normalizedTemplateConfig.teams || []).map((team) => ({
+          ...team,
+          score: 0,
+          members: (team.members || []).map((member, index) => ({
+            ...member,
+            score: 0,
+            orderIndex: Number.isFinite(Number(member.orderIndex)) ? Number(member.orderIndex) : index,
+          })),
+          activeMemberId: team.members?.[0]?.id,
+        }))
+      : [];
 
-    if (initPlayers.length === 0 && targetPlayerCount > 0) {
+    const initPlayers: Player[] = isTeamsMode
+      ? buildContestantsFromTeams(initTeams)
+      : (template.config.playerNames || []).slice(0, Math.max(0, targetPlayerCount)).map(name => ({
+          id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: []
+        }));
+
+    if (!isTeamsMode && initPlayers.length === 0 && targetPlayerCount > 0) {
       for (let i = 0; i < targetPlayerCount; i++) {
         initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] });
       }
@@ -1122,6 +1178,9 @@ const App: React.FC = () => {
       isGameStarted: true,
       categories: initCategories,
       players: initPlayers,
+      playMode: isTeamsMode ? 'TEAMS' : 'INDIVIDUALS',
+      teamPlayStyle: normalizedTemplateConfig.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE,
+      teams: initTeams,
       activeQuestionId: null,
       activeCategoryId: null,
       selectedPlayerId: initPlayers.length > 0 ? initPlayers[0].id : null,
@@ -1364,10 +1423,24 @@ const App: React.FC = () => {
       });
     }
 
+    let newTeams = [...(current.teams || [])];
+    const activePlayMode = current.playMode || DEFAULT_PLAY_MODE;
+    const activeTeamStyle = current.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE;
+    const scoringTargetId = (action === 'award' || action === 'steal') ? targetPlayerId : (resolvesAsFail ? current.selectedPlayerId : null);
+    const scoringDelta = (action === 'award' || action === 'steal' || resolvesAsFail) ? points : 0;
+
+    if (activePlayMode === 'TEAMS' && scoringTargetId && scoringDelta !== 0) {
+      newTeams = applyScoreDeltaByMode(newTeams, scoringTargetId, scoringDelta, activeTeamStyle);
+      if (activeTeamStyle === 'TEAM_MEMBERS_TAKE_TURNS') {
+        newTeams = rotateActiveMemberForTeamById(newTeams, scoringTargetId);
+      }
+    }
+
     const newState: GameState = {
       ...current,
       categories: newCategories,
       players: newPlayers,
+      teams: newTeams,
       activeQuestionId: null,
       activeCategoryId: null,
       timer: { ...current.timer, endTime: null, isRunning: false },
@@ -1430,7 +1503,11 @@ const App: React.FC = () => {
     // Only advance if this was a scored play (award, steal, or fail resolution)
     const shouldAutoAdvance = action === 'award' || action === 'steal' || resolvesAsFail;
     if (shouldAutoAdvance && newPlayers.length > 0) {
-      const nextSelectedPlayerId = getNextPlayerSelection(newPlayers, current.selectedPlayerId);
+      const autoAdvanceFromTeamId = scoringTargetId || current.selectedPlayerId;
+      const nextSelectedPlayerId =
+        activePlayMode === 'TEAMS' && activeTeamStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+          ? getNextTeamTurnSelection(newTeams, autoAdvanceFromTeamId)
+          : getNextPlayerSelection(newPlayers, current.selectedPlayerId);
       if (nextSelectedPlayerId && nextSelectedPlayerId !== current.selectedPlayerId) {
         const nextPlayer = newPlayers.find(p => p.id === nextSelectedPlayerId);
         if (nextPlayer) {
@@ -1501,7 +1578,17 @@ const App: React.FC = () => {
          context: { playerName: p.name, playerId, delta, note: 'Manual score adjustment' }
       });
     }
-    saveGameState({ ...gameState, players: gameState.players.map(p => p.id === playerId ? { ...p, score: p.score + delta } : p) });
+    const updatedPlayers = gameState.players.map(p => p.id === playerId ? { ...p, score: p.score + delta } : p);
+    let updatedTeams = gameState.teams || [];
+    if ((gameState.playMode || DEFAULT_PLAY_MODE) === 'TEAMS') {
+      updatedTeams = applyScoreDeltaByMode(
+        updatedTeams,
+        playerId,
+        delta,
+        gameState.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE
+      );
+    }
+    saveGameState({ ...gameState, players: updatedPlayers, teams: updatedTeams });
   };
 
   const handleSelectPlayer = (id: string) => {
@@ -1670,10 +1757,10 @@ const App: React.FC = () => {
                             <button onClick={() => { soundService.playClick(); setShowEndGameConfirm(true); }} type="button" className="text-[10px] md:text-xs uppercase text-red-500 hover:text-red-600 font-bold tracking-wider flex items-center gap-2"><Power className="w-3 h-3" /> End Show</button>
                             <button onClick={() => setViewMode('DIRECTOR')} className="text-[10px] md:text-xs uppercase font-bold text-zinc-500 hover:text-zinc-800 flex items-center gap-2 px-3 py-1.5 rounded transition-colors"><Grid className="w-3 h-3" /> Director</button>
                           </div>
-                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
+                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} resolvedSpecialMoveLabelsByTileId={resolvedSpecialMoveLabelsByTileId} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
                         </div>
                         <div className="order-1 md:order-2 flex-none h-auto lg:h-full w-full md:w-auto relative z-30">
-                          <Scoreboard players={gameState.players} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
+                          <Scoreboard players={gameState.players} teams={gameState.teams || []} playMode={gameState.playMode || DEFAULT_PLAY_MODE} teamPlayStyle={gameState.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
                         </div>
                         {activeQuestion && activeCategory && (
                           (() => {

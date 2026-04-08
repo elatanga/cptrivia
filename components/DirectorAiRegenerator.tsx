@@ -12,9 +12,10 @@ interface Props {
   onUpdateState: (newState: GameState) => void;
   addToast: (type: 'success' | 'error' | 'info', msg: string) => void;
   emitGameEvent?: (type: any, payload: any) => void;
+  onTransformSuccessfulState?: (nextState: GameState) => GameState;
 }
 
-export const DirectorAiRegenerator: React.FC<Props> = ({ gameState, onUpdateState, addToast, emitGameEvent }) => {
+export const DirectorAiRegenerator: React.FC<Props> = ({ gameState, onUpdateState, addToast, emitGameEvent, onTransformSuccessfulState }) => {
   const [prompt, setPrompt] = useState('');
   const [difficulty, setDifficulty] = useState<Difficulty>('mixed');
   const [isLoading, setIsLoading] = useState(false);
@@ -69,14 +70,19 @@ export const DirectorAiRegenerator: React.FC<Props> = ({ gameState, onUpdateStat
       // Full-board reset: regenerate all categories and clear progress flags to active/playable defaults.
       const nextCats: Category[] = applyBoardMasterRegeneration(gameState.categories, aiCats);
 
-      // 4. Single atomic state update to prevent UI drift
-      onUpdateState({
+      const regeneratedState: GameState = {
         ...gameState,
         showTitle: prompt,
         categories: nextCats,
         activeCategoryId: null,
         activeQuestionId: null,
-      });
+      };
+
+      // 4. Single atomic state update to prevent UI drift
+      const finalState = onTransformSuccessfulState
+        ? onTransformSuccessfulState(regeneratedState)
+        : regeneratedState;
+      onUpdateState(finalState);
 
       logger.info('board_regen_master_complete', { genId, categories: catCount, tiles: catCount * rowCount, resetToActive: true });
       emitGameEvent?.('AI_BOARD_REGEN_APPLIED', {
