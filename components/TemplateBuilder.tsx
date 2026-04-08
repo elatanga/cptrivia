@@ -275,12 +275,19 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     return null;
   };
 
+  const teamValidationError = getTeamsValidationError();
+
   const handleSave = async () => {
     if (isLocked || isSaving) return;
     soundService.playClick();
 
     const teamsValidationError = getTeamsValidationError();
     if (teamsValidationError) {
+      logger.warn('template_team_validation_failed', {
+        source: 'save',
+        playMode,
+        reason: teamsValidationError,
+      });
       addToast('error', teamsValidationError);
       return;
     }
@@ -465,6 +472,11 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     }
     const teamsValidationError = getTeamsValidationError();
     if (teamsValidationError) {
+      logger.warn('template_team_validation_failed', {
+        source: 'manual_builder_start',
+        playMode,
+        reason: teamsValidationError,
+      });
       addToast('error', teamsValidationError);
       return;
     }
@@ -827,6 +839,16 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                     <button 
                       onClick={() => {
                         if (aiPrompt) {
+                           const teamsValidationError = getTeamsValidationError();
+                           if (teamsValidationError) {
+                             logger.warn('template_team_validation_failed', {
+                               source: 'ai_board_generation',
+                               playMode,
+                               reason: teamsValidationError,
+                             });
+                             addToast('error', teamsValidationError);
+                             return;
+                           }
                           soundService.playClick();
                           const newCats = Array.from({ length: config.catCount }).map((_, cI) => ({
                             id: makeStableId(), title: `AI Generating...`,
@@ -837,11 +859,16 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                           handleAiFillBoard(aiPrompt, aiDifficulty);
                         }
                       }}
-                      disabled={!aiPrompt || isLocked}
+                       disabled={!aiPrompt || isLocked || (playMode === 'TEAMS' && !!teamValidationError)}
                       className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-roboto font-bold rounded shadow-xl flex items-center justify-center gap-3 transition-all disabled:opacity-30 uppercase tracking-[0.15em] text-xs active:scale-95"
                     >
                       <Sparkles className="w-5 h-5" /> Generate Complete Board
                     </button>
+                     {playMode === 'TEAMS' && teamValidationError && (
+                       <p className="mt-2 text-[10px] text-amber-300/90 font-bold uppercase tracking-wide">
+                         {teamValidationError}
+                       </p>
+                     )}
                  </div>
             </div>
           </div>
