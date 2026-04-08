@@ -111,7 +111,7 @@ export const BootstrapScreen: React.FC<Props> = ({ onComplete, addToast }) => {
         )}
 
         <div className="mt-12 pt-6 border-t border-gold-900/10 text-center">
-          <p className="text-zinc-700 text-[9px] font-mono uppercase tracking-[0.3em]">CP Jeopardy Studios • Security Layer v4.0</p>
+          <p className="text-zinc-700 text-[9px] font-mono uppercase tracking-[0.3em]">CPJS — CruzPham Jeopardy Studios • Security Layer v4.0</p>
         </div>
       </div>
     </div>
