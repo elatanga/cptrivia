@@ -1077,7 +1077,7 @@ const App: React.FC = () => {
   const handleLoginSuccess = (newSession: Session) => {
     setSession({ id: newSession.id, username: newSession.username, role: newSession.role });
     localStorage.setItem('cruzpham_active_session_id', newSession.id);
-    addToast('success', 'Welcome to CruzPham Trivia Studios!');
+    addToast('success', 'Welcome to CP Jeopardy Studios!');
   };
 
   const handleLogout = () => {
