@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, Edit, Save, X, RefreshCw, Wand2, MonitorOff, ExternalLink, RotateCcw, Play, Pause, Timer, Type, Layout, Star, Trash2, AlertTriangle, UserPlus, Check, BarChart3, Info, Hash, Clock, History, Copy, Trash, Download, ChevronDown, ChevronUp, Sparkles, Sliders, Loader2, Minus, Plus, ShieldAlert, Volume2 } from 'lucide-react';
-import { GameState, Question, Difficulty, Category, BoardViewSettings, Player, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType } from '../types';
+import { GameState, Question, Difficulty, Category, BoardViewSettings, Player, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType, Team, TeamPlayStyle } from '../types';
 import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from '../types';
 import { generateSingleQuestion, generateCategoryQuestions } from '../services/geminiService';
 import { logger } from '../services/logger';
@@ -11,10 +11,11 @@ import { CategoryRegenerationMode, isTileActive, preserveTileStateOnRegenerate, 
 import { DirectorAiRegenerator } from './DirectorAiRegenerator';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
 import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
+import { getTeamsValidationError as getTeamsModeValidationError, resetLiveScoresByMode } from '../services/teamsMode';
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
-import { deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState } from '../modules/specialMoves/tileTagState';
+import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState, getTileSpecialMoveTagText } from '../modules/specialMoves/tileTagState';
 
 interface Props {
   gameState: GameState;
@@ -118,7 +119,7 @@ export const DirectorPanel: React.FC<Props> = ({
     searchText: string;
   };
 
-  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'SOUND_BOARD' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
+  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'TEAMS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'SOUND_BOARD' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
   const [editingQuestion, setEditingQuestion] = useState<{cIdx: number, qIdx: number} | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [selectedMoveType, setSelectedMoveType] = useState<SpecialMoveType>('DOUBLE_TROUBLE');
@@ -713,6 +714,7 @@ export const DirectorPanel: React.FC<Props> = ({
     version: 1
   };
   const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
+  const resolvedSpecialMoveLabelsByTileId = useMemo(() => deriveResolvedSpecialMoveLabelsByTileId(gameState.events), [gameState.events]);
 
   const isEndgameMove = (moveType: SpecialMoveType) => moveType === 'DOUBLE_WINS_OR_NOTHING' || moveType === 'TRIPLE_WINS_OR_NOTHING';
   const isTileMove = (moveType: SpecialMoveType) => !isEndgameMove(moveType);
@@ -1007,6 +1009,170 @@ export const DirectorPanel: React.FC<Props> = ({
     addToast('success', `Added ${name}`);
   };
 
+  const isTeamsMode = (gameState.playMode || 'INDIVIDUALS') === 'TEAMS';
+  const activeTeamPlayStyle = gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE';
+  const teamPlayStyleLabel = activeTeamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'TAKE TURNS' : 'PLAYS AS ONE';
+  const canEditTeams = !gameState.isGameStarted;
+  const teamsValidationError = isTeamsMode
+    ? getTeamsModeValidationError('TEAMS', gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE', gameState.teams || [])
+    : null;
+
+  const setTeamsState = (teams: Team[], teamPlayStyle?: TeamPlayStyle) => {
+    const normalizedTeams = teams.map((team, teamIndex) => ({
+      ...team,
+      name: normalizePlayerName(team.name) || `TEAM ${teamIndex + 1}`,
+      score: Number(team.score || 0),
+      members: (team.members || []).map((member, memberIndex) => ({
+        ...member,
+        name: normalizePlayerName(member.name) || `MEMBER ${memberIndex + 1}`,
+        score: Number(member.score || 0),
+        orderIndex: memberIndex,
+      })),
+      activeMemberId: team.members?.some((member) => member.id === team.activeMemberId)
+        ? team.activeMemberId
+        : team.members?.[0]?.id,
+    }));
+
+    const contestants = normalizedTeams.map((team) => ({
+      id: team.id,
+      name: team.name,
+      score: Number(team.score || 0),
+      color: '#ffffff',
+      wildcardsUsed: 0,
+      wildcardActive: false,
+      stealsCount: 0,
+      specialMovesUsedCount: 0,
+      specialMovesUsedNames: [],
+    }));
+
+    onUpdateState({
+      ...gameState,
+      playMode: 'TEAMS',
+      teamPlayStyle: teamPlayStyle || gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE',
+      teams: normalizedTeams,
+      players: contestants,
+      selectedPlayerId: contestants.some((player) => player.id === gameState.selectedPlayerId)
+        ? gameState.selectedPlayerId
+        : contestants[0]?.id || null,
+    });
+  };
+
+  const handleToggleTeamsMode = (enabled: boolean) => {
+    if (!canEditTeams) {
+      addToast('error', 'Teams setup is locked once gameplay starts.');
+      return;
+    }
+
+    if (!enabled) {
+      onUpdateState({
+        ...gameState,
+        playMode: 'INDIVIDUALS',
+        teamPlayStyle: gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE',
+        teams: gameState.teams || [],
+      });
+      return;
+    }
+
+    const seedTeams = (gameState.teams && gameState.teams.length > 0)
+      ? gameState.teams
+      : [
+          {
+            id: crypto.randomUUID(),
+            name: 'TEAM 1',
+            score: 0,
+            members: [{ id: crypto.randomUUID(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+            activeMemberId: undefined,
+          },
+          {
+            id: crypto.randomUUID(),
+            name: 'TEAM 2',
+            score: 0,
+            members: [{ id: crypto.randomUUID(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+            activeMemberId: undefined,
+          },
+        ];
+
+    setTeamsState(seedTeams, gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE');
+  };
+
+  const handleUpdateTeamPlayStyle = (teamPlayStyle: TeamPlayStyle) => {
+    if (!canEditTeams) {
+      addToast('error', 'Team play style cannot change during active gameplay.');
+      return;
+    }
+
+    if (teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS') {
+      const nextError = getTeamsModeValidationError('TEAMS', teamPlayStyle, gameState.teams || []);
+      if (nextError) {
+        addToast('error', nextError);
+        return;
+      }
+    }
+
+    setTeamsState(gameState.teams || [], teamPlayStyle);
+  };
+
+  const handleAddTeamConfig = () => {
+    if (!canEditTeams) return;
+    const nextTeams = [
+      ...(gameState.teams || []),
+      {
+        id: crypto.randomUUID(),
+        name: `TEAM ${(gameState.teams || []).length + 1}`,
+        score: 0,
+        members: [{ id: crypto.randomUUID(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+        activeMemberId: undefined,
+      },
+    ];
+    setTeamsState(nextTeams);
+  };
+
+  const handleRemoveTeamConfig = (teamId: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).filter((team) => team.id !== teamId));
+  };
+
+  const handleUpdateTeamName = (teamId: string, name: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).map((team) => team.id === teamId ? { ...team, name } : team));
+  };
+
+  const handleAddTeamMemberConfig = (teamId: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).map((team) => {
+      if (team.id !== teamId) return team;
+      const members = [
+        ...(team.members || []),
+        { id: crypto.randomUUID(), name: `MEMBER ${(team.members || []).length + 1}`, score: 0, orderIndex: (team.members || []).length },
+      ];
+      return { ...team, members, activeMemberId: team.activeMemberId || members[0]?.id };
+    }));
+  };
+
+  const handleUpdateTeamMemberConfig = (teamId: string, memberId: string, name: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).map((team) => {
+      if (team.id !== teamId) return team;
+      return {
+        ...team,
+        members: (team.members || []).map((member) => member.id === memberId ? { ...member, name } : member),
+      };
+    }));
+  };
+
+  const handleRemoveTeamMemberConfig = (teamId: string, memberId: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).map((team) => {
+      if (team.id !== teamId) return team;
+      const members = (team.members || []).filter((member) => member.id !== memberId);
+      return {
+        ...team,
+        members,
+        activeMemberId: members.some((member) => member.id === team.activeMemberId) ? team.activeMemberId : members[0]?.id,
+      };
+    }));
+  };
+
   const handleUpdateViewSettings = (updates: Partial<BoardViewSettings>) => {
     const currentSettings = sanitizeBoardViewSettings(gameState.viewSettings);
     const sanitizedPatch = sanitizeBoardViewSettingsPatch(updates);
@@ -1040,6 +1206,48 @@ export const DirectorPanel: React.FC<Props> = ({
       actor: { role: 'director' }, 
       context: { after: safeUpdates } 
     });
+  };
+
+  const safeConfirm = (message: string): boolean => {
+    try {
+      return typeof window !== 'undefined' && typeof window.confirm === 'function'
+        ? window.confirm(message)
+        : false;
+    } catch {
+      return false;
+    }
+  };
+
+  const buildStateWithResetLiveScores = (state: GameState): GameState => {
+    const mode = state.playMode || 'INDIVIDUALS';
+    const { players, teams } = resetLiveScoresByMode(state.players || [], state.teams || [], mode);
+    return {
+      ...state,
+      players,
+      teams,
+    };
+  };
+
+  const handleResetLiveScores = () => {
+    if (!safeConfirm('Reset all live scores to zero?')) return;
+    onUpdateState(buildStateWithResetLiveScores(gameState));
+    emitGameEvent('SCORE_ADJUSTED', {
+      actor: { role: 'director' },
+      context: { note: 'Reset all live scores to zero from Players tab', delta: 0 },
+    });
+    addToast('info', 'Live scores reset to zero.');
+  };
+
+  const transformStateAfterBoardRegen = (nextState: GameState): GameState => {
+    if (!safeConfirm('Do you also want to reset live scores to zero?')) {
+      return nextState;
+    }
+    emitGameEvent('SCORE_ADJUSTED', {
+      actor: { role: 'director' },
+      context: { note: 'Reset all live scores to zero after AI board regeneration', delta: 0 },
+    });
+    addToast('info', 'Board regenerated and live scores reset to zero.');
+    return buildStateWithResetLiveScores(nextState);
   };
 
   const handleArmMove = async (tileId: string) => {
@@ -1417,6 +1625,9 @@ export const DirectorPanel: React.FC<Props> = ({
           <button onClick={() => setActiveTab('PLAYERS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'PLAYERS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <Users className="w-4 h-4" /> Players
           </button>
+          <button onClick={() => setActiveTab('TEAMS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'TEAMS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
+            <Users className="w-4 h-4" /> Teams
+          </button>
           <button aria-label="Moves Tab" onClick={() => setActiveTab('MOVES')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <ShieldAlert className="w-4 h-4" /> Special Moves
           </button>
@@ -1457,35 +1668,53 @@ export const DirectorPanel: React.FC<Props> = ({
                 <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
                   <Users className="w-4 h-4" /> Contestant Management
                 </h3>
-                <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Live roster overrides for game session</p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Live roster overrides for game session</span>
+                  {isTeamsMode && (
+                    <>
+                      <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-blue-200">Teams Mode</span>
+                      <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-purple-200">{teamPlayStyleLabel}</span>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="flex gap-2">
-                {!confirmResetAll ? (
-                  <button 
-                    onClick={() => setConfirmResetAll(true)}
-                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase transition-all"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Reset All Wildcards
-                  </button>
-                ) : (
-                  <button 
-                    onClick={handleResetAllWildcards}
-                    className="bg-red-600 hover:bg-red-500 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase animate-pulse shadow-lg shadow-red-900/20"
-                  >
-                    <AlertTriangle className="w-3.5 h-3.5" /> Click to Confirm Reset All
-                  </button>
-                )}
-                <button 
-                  onClick={() => setIsAddingPlayer(true)}
-                  disabled={(gameState.players || []).length >= 8}
-                  className="bg-gold-600 hover:bg-gold-500 text-black font-black px-5 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase disabled:opacity-30 transition-all shadow-xl shadow-gold-900/10 active:scale-95"
+                <button
+                  onClick={handleResetLiveScores}
+                  className="bg-red-700/90 hover:bg-red-600 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase transition-all shadow-lg shadow-red-950/20"
                 >
-                  <UserPlus className="w-4 h-4" /> Add Player
+                  <RotateCcw className="w-3.5 h-3.5" /> Reset Live Scores
                 </button>
+                {!isTeamsMode && (
+                  <>
+                    {!confirmResetAll ? (
+                      <button 
+                        onClick={() => setConfirmResetAll(true)}
+                        className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase transition-all"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Reset All Wildcards
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={handleResetAllWildcards}
+                        className="bg-red-600 hover:bg-red-500 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase animate-pulse shadow-lg shadow-red-900/20"
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" /> Click to Confirm Reset All
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => setIsAddingPlayer(true)}
+                      disabled={(gameState.players || []).length >= 8}
+                      className="bg-gold-600 hover:bg-gold-500 text-black font-black px-5 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase disabled:opacity-30 transition-all shadow-xl shadow-gold-900/10 active:scale-95"
+                    >
+                      <UserPlus className="w-4 h-4" /> Add Player
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
-            {isAddingPlayer && (
+            {!isTeamsMode && isAddingPlayer && (
               <div className="bg-zinc-900 p-5 rounded-2xl border border-gold-500/30 flex gap-3 animate-in slide-in-from-top-2 shadow-2xl">
                 <input 
                   autoFocus
@@ -1500,98 +1729,282 @@ export const DirectorPanel: React.FC<Props> = ({
               </div>
             )}
 
-            <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-sm">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-black/60 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
-                  <tr>
-                    <th className="p-5 border-b border-zinc-800">Contestant Name</th>
-                    <th className="p-5 border-b border-zinc-800">Live Score</th>
-                    <th className="p-5 border-b border-zinc-800">Wildcards</th>
-                    <th className="p-5 border-b border-zinc-800">Steals</th>
-                    <th className="p-5 border-b border-zinc-800">Special Moves</th>
-                    <th className="p-5 border-b border-zinc-800 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/40">
-                  {(gameState.players || []).map(p => (
-                    <tr key={p.id} className="hover:bg-white/[0.02] transition-colors group">
-                      <td className="p-5">
-                        <input 
-                          value={p.name}
-                          onChange={e => handleUpdatePlayer(p.id, 'name', normalizePlayerName(e.target.value))}
-                          className="bg-transparent border-b border-transparent focus:border-gold-500 outline-none font-black text-sm text-white w-full uppercase tracking-tight transition-all py-1"
-                          placeholder="NAME REQUIRED"
-                        />
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-3">
-                          <button 
-                            onClick={() => handleUpdatePlayer(p.id, 'score', p.score - 100)}
-                            className="p-2 bg-black rounded-lg hover:text-red-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
-                            title="Subtract 100"
-                          ><Minus className="w-4 h-4"/></button>
-                          <span className="font-mono text-gold-500 font-black min-w-[5rem] text-center text-xl drop-shadow-md select-none">{p.score}</span>
-                          <button 
-                            onClick={() => handleUpdatePlayer(p.id, 'score', p.score + 100)}
-                            className="p-2 bg-black rounded-lg hover:text-green-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
-                            title="Add 100"
-                          ><Plus className="w-4 h-4"/></button>
-                        </div>
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-2">
-                           <button 
-                             disabled={(p.wildcardsUsed || 0) >= 4}
-                             onClick={() => handleUseWildcard(p.id)}
-                             title="Increment Wildcard Usage"
-                             className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase flex items-center gap-2 transition-all ${(p.wildcardsUsed || 0) >= 4 ? 'bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed' : 'bg-gold-600/10 border-gold-600/30 text-gold-500 hover:bg-gold-600 hover:text-black'}`}
-                           >
-                             <Star className={`w-3 h-3 ${(p.wildcardsUsed || 0) > 0 ? 'fill-current' : ''}`} /> 
-                             {(p.wildcardsUsed || 0) >= 4 ? 'MAX 4 USED' : `${p.wildcardsUsed || 0}/4`}
-                           </button>
-                           <button 
-                             disabled={(p.wildcardsUsed || 0) === 0}
-                             onClick={() => handleResetWildcards(p.id)}
-                             title="Reset Wildcards"
-                             className="p-2 text-zinc-600 hover:text-red-500 disabled:opacity-0 transition-all"
-                           >
-                             <RotateCcw className="w-4 h-4" />
-                           </button>
-                        </div>
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-2 text-purple-400">
-                          <ShieldAlert className="w-4 h-4" />
-                          <span className="font-mono font-black text-sm">{p.stealsCount || 0}</span>
-                        </div>
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-2 text-red-400" title={(p.specialMovesUsedNames || []).join(', ')}>
-                          <Sparkles className="w-4 h-4" />
-                          <span className="font-mono font-black text-sm">{p.specialMovesUsedCount || 0}</span>
-                        </div>
-                      </td>
-                      <td className="p-5 text-right">
-                        <button 
-                          /* Fix: Replace undefined 'id' with 'p.id' */
-                          onClick={() => handleRemovePlayer(p.id)}
-                          className="p-3 text-zinc-800 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10 rounded-xl"
-                          title="Delete Contestant"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {(!gameState.players || gameState.players.length === 0) && (
+            {!isTeamsMode && (
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-sm">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-black/60 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
                     <tr>
-                      <td colSpan={6} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
-                        No contestants registered for this session
-                      </td>
+                      <th className="p-5 border-b border-zinc-800">Contestant Name</th>
+                      <th className="p-5 border-b border-zinc-800">Live Score</th>
+                      <th className="p-5 border-b border-zinc-800">Wildcards</th>
+                      <th className="p-5 border-b border-zinc-800">Steals</th>
+                      <th className="p-5 border-b border-zinc-800">Special Moves</th>
+                      <th className="p-5 border-b border-zinc-800 text-right">Actions</th>
                     </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/40">
+                    {(gameState.players || []).map(p => (
+                      <tr key={p.id} className="hover:bg-white/[0.02] transition-colors group">
+                        <td className="p-5">
+                          <input 
+                            value={p.name}
+                            onChange={e => handleUpdatePlayer(p.id, 'name', normalizePlayerName(e.target.value))}
+                            className="bg-transparent border-b border-transparent focus:border-gold-500 outline-none font-black text-sm text-white w-full uppercase tracking-tight transition-all py-1"
+                            placeholder="NAME REQUIRED"
+                          />
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => handleUpdatePlayer(p.id, 'score', p.score - 100)}
+                              className="p-2 bg-black rounded-lg hover:text-red-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
+                              title="Subtract 100"
+                            ><Minus className="w-4 h-4"/></button>
+                            <span className="font-mono text-gold-500 font-black min-w-[5rem] text-center text-xl drop-shadow-md select-none">{p.score}</span>
+                            <button 
+                              onClick={() => handleUpdatePlayer(p.id, 'score', p.score + 100)}
+                              className="p-2 bg-black rounded-lg hover:text-green-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
+                              title="Add 100"
+                            ><Plus className="w-4 h-4"/></button>
+                          </div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2">
+                             <button 
+                               disabled={(p.wildcardsUsed || 0) >= 4}
+                               onClick={() => handleUseWildcard(p.id)}
+                               title="Increment Wildcard Usage"
+                               className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase flex items-center gap-2 transition-all ${(p.wildcardsUsed || 0) >= 4 ? 'bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed' : 'bg-gold-600/10 border-gold-600/30 text-gold-500 hover:bg-gold-600 hover:text-black'}`}
+                             >
+                               <Star className={`w-3 h-3 ${(p.wildcardsUsed || 0) > 0 ? 'fill-current' : ''}`} /> 
+                               {(p.wildcardsUsed || 0) >= 4 ? 'MAX 4 USED' : `${p.wildcardsUsed || 0}/4`}
+                             </button>
+                             <button 
+                               disabled={(p.wildcardsUsed || 0) === 0}
+                               onClick={() => handleResetWildcards(p.id)}
+                               title="Reset Wildcards"
+                               className="p-2 text-zinc-600 hover:text-red-500 disabled:opacity-0 transition-all"
+                             >
+                               <RotateCcw className="w-4 h-4" />
+                             </button>
+                          </div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2 text-purple-400">
+                            <ShieldAlert className="w-4 h-4" />
+                            <span className="font-mono font-black text-sm">{p.stealsCount || 0}</span>
+                          </div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2 text-red-400" title={(p.specialMovesUsedNames || []).join(', ')}>
+                            <Sparkles className="w-4 h-4" />
+                            <span className="font-mono font-black text-sm">{p.specialMovesUsedCount || 0}</span>
+                          </div>
+                        </td>
+                        <td className="p-5 text-right">
+                          <button 
+                            onClick={() => handleRemovePlayer(p.id)}
+                            className="p-3 text-zinc-800 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10 rounded-xl"
+                            title="Delete Contestant"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {(!gameState.players || gameState.players.length === 0) && (
+                      <tr>
+                        <td colSpan={6} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
+                          No contestants registered for this session
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {isTeamsMode && (
+              <div className="space-y-4">
+                <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-wider font-black text-zinc-400">
+                    {`${(gameState.teams || []).length} team${(gameState.teams || []).length === 1 ? '' : 's'} • ${gameState.players.length} total contestants`}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-wider font-black text-zinc-500">
+                    {activeTeamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+                      ? 'Active member badge reflects current turn state'
+                      : 'Team totals drive scoring while member list stays visible for context'}
+                  </div>
+                </div>
+
+                {(gameState.teams || []).length === 0 ? (
+                  <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-14 text-center text-zinc-500 text-[11px] uppercase font-black tracking-[0.2em]">
+                    No teams configured yet. Open the Teams tab to set up rosters.
+                  </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {(gameState.teams || []).map((team) => {
+                      const members = team.members || [];
+                      const isSelected = gameState.selectedPlayerId === team.id;
+                      return (
+                        <div key={team.id} className={`rounded-2xl border p-4 bg-zinc-900/30 ${isSelected ? 'border-gold-500/70 shadow-lg shadow-gold-900/20' : 'border-zinc-800'}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="text-white font-black uppercase tracking-wide truncate">{team.name}</h4>
+                                <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-blue-200">Team</span>
+                                <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-purple-200">{teamPlayStyleLabel}</span>
+                              </div>
+                              <div className="mt-1 text-[10px] uppercase tracking-wider font-bold text-zinc-500">
+                                {members.length} player{members.length === 1 ? '' : 's'}
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className="text-[9px] uppercase tracking-widest text-zinc-500 font-black">Team Score</div>
+                              <div className="font-mono text-2xl text-gold-500 font-black leading-none">{Number(team.score || 0)}</div>
+                            </div>
+                          </div>
+
+                          {activeTeamPlayStyle === 'TEAM_PLAYS_AS_ONE' && (
+                            <div className="mt-3 rounded-xl border border-zinc-800 bg-black/40 p-2 text-[11px] text-zinc-300 uppercase tracking-wide">
+                              {members.map((member) => member.name).join(' • ') || 'No members'}
+                            </div>
+                          )}
+
+                          {activeTeamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' && (
+                            <div className="mt-3 space-y-1.5">
+                              {members.map((member) => {
+                                const isActive = team.activeMemberId === member.id;
+                                return (
+                                  <div key={member.id} className={`rounded-lg border px-2.5 py-2 flex items-center justify-between gap-2 ${isActive ? 'border-gold-500/40 bg-gold-900/20' : 'border-zinc-800 bg-black/30'}`}>
+                                    <div className="min-w-0 flex items-center gap-2">
+                                      <span className="text-[11px] font-bold uppercase text-zinc-200 truncate">{member.name}</span>
+                                      {isActive && <span className="inline-flex items-center rounded-full border border-gold-500/50 bg-gold-900/40 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-gold-300">Active</span>}
+                                    </div>
+                                    <span className="font-mono text-sm font-black text-zinc-200">{Number(member.score || 0)}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'TEAMS' && (
+          <div className="space-y-6 animate-in fade-in duration-300 max-w-7xl mx-auto">
+            <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg">
+              <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                <Users className="w-4 h-4" /> Teams Mode
+              </h3>
+              <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Configure teams and team play style.</p>
+              {!canEditTeams && (
+                <p className="text-[10px] text-amber-300 uppercase font-bold mt-2">Teams setup is locked after gameplay starts.</p>
+              )}
+            </div>
+
+            <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between gap-3 bg-black/40 border border-zinc-800 rounded-lg px-3 py-2">
+                <span className="text-[11px] uppercase tracking-wider font-black text-zinc-300">Teams mode enabled</span>
+                <button
+                  onClick={() => handleToggleTeamsMode(!isTeamsMode)}
+                  className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-widest ${isTeamsMode ? 'bg-cyan-600 text-black' : 'bg-zinc-700 text-zinc-200'}`}
+                >
+                  {isTeamsMode ? 'On' : 'Off'}
+                </button>
+              </div>
+
+              {isTeamsMode && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      disabled={!canEditTeams}
+                      onClick={() => handleUpdateTeamPlayStyle('TEAM_PLAYS_AS_ONE')}
+                      className={`py-2 rounded text-[10px] font-bold border transition-all ${gameState.teamPlayStyle === 'TEAM_PLAYS_AS_ONE' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                    >
+                      Team plays as one
+                    </button>
+                    <button
+                      disabled={!canEditTeams}
+                      onClick={() => handleUpdateTeamPlayStyle('TEAM_MEMBERS_TAKE_TURNS')}
+                      className={`py-2 rounded text-[10px] font-bold border transition-all ${gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                    >
+                      Team members take turns
+                    </button>
+                  </div>
+
+                  <div className="text-[10px] text-zinc-500 uppercase">
+                    {gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+                      ? 'Team members take turns: all teams must have the same number of players and rotate by member index across teams.'
+                      : 'Team plays as one: teams can have different numbers of players and score is tracked at the team level.'}
+                  </div>
+
+                  {teamsValidationError && (
+                    <div className="text-[10px] text-amber-300 uppercase font-bold tracking-wide border border-amber-500/30 bg-amber-950/20 rounded-lg px-3 py-2">
+                      {teamsValidationError}
+                    </div>
                   )}
-                </tbody>
-              </table>
+
+                  <div className="flex justify-end">
+                    <button
+                      disabled={!canEditTeams}
+                      onClick={handleAddTeamConfig}
+                      className="bg-gold-600 hover:bg-gold-500 text-black font-black px-4 py-2 rounded-xl text-[10px] flex items-center gap-2 uppercase disabled:opacity-40"
+                    >
+                      <Plus className="w-3 h-3" /> Add Team
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {(gameState.teams || []).map((team) => (
+                      <div key={team.id} className="bg-black/40 border border-zinc-800 rounded-xl p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <input
+                            disabled={!canEditTeams}
+                            value={team.name}
+                            onChange={(e) => handleUpdateTeamName(team.id, e.target.value)}
+                            className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[11px] uppercase text-white"
+                            placeholder="TEAM NAME"
+                          />
+                          <span className="text-[10px] px-2 py-1 rounded border border-blue-700/40 bg-blue-900/20 text-blue-300 uppercase font-black">
+                            {gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'TURN MODE' : 'PLAYS AS ONE'}
+                          </span>
+                          <button disabled={!canEditTeams} onClick={() => handleAddTeamMemberConfig(team.id)} className="text-[10px] text-gold-500 hover:text-white font-bold px-2 py-1 border border-zinc-800 rounded">+ MEMBER</button>
+                          <button disabled={!canEditTeams} onClick={() => handleRemoveTeamConfig(team.id)} className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 border border-zinc-800 rounded">REMOVE</button>
+                        </div>
+
+                        <div className="space-y-1">
+                          {(team.members || []).map((member) => (
+                            <div key={member.id} className="flex items-center gap-2">
+                              <input
+                                disabled={!canEditTeams}
+                                value={member.name}
+                                onChange={(e) => handleUpdateTeamMemberConfig(team.id, member.id, e.target.value)}
+                                className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-zinc-200"
+                                placeholder="MEMBER NAME"
+                              />
+                              <button disabled={!canEditTeams} onClick={() => handleRemoveTeamMemberConfig(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1">X</button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-2 text-[9px] text-zinc-500 uppercase">{team.name || 'TEAM'} ({(team.members || []).length} members)</div>
+                      </div>
+                    ))}
+                    {(gameState.teams || []).length === 0 && (
+                      <div className="text-[10px] text-zinc-500 uppercase border border-dashed border-zinc-800 rounded-lg p-3 text-center">
+                        No teams configured.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -1928,6 +2341,7 @@ export const DirectorPanel: React.FC<Props> = ({
                       const deployment = currentOverlay.deploymentsByTileId[q.id];
                       const isArmed = deployment?.status === 'ARMED';
                       const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, resolvedSpecialMoveTileIds.has(q.id));
+                      const specialMoveTagText = getTileSpecialMoveTagText(deployment?.moveType, specialMoveTagState, resolvedSpecialMoveLabelsByTileId[q.id]);
                       const isPlayable = !q.isAnswered && !q.isVoided;
                       const giftTileDisabledReason = isGiftActivatedMove(selectedMoveType)
                         ? getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, q.id)
@@ -1956,7 +2370,7 @@ export const DirectorPanel: React.FC<Props> = ({
                                 ? 'bg-red-700/90 border-red-400/70 text-red-100'
                                 : 'bg-zinc-800/90 border-zinc-500/60 text-zinc-300 grayscale'}`}
                             >
-                              SPECIAL MOVE!
+                              {specialMoveTagText}
                             </div>
                           )}
                           <div className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
@@ -2245,7 +2659,7 @@ export const DirectorPanel: React.FC<Props> = ({
 
         {activeTab === 'BOARD' && (
           <div className="space-y-8 animate-in fade-in duration-300">
-            <DirectorAiRegenerator gameState={gameState} onUpdateState={onUpdateState} addToast={addToast} emitGameEvent={emitGameEvent} />
+            <DirectorAiRegenerator gameState={gameState} onUpdateState={onUpdateState} addToast={addToast} emitGameEvent={emitGameEvent} onTransformSuccessfulState={transformStateAfterBoardRegen} />
             <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${gameState.categories.length}, minmax(180px, 1fr))` }}>
               {gameState.categories.map((cat, cIdx) => (
                 <div key={cat.id} className="space-y-3">

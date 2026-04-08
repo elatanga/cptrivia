@@ -6,7 +6,7 @@ import { logger } from '../services/logger';
 import { getTriviaBoardLayoutTokens, sanitizeBoardViewSettings } from '../services/boardViewSettings';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { useViewportWidth } from '../hooks/useViewportWidth';
-import { getTileSpecialMoveTagState } from '../modules/specialMoves/tileTagState';
+import { getTileSpecialMoveTagState, getTileSpecialMoveTagText } from '../modules/specialMoves/tileTagState';
 
 interface Props {
   categories: Category[];
@@ -14,11 +14,12 @@ interface Props {
   viewSettings: BoardViewSettings;
   overlay?: SMSOverlayDoc | null;
   resolvedSpecialMoveTileIds?: Set<string>;
+  resolvedSpecialMoveLabelsByTileId?: Record<string, string>;
   sessionTimerActive?: boolean;
   sessionTimeRemaining?: number;
 }
 
-export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay, resolvedSpecialMoveTileIds, sessionTimerActive, sessionTimeRemaining }) => {
+export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay, resolvedSpecialMoveTileIds, resolvedSpecialMoveLabelsByTileId, sessionTimerActive, sessionTimeRemaining }) => {
   const onSelectQuestionRef = useRef(onSelectQuestion);
   const previousSessionTimerActiveRef = useRef<boolean | null>(null);
 
@@ -99,9 +100,11 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
               if (!q) return <div key={`empty-${cat.id}-${rowIdx}`} className="bg-transparent" />;
               const isPlayable = !q.isAnswered && !q.isVoided;
               const isArmed = overlay?.deploymentsByTileId?.[q.id]?.status === 'ARMED';
+              const moveType = overlay?.deploymentsByTileId?.[q.id]?.moveType;
               const isResolved = !!resolvedSpecialMoveTileIds?.has(q.id);
               const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, isResolved);
-              
+              const specialMoveTagText = getTileSpecialMoveTagText(moveType, specialMoveTagState, resolvedSpecialMoveLabelsByTileId?.[q.id]);
+
               return (
                 <button 
                   key={q.id} 
@@ -128,11 +131,12 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                       <span
                         data-testid={`special-move-tile-tag-${q.id}`}
                         data-state={specialMoveTagState}
-                        className={`absolute top-2 left-2 pointer-events-none rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider border ${specialMoveTagState === 'armed'
-                          ? 'bg-red-700/95 text-red-100 border-red-400/70'
+                        title={specialMoveTagText}
+                        className={`absolute top-2 left-2 pointer-events-none rounded-md px-2 py-1 text-[9px] md:text-[10px] font-black uppercase tracking-[0.12em] border shadow-lg max-w-[85%] truncate ${specialMoveTagState === 'armed'
+                          ? 'bg-red-600/95 text-white border-red-300/80'
                           : 'bg-zinc-800/90 text-zinc-300 border-zinc-500/60 grayscale'}`}
                       >
-                        SPECIAL MOVE!
+                        {specialMoveTagText}
                       </span>
                     )}
                     {isArmed && isPlayable && (
@@ -155,7 +159,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
           </React.Fragment>
       ))}
     </div>
-  ), [categories, colCount, rowCount, overlay, resolvedSpecialMoveTileIds, layoutTokens.categoryLineClamp]);
+  ), [categories, colCount, rowCount, overlay, resolvedSpecialMoveTileIds, resolvedSpecialMoveLabelsByTileId, layoutTokens.categoryLineClamp]);
 
   return (
     <div 

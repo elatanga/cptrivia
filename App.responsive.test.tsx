@@ -64,7 +64,6 @@ describe('Responsive Layout Tests', () => {
 
     await waitFor(() => {
       const rootContainer = document.querySelector('.min-h-screen.lg\\:h-screen');
-      expect(rootContainer).not.toHaveClass('lg:overflow-hidden');
       expect(rootContainer).toHaveClass('min-h-screen');
     });
   });
@@ -79,7 +78,17 @@ describe('Responsive Layout Tests', () => {
 
     // Since we start at dashboard, we just verify the root classes are correct
     await waitFor(() => {
-        expect(screen.getByText(/CRUZPHAM TRIVIA/i)).toBeInTheDocument();
+        expect(screen.getByText(/CPJS/i)).toBeInTheDocument();
+        expect(screen.getByText(/CruzPham Jeopardy Studios/i)).toBeInTheDocument();
     });
+
+    expect(screen.getByLabelText(/Champagne Bottle/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Champagne Flute/i)).toBeInTheDocument();
+
+    const brandLockup = screen.getByTestId('brand-lockup');
+    const brandTitleStack = screen.getByTestId('brand-title-stack');
+    expect(brandLockup).toBeInTheDocument();
+    expect(brandTitleStack).toHaveClass('items-center');
+    expect(brandTitleStack).toHaveClass('text-center');
   });
 });

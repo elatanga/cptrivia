@@ -175,7 +175,7 @@ describe('Special Moves Feature Suite', () => {
     });
 
     const armedTag = await screen.findByTestId(`special-move-tile-tag-${firstTileId}`);
-    expect(armedTag).toHaveTextContent('SPECIAL MOVE!');
+    expect(armedTag).toHaveTextContent('DOUBLE OR LOSE');
     expect(armedTag).toHaveAttribute('data-state', 'armed');
 
     // Verify the board tile shows the Zap icon
@@ -237,7 +237,7 @@ describe('Special Moves Feature Suite', () => {
     fireEvent.click(boardTile!);
 
     expect(await screen.findByTestId('reveal-root')).toBeInTheDocument();
-    expect(screen.queryByTestId('special-move-banner')).not.toBeInTheDocument();
+    expect(screen.queryByText(/WIN:\s*2X POINTS|WIN:\s*3X POINTS|NO STEAL|LOCKOUT|SAFE BET|TRIPLE OR LOSE/i)).not.toBeInTheDocument();
   });
 
   it('B4) RESOLUTION SYNC: Captured move still applies on return even if overlay changes mid-question', async () => {
@@ -325,13 +325,13 @@ describe('Special Moves Feature Suite', () => {
     });
 
     const resolvedTag = await screen.findByTestId(`special-move-tile-tag-${firstTileId}`);
-    expect(resolvedTag).toHaveTextContent('SPECIAL MOVE!');
+    expect(resolvedTag).toHaveTextContent('DOUBLE OR LOSE RESOLVED');
     expect(resolvedTag).toHaveAttribute('data-state', 'resolved');
 
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
     fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
     const directorResolvedTag = await screen.findByTestId(`special-move-director-tag-${firstTileId}`);
-    expect(directorResolvedTag).toHaveTextContent('SPECIAL MOVE!');
+    expect(directorResolvedTag).toHaveTextContent('DOUBLE OR LOSE RESOLVED');
     expect(directorResolvedTag).toHaveAttribute('data-state', 'resolved');
   });
 
@@ -431,4 +431,93 @@ describe('Special Moves Feature Suite', () => {
       expect(tileTag).toHaveAttribute('data-state', 'armed');
     });
   }, 15000);
+
+  it('B2b) COMPOSITION: DoN + Double Trouble both apply on award and update scoreboard', async () => {
+    await setupAndPlay();
+
+    const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+    const allQuestions = (state.categories || []).flatMap((category: any) =>
+      (category.questions || []).map((question: any) => ({
+        categoryId: category.id,
+        categoryTitle: category.title,
+        ...question,
+      }))
+    );
+    const donTile = allQuestions.find((question: any) => question.isDoubleOrNothing);
+    expect(donTile).toBeTruthy();
+
+    await act(async () => {
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          [donTile.id]: { status: 'ARMED', moveType: 'DOUBLE_TROUBLE', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+    });
+
+    const boardTile = (await screen.findByTestId(`special-move-tile-tag-${donTile.id}`)).closest('button');
+    expect(boardTile).toBeTruthy();
+    fireEvent.click(boardTile!);
+
+    const banner = await screen.findByTestId('special-move-banner');
+    expect(banner).toHaveTextContent('DOUBLE OR LOSE');
+    expect(banner).toHaveTextContent('DOUBLE OR NOTHING');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /reveal/i }));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /award/i }));
+    });
+
+    await waitFor(() => {
+      const nextState = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+      const expectedDelta = Number(donTile.points) * 4; // DoN (x2) then Double Trouble award (x2)
+      expect(nextState.players?.[0]?.score).toBe(expectedDelta);
+    });
+  });
+
+  it('B2c) COMPOSITION: DoN + Double Trouble both apply on return/fail path', async () => {
+    await setupAndPlay();
+
+    const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+    const allQuestions = (state.categories || []).flatMap((category: any) =>
+      (category.questions || []).map((question: any) => ({
+        categoryId: category.id,
+        categoryTitle: category.title,
+        ...question,
+      }))
+    );
+    const donTile = allQuestions.find((question: any) => question.isDoubleOrNothing);
+    expect(donTile).toBeTruthy();
+
+    await act(async () => {
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          [donTile.id]: { status: 'ARMED', moveType: 'DOUBLE_TROUBLE', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+    });
+
+    const boardTile = (await screen.findByTestId(`special-move-tile-tag-${donTile.id}`)).closest('button');
+    expect(boardTile).toBeTruthy();
+    fireEvent.click(boardTile!);
+
+    await screen.findByTestId('special-move-banner');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /return/i }));
+    });
+
+    await waitFor(() => {
+      const nextState = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+      const expectedDelta = Number(donTile.points) * -2; // DoN (x2) base, Double Trouble fail applies negative base
+      expect(nextState.players?.[0]?.score).toBe(expectedDelta);
+    });
+  });
 });

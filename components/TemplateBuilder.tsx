@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { Save, X, Wand2, RefreshCw, Loader2, Download, Upload, Plus, Minus, Trash2, HelpCircle, AlertCircle, Maximize2, Minimize2, RotateCcw, Sparkles, Hash, LogOut, Edit } from 'lucide-react';
-import { GameTemplate, Category, Question, Difficulty, AppError } from '../types';
+import { GameTemplate, Category, Question, Difficulty, AppError, PlayMode, Team, TeamPlayStyle } from '../types';
 import { generateTriviaGame, generateSingleQuestion, generateCategoryQuestions, getGeminiConfigHealth } from '../services/geminiService';
 import { dataService } from '../services/dataService';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { normalizePlayerName } from '../services/utils';
+import { getTeamsValidationError as getTeamsModeValidationError } from '../services/teamsMode';
 
 type GenerationStatus = 'IDLE' | 'GENERATING' | 'APPLYING' | 'COMPLETE' | 'FAILED' | 'CANCELED';
 
@@ -31,6 +32,8 @@ type QuickTimerMode = 'timed' | 'untimed' | null;
 const MAX_PLAYERS = 8;
 const MIN_PLAYERS = 1;
 const makeStableId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+const DEFAULT_PLAY_MODE: PlayMode = 'INDIVIDUALS';
+const DEFAULT_TEAM_STYLE: TeamPlayStyle = 'TEAM_PLAYS_AS_ONE';
 
 export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onClose, onSave, onLogout, addToast }) => {
   // --- STATE MACHINE ---
@@ -52,7 +55,25 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
   const [aiDifficulty, setAiDifficulty] = useState<Difficulty>('mixed');
   const [quickGameMode, setQuickGameMode] = useState<QuickGameMode>(initialTemplate?.config?.quickGameMode ?? null);
   const [quickTimerMode, setQuickTimerMode] = useState<QuickTimerMode>(initialTemplate?.config?.quickTimerMode ?? null);
-  
+  const [playMode, setPlayMode] = useState<PlayMode>(initialTemplate?.config?.playMode || DEFAULT_PLAY_MODE);
+  const [teamPlayStyle, setTeamPlayStyle] = useState<TeamPlayStyle>(initialTemplate?.config?.teamPlayStyle || DEFAULT_TEAM_STYLE);
+  const [teamConfigs, setTeamConfigs] = useState<Team[]>(() => {
+    const source = initialTemplate?.config?.teams;
+    if (!Array.isArray(source) || source.length === 0) return [];
+    return source.map((team, teamIndex) => ({
+      id: team.id || makeStableId(),
+      name: team.name || `TEAM ${teamIndex + 1}`,
+      score: Number(team.score || 0),
+      activeMemberId: team.activeMemberId,
+      members: (team.members || []).map((member, memberIndex) => ({
+        id: member.id || makeStableId(),
+        name: member.name || `MEMBER ${memberIndex + 1}`,
+        score: Number(member.score || 0),
+        orderIndex: Number.isFinite(Number(member.orderIndex)) ? Number(member.orderIndex) : memberIndex,
+      })),
+    }));
+  });
+
   const getSafePointScale = (val?: number) => {
     const allowed = [10, 20, 25, 50, 100];
     if (val && allowed.includes(val)) return val;
@@ -178,10 +199,88 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     setPlayerConfigs(prev => prev.map(p => p.id === id ? { ...p, name: normalizePlayerName(value) } : p));
   };
 
+  const handleAddTeam = () => {
+    if (isLocked) return;
+    setTeamConfigs((prev) => [
+      ...prev,
+      {
+        id: makeStableId(),
+        name: `TEAM ${prev.length + 1}`,
+        score: 0,
+        activeMemberId: undefined,
+        members: [{ id: makeStableId(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+      },
+    ]);
+  };
+
+  const handleRemoveTeam = (teamId: string) => {
+    if (isLocked) return;
+    setTeamConfigs((prev) => prev.filter((team) => team.id !== teamId));
+  };
+
+  const handleTeamNameChange = (teamId: string, name: string) => {
+    setTeamConfigs((prev) => prev.map((team) => (team.id === teamId ? { ...team, name: normalizePlayerName(name) } : team)));
+  };
+
+  const handleAddTeamMember = (teamId: string) => {
+    if (isLocked) return;
+    setTeamConfigs((prev) => prev.map((team) => {
+      if (team.id !== teamId) return team;
+      const members = [
+        ...team.members,
+        { id: makeStableId(), name: `MEMBER ${team.members.length + 1}`, score: 0, orderIndex: team.members.length },
+      ];
+      return {
+        ...team,
+        members,
+        activeMemberId: team.activeMemberId || members[0]?.id,
+      };
+    }));
+  };
+
+  const handleRemoveTeamMember = (teamId: string, memberId: string) => {
+    if (isLocked) return;
+    setTeamConfigs((prev) => prev.map((team) => {
+      if (team.id !== teamId) return team;
+      const members = team.members.filter((member) => member.id !== memberId).map((member, index) => ({ ...member, orderIndex: index }));
+      return {
+        ...team,
+        members,
+        activeMemberId: members.some((member) => member.id === team.activeMemberId) ? team.activeMemberId : members[0]?.id,
+      };
+    }));
+  };
+
+  const handleTeamMemberNameChange = (teamId: string, memberId: string, value: string) => {
+    setTeamConfigs((prev) => prev.map((team) => {
+      if (team.id !== teamId) return team;
+      return {
+        ...team,
+        members: team.members.map((member) => member.id === memberId ? { ...member, name: normalizePlayerName(value) } : member),
+      };
+    }));
+  };
+
+  const getTeamsValidationError = (): string | null => getTeamsModeValidationError(playMode, teamPlayStyle, teamConfigs);
+
+  const teamValidationError = getTeamsValidationError();
+  const canSaveTemplate = !isLocked && !isSaving && !(playMode === 'TEAMS' && !!teamValidationError);
+
   const handleSave = async () => {
     if (isLocked || isSaving) return;
     soundService.playClick();
-    
+
+    const teamsValidationError = getTeamsValidationError();
+    if (teamsValidationError) {
+      logger.warn('template_team_validation_failed', {
+        source: 'save',
+        playMode,
+        reason: teamsValidationError,
+      });
+      addToast('error', teamsValidationError);
+      return;
+    }
+
     const atIso = new Date().toISOString();
     logger.info("template_save_click", { templateId: initialTemplate?.id || 'new', showId, ts: atIso });
 
@@ -198,6 +297,17 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
       });
 
       const finalPlayerNames = playerConfigs.map(p => p.name).filter(n => !!n);
+      const sanitizedTeams = teamConfigs.map((team) => ({
+        ...team,
+        name: normalizePlayerName(team.name) || 'TEAM',
+        score: Number(team.score || 0),
+        members: (team.members || []).map((member, index) => ({
+          ...member,
+          name: normalizePlayerName(member.name) || `MEMBER ${index + 1}`,
+          score: Number(member.score || 0),
+          orderIndex: index,
+        })),
+      }));
       const normalizedQuickMode: QuickGameMode = quickGameMode;
       const normalizedTimerMode: QuickTimerMode = quickGameMode
         ? (quickTimerMode || 'untimed')
@@ -234,6 +344,9 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
             pointScale: config.pointScale,
             quickGameMode: normalizedQuickMode,
             quickTimerMode: normalizedTimerMode,
+            playMode,
+            teamPlayStyle,
+            teams: playMode === 'TEAMS' ? sanitizedTeams : [],
           }
         });
       } else {
@@ -245,6 +358,9 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
           pointScale: config.pointScale,
           quickGameMode: normalizedQuickMode,
           quickTimerMode: normalizedTimerMode,
+          playMode,
+          teamPlayStyle,
+          teams: playMode === 'TEAMS' ? sanitizedTeams : [],
         }, validatedCategories);
       }
       
@@ -341,6 +457,16 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     soundService.playClick();
     if (!config.title.trim()) {
       addToast('error', 'Title is required');
+      return;
+    }
+    const teamsValidationError = getTeamsValidationError();
+    if (teamsValidationError) {
+      logger.warn('template_team_validation_failed', {
+        source: 'manual_builder_start',
+        playMode,
+        reason: teamsValidationError,
+      });
+      addToast('error', teamsValidationError);
       return;
     }
       const newCats: Category[] = Array.from({ length: config.catCount }).map((_, cI) => {
@@ -477,6 +603,28 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
                     <div className="space-y-2">
+                      <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Play Mode</h3>
+                      <p className="text-[10px] text-zinc-500">Choose individual contestants or team-based play.</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={() => setPlayMode('INDIVIDUALS')}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${playMode === 'INDIVIDUALS' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                        >
+                          Individuals
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={() => setPlayMode('TEAMS')}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${playMode === 'TEAMS' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                        >
+                          Teams
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
                       <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Quick Game Setup</h3>
                       <p className="text-[10px] text-zinc-500">Fast setup for one-person or head-to-head play.</p>
                       <div className="grid grid-cols-2 gap-2">
@@ -523,6 +671,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                   </div>
 
                   {/* Contestants (Card 1 Fix: Always visible 2-column grid, no scroll) */}
+                  {playMode === 'INDIVIDUALS' && (
                   <div className="flex-1 flex flex-col min-h-0">
                     <div className="flex justify-between items-center border-b border-zinc-800 pb-1 mb-3">
                        <h3 className="text-[10px] uppercase text-zinc-400 font-black tracking-widest">Contestants (Max 8)</h3>
@@ -550,6 +699,87 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                        ))}
                     </div>
                   </div>
+                  )}
+
+                  {playMode === 'TEAMS' && (
+                    <div className="flex-1 flex flex-col min-h-0">
+                      <div className="flex justify-between items-center border-b border-zinc-800 pb-1 mb-3">
+                        <div>
+                          <h3 className="text-[10px] uppercase text-zinc-400 font-black tracking-widest">Teams Setup</h3>
+                          <p className="text-[9px] text-zinc-500 mt-1">Configure team rosters and team play style.</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={handleAddTeam}
+                          data-testid="template-add-team-button"
+                          className="text-[10px] text-gold-500 hover:text-white font-bold transition-all flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> ADD TEAM
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={() => setTeamPlayStyle('TEAM_PLAYS_AS_ONE')}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${teamPlayStyle === 'TEAM_PLAYS_AS_ONE' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                        >
+                          Team plays as one
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={() => setTeamPlayStyle('TEAM_MEMBERS_TAKE_TURNS')}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                        >
+                          Team members take turns
+                        </button>
+                      </div>
+                      <div className="text-[9px] text-zinc-500 mb-3 uppercase tracking-wide">
+                        {teamPlayStyle === 'TEAM_PLAYS_AS_ONE'
+                          ? 'Team plays as one: teams can have different numbers of players and score is tracked at the team level.'
+                          : 'Team members take turns: individual points display under the team, team total is shown, and all teams must have the same number of players.'}
+                      </div>
+
+                      <div className="space-y-2 overflow-y-auto pr-1 custom-scrollbar">
+                        {teamConfigs.map((team, teamIndex) => (
+                          <div key={team.id} className="border border-zinc-800 rounded-lg p-3 bg-black/30">
+                            <div className="flex items-center gap-2 mb-2">
+                              <input
+                                value={team.name}
+                                onChange={(e) => handleTeamNameChange(team.id, e.target.value)}
+                                className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[11px] uppercase text-white"
+                                placeholder={`TEAM ${teamIndex + 1}`}
+                              />
+                              <button type="button" onClick={() => handleAddTeamMember(team.id)} className="text-[10px] text-gold-500 hover:text-white font-bold px-2 py-1 border border-zinc-800 rounded">+ MEMBER</button>
+                              <button type="button" onClick={() => handleRemoveTeam(team.id)} className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 border border-zinc-800 rounded">REMOVE</button>
+                            </div>
+                            <div className="space-y-1">
+                              {team.members.map((member, memberIndex) => (
+                                <div key={member.id} className="flex items-center gap-2">
+                                  <input
+                                    value={member.name}
+                                    onChange={(e) => handleTeamMemberNameChange(team.id, member.id, e.target.value)}
+                                    className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-zinc-200"
+                                    placeholder={`MEMBER ${memberIndex + 1}`}
+                                  />
+                                  <button type="button" onClick={() => handleRemoveTeamMember(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1">X</button>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="mt-2 text-[9px] text-zinc-500 uppercase">{team.name || `TEAM ${teamIndex + 1}`} ({team.members.length} members)</div>
+                          </div>
+                        ))}
+                        {teamConfigs.length === 0 && (
+                          <div className="text-[10px] text-zinc-500 uppercase border border-dashed border-zinc-800 rounded-lg p-3 text-center">
+                            No teams configured yet.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Transition to board */}
@@ -600,6 +830,16 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                     <button 
                       onClick={() => {
                         if (aiPrompt) {
+                           const teamsValidationError = getTeamsValidationError();
+                           if (teamsValidationError) {
+                             logger.warn('template_team_validation_failed', {
+                               source: 'ai_board_generation',
+                               playMode,
+                               reason: teamsValidationError,
+                             });
+                             addToast('error', teamsValidationError);
+                             return;
+                           }
                           soundService.playClick();
                           const newCats = Array.from({ length: config.catCount }).map((_, cI) => ({
                             id: makeStableId(), title: `AI Generating...`,
@@ -610,11 +850,16 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                           handleAiFillBoard(aiPrompt, aiDifficulty);
                         }
                       }}
-                      disabled={!aiPrompt || isLocked}
+                       disabled={!aiPrompt || isLocked || (playMode === 'TEAMS' && !!teamValidationError)}
                       className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-roboto font-bold rounded shadow-xl flex items-center justify-center gap-3 transition-all disabled:opacity-30 uppercase tracking-[0.15em] text-xs active:scale-95"
                     >
                       <Sparkles className="w-5 h-5" /> Generate Complete Board
                     </button>
+                     {playMode === 'TEAMS' && teamValidationError && (
+                       <p className="mt-2 text-[10px] text-amber-300/90 font-bold uppercase tracking-wide">
+                         {teamValidationError}
+                       </p>
+                     )}
                  </div>
             </div>
           </div>
@@ -662,7 +907,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
            )}
            <button 
              ref={saveBtnRef}
-             disabled={isLocked || isSaving} 
+             disabled={!canSaveTemplate} 
              onClick={handleSave} 
              data-testid="save-template-button"
              className="bg-gold-600 hover:bg-gold-500 text-black font-roboto font-bold px-4 md:px-6 py-2 rounded-lg flex items-center gap-2 shadow-xl transition-all active:scale-95 border-b-2 border-gold-800"
@@ -716,6 +961,65 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                  <button onClick={() => setIsAutoFit(!isAutoFit)} className={`p-1 rounded ${isAutoFit ? 'text-gold-500 bg-gold-950/30' : 'text-zinc-600 bg-zinc-900'}`}>{isAutoFit ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</button>
               </div>
            </div>
+
+           {playMode === 'TEAMS' && (
+             <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-3 space-y-3" data-testid="builder-teams-setup">
+               <div className="flex items-center justify-between gap-2">
+                 <h4 className="text-[10px] text-zinc-400 uppercase tracking-widest font-black">Teams Setup</h4>
+                 <button
+                   type="button"
+                   disabled={isLocked}
+                   onClick={handleAddTeam}
+                   data-testid="builder-add-team-button"
+                   className="text-[10px] text-gold-500 hover:text-white font-black border border-zinc-700 rounded px-2 py-1 disabled:opacity-40"
+                 >
+                   + TEAM
+                 </button>
+               </div>
+               <p className="text-[9px] text-zinc-500 uppercase tracking-wide">
+                 Add players to each team before continuing.
+               </p>
+               <p className="text-[9px] text-zinc-500 uppercase tracking-wide">
+                 {teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+                   ? 'Players Take Turns requires matching player counts across teams.'
+                   : 'Team Plays As One allows different player counts.'}
+               </p>
+               {teamValidationError && (
+                 <p className="text-[9px] text-amber-300 uppercase tracking-wide font-black border border-amber-600/30 bg-amber-950/20 rounded px-2 py-1">
+                   {teamValidationError}
+                 </p>
+               )}
+
+               <div className="space-y-2 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
+                 {teamConfigs.map((team, teamIndex) => (
+                   <div key={team.id} className="border border-zinc-800 rounded p-2 bg-black/20 space-y-1.5">
+                     <div className="flex items-center gap-2">
+                       <input
+                         value={team.name}
+                         onChange={(e) => handleTeamNameChange(team.id, e.target.value)}
+                         className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-white"
+                         placeholder={`TEAM ${teamIndex + 1}`}
+                       />
+                       <button type="button" onClick={() => handleAddTeamMember(team.id)} className="text-[9px] text-gold-400 border border-zinc-700 rounded px-2 py-1">+ PLAYER</button>
+                       <button type="button" onClick={() => handleRemoveTeam(team.id)} className="text-[9px] text-red-400 border border-zinc-700 rounded px-2 py-1">DEL</button>
+                     </div>
+                     {(team.members || []).map((member, memberIndex) => (
+                       <div key={member.id} className="flex items-center gap-2">
+                         <input
+                           value={member.name}
+                           onChange={(e) => handleTeamMemberNameChange(team.id, member.id, e.target.value)}
+                           className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[9px] uppercase text-zinc-200"
+                           placeholder={`PLAYER ${memberIndex + 1}`}
+                         />
+                         <button type="button" onClick={() => handleRemoveTeamMember(team.id, member.id)} className="text-[9px] text-zinc-500 hover:text-red-400 px-1">X</button>
+                       </div>
+                     ))}
+                     <div className="text-[9px] text-zinc-500 uppercase">{team.name || `TEAM ${teamIndex + 1}`} ({(team.members || []).length} players)</div>
+                   </div>
+                 ))}
+               </div>
+             </div>
+           )}
 
            <div className="pt-4 border-t border-zinc-900">
               <button onClick={handleResetBuilder} className="w-full text-left p-2.5 rounded hover:bg-red-950/20 text-[10px] font-roboto font-bold uppercase text-zinc-300 flex items-center gap-2 transition-colors"><RotateCcw className="w-3.5 h-3.5 text-red-500" /> Reset Board</button>
