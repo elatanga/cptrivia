@@ -1,9 +1,46 @@
-
 import React, { useState, useEffect, useRef } from 'react';
-import { LogOut, Volume2, VolumeX, Sliders, HelpCircle, Keyboard, ChevronUp, ChevronDown } from 'lucide-react';
+import { LogOut, Volume2, VolumeX, HelpCircle, Keyboard, ChevronUp, ChevronDown } from 'lucide-react';
 import { soundService } from '../services/soundService';
 import { ConnectionStatus } from './ConnectionStatus';
 import { HelpModal } from './HelpModal';
+
+const ChampagneBottleIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    aria-label="Champagne Bottle"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M10 2h4" />
+    <path d="M11 2v3" />
+    <path d="M13 2v3" />
+    <path d="M10 6h4" />
+    <path d="M9 6c0 3 1 4 1 6v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2v-7c0-2 1-3 1-6" />
+    <path d="M10 13h4" />
+  </svg>
+);
+
+const ChampagneGlassIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    aria-label="Champagne Glass"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M8 3h8l-1.5 7a2.6 2.6 0 0 1-5 0L8 3Z" />
+    <path d="M12 10v7" />
+    <path d="M9 21h6" />
+    <path d="M7.5 3h9" />
+  </svg>
+);
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -61,10 +98,12 @@ export const AppShell: React.FC<AppShellProps> = ({ children, activeShowTitle, u
       {/* HEADER: Sticky on Mobile, Fixed on Desktop */}
       <header className="sticky top-0 lg:static flex-none h-14 md:h-16 z-40 bg-black/95 backdrop-blur-sm lg:bg-gradient-to-b lg:from-black lg:via-black/95 lg:to-transparent px-4 md:px-6 flex items-center justify-between border-b border-gold-900/30">
           {/* Left: Branding */}
-          <div className="flex flex-col justify-center min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <ChampagneBottleIcon className="w-4 h-4 md:w-5 md:h-5 text-gold-500/90 drop-shadow-[0_0_8px_rgba(255,215,0,0.25)]" />
             <h1 className="text-lg md:text-2xl font-serif font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-gold-300 via-gold-500 to-gold-300 drop-shadow-sm truncate cursor-pointer hover:opacity-80 transition-opacity" onClick={() => soundService.playClick()}>
-              CRUZPHAM TRIVIA
+              CP JEOPARDY
             </h1>
+            <ChampagneGlassIcon className="w-4 h-4 md:w-5 md:h-5 text-gold-400/95 drop-shadow-[0_0_8px_rgba(255,215,0,0.25)]" />
           </div>
 
           {/* Center: Show Title (Desktop) */}
