@@ -175,7 +175,7 @@ describe('Special Moves Feature Suite', () => {
     });
 
     const armedTag = await screen.findByTestId(`special-move-tile-tag-${firstTileId}`);
-    expect(armedTag).toHaveTextContent('SPECIAL MOVE!');
+    expect(armedTag).toHaveTextContent('DOUBLE OR LOSE');
     expect(armedTag).toHaveAttribute('data-state', 'armed');
 
     // Verify the board tile shows the Zap icon
@@ -237,7 +237,7 @@ describe('Special Moves Feature Suite', () => {
     fireEvent.click(boardTile!);
 
     expect(await screen.findByTestId('reveal-root')).toBeInTheDocument();
-    expect(screen.queryByTestId('special-move-banner')).not.toBeInTheDocument();
+    expect(screen.queryByText(/WIN:\s*2X POINTS|WIN:\s*3X POINTS|NO STEAL|LOCKOUT|SAFE BET|TRIPLE OR LOSE/i)).not.toBeInTheDocument();
   });
 
   it('B4) RESOLUTION SYNC: Captured move still applies on return even if overlay changes mid-question', async () => {
@@ -325,13 +325,13 @@ describe('Special Moves Feature Suite', () => {
     });
 
     const resolvedTag = await screen.findByTestId(`special-move-tile-tag-${firstTileId}`);
-    expect(resolvedTag).toHaveTextContent('SPECIAL MOVE!');
+    expect(resolvedTag).toHaveTextContent('DOUBLE OR LOSE RESOLVED');
     expect(resolvedTag).toHaveAttribute('data-state', 'resolved');
 
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
     fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
     const directorResolvedTag = await screen.findByTestId(`special-move-director-tag-${firstTileId}`);
-    expect(directorResolvedTag).toHaveTextContent('SPECIAL MOVE!');
+    expect(directorResolvedTag).toHaveTextContent('DOUBLE OR LOSE RESOLVED');
     expect(directorResolvedTag).toHaveAttribute('data-state', 'resolved');
   });
 

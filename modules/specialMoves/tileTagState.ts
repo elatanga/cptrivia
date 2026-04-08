@@ -39,6 +39,30 @@ export const deriveResolvedSpecialMoveTileIds = (events: GameAnalyticsEvent[] | 
   return resolved;
 };
 
+export const deriveResolvedSpecialMoveLabelsByTileId = (
+  events: GameAnalyticsEvent[] | undefined | null
+): Record<string, string> => {
+  const labelsByTileId: Record<string, string> = {};
+  for (const event of events || []) {
+    const tileId = event?.context?.tileId;
+    if (!tileId) continue;
+    const isResolutionEvent = event.type === 'POINTS_AWARDED' || event.type === 'POINTS_STOLEN' || event.type === 'TILE_VOIDED' || event.type === 'QUESTION_RETURNED' || event.type === 'SCORE_ADJUSTED';
+    if (!isResolutionEvent) continue;
+    if (!isSpecialMoveContext(event)) continue;
+
+    const explicitName = String(event.context?.specialMoveName || '').trim();
+    const moveType = String(event.context?.specialMoveType || '').trim();
+    if (explicitName) {
+      labelsByTileId[tileId] = explicitName;
+      continue;
+    }
+    if (moveType) {
+      labelsByTileId[tileId] = SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ');
+    }
+  }
+  return labelsByTileId;
+};
+
 export const getTileSpecialMoveTagState = (isArmed: boolean, wasResolved: boolean): TileSpecialMoveTagState => {
   if (wasResolved) return 'resolved';
   if (isArmed) return 'armed';
@@ -47,9 +71,14 @@ export const getTileSpecialMoveTagState = (isArmed: boolean, wasResolved: boolea
 
 export const getTileSpecialMoveTagText = (
   moveType: string | undefined,
-  state: TileSpecialMoveTagState
+  state: TileSpecialMoveTagState,
+  resolvedLabel?: string
 ): string => {
-  if (state === 'resolved') return 'MOVE RESOLVED';
+  if (state === 'resolved') {
+    if (resolvedLabel) return `${resolvedLabel} RESOLVED`;
+    if (moveType) return `${SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ')} RESOLVED`;
+    return 'MOVE RESOLVED';
+  }
   if (!moveType) return 'SPECIAL MOVE';
   return SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ');
 };

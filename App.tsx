@@ -22,7 +22,7 @@ import { normalizePlayerName } from './services/utils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
 import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specialMoves/logic';
-import { deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
+import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { getNextPlayerSelection, getInitialAutoSelectedPlayer } from './services/playerSelectionCycler';
@@ -196,6 +196,7 @@ const App: React.FC = () => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const specialMovesOverlay = useSpecialMovesOverlay(gameState.isGameStarted ? activeShow?.id : undefined);
   const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
+  const resolvedSpecialMoveLabelsByTileId = useMemo(() => deriveResolvedSpecialMoveLabelsByTileId(gameState.events), [gameState.events]);
   // Ref keeps the overlay current inside stable callbacks without being a dep.
   const specialMovesOverlayRef = useRef(specialMovesOverlay);
   useEffect(() => {
@@ -1756,7 +1757,7 @@ const App: React.FC = () => {
                             <button onClick={() => { soundService.playClick(); setShowEndGameConfirm(true); }} type="button" className="text-[10px] md:text-xs uppercase text-red-500 hover:text-red-600 font-bold tracking-wider flex items-center gap-2"><Power className="w-3 h-3" /> End Show</button>
                             <button onClick={() => setViewMode('DIRECTOR')} className="text-[10px] md:text-xs uppercase font-bold text-zinc-500 hover:text-zinc-800 flex items-center gap-2 px-3 py-1.5 rounded transition-colors"><Grid className="w-3 h-3" /> Director</button>
                           </div>
-                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
+                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} resolvedSpecialMoveLabelsByTileId={resolvedSpecialMoveLabelsByTileId} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
                         </div>
                         <div className="order-1 md:order-2 flex-none h-auto lg:h-full w-full md:w-auto relative z-30">
                           <Scoreboard players={gameState.players} teams={gameState.teams || []} playMode={gameState.playMode || DEFAULT_PLAY_MODE} teamPlayStyle={gameState.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
