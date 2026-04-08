@@ -47,6 +47,94 @@ export const normalizeTemplateConfigForTeams = (config: TemplateConfig): Templat
   };
 };
 
+export const getTeamsValidationError = (
+  playMode: PlayMode,
+  teamPlayStyle: TeamPlayStyle,
+  teams: Team[]
+): string | null => {
+  if (playMode !== 'TEAMS') return null;
+  if (!Array.isArray(teams) || teams.length === 0) return 'Add at least one team.';
+
+  for (const team of teams) {
+    if (!String(team?.name || '').trim()) return 'Every team must have a name.';
+    if (!Array.isArray(team?.members) || team.members.length === 0) {
+      return `Team ${team?.name || 'Unnamed'} must have at least one member.`;
+    }
+    for (const member of team.members) {
+      if (!String(member?.name || '').trim()) {
+        return `All members in ${team?.name || 'team'} need names.`;
+      }
+    }
+  }
+
+  if (teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS') {
+    if (teams.length < 2) return 'Turn mode requires at least two teams.';
+    const expectedCount = teams[0].members.length;
+    if (teams.some((team) => team.members.length !== expectedCount)) {
+      return 'In Team Members Take Turns mode, every team must have the same number of players.';
+    }
+  }
+
+  return null;
+};
+
+type TeamTurnParticipant = {
+  teamId: string;
+  memberId: string;
+};
+
+const getMembersInTurnOrder = (team: Team): TeamMember[] => {
+  return [...(team.members || [])].sort((a, b) => {
+    const aIndex = Number.isFinite(Number(a.orderIndex)) ? Number(a.orderIndex) : 0;
+    const bIndex = Number.isFinite(Number(b.orderIndex)) ? Number(b.orderIndex) : 0;
+    return aIndex - bIndex;
+  });
+};
+
+export const buildTeamMemberTurnSequence = (teams: Team[]): TeamTurnParticipant[] => {
+  if (!Array.isArray(teams) || teams.length === 0) return [];
+
+  const orderedTeams = teams.map((team) => ({ team, members: getMembersInTurnOrder(team) }));
+  const maxMemberCount = Math.max(...orderedTeams.map((entry) => entry.members.length));
+  const sequence: TeamTurnParticipant[] = [];
+
+  for (let memberIndex = 0; memberIndex < maxMemberCount; memberIndex += 1) {
+    orderedTeams.forEach(({ team, members }) => {
+      const member = members[memberIndex];
+      if (!member?.id) return;
+      sequence.push({ teamId: team.id, memberId: member.id });
+    });
+  }
+
+  return sequence;
+};
+
+export const getNextTeamTurnSelection = (
+  teams: Team[],
+  currentSelectedTeamId: string | null
+): string | null => {
+  const sequence = buildTeamMemberTurnSequence(teams);
+  if (sequence.length === 0) return null;
+
+  if (!currentSelectedTeamId) {
+    return sequence[0].teamId;
+  }
+
+  const currentTeam = teams.find((team) => team.id === currentSelectedTeamId);
+  const currentActiveMemberId = currentTeam?.activeMemberId;
+  const exactIndex = sequence.findIndex(
+    (entry) => entry.teamId === currentSelectedTeamId && entry.memberId === currentActiveMemberId
+  );
+  const fallbackIndex = sequence.findIndex((entry) => entry.teamId === currentSelectedTeamId);
+  const currentIndex = exactIndex !== -1 ? exactIndex : fallbackIndex;
+
+  if (currentIndex === -1) {
+    return sequence[0].teamId;
+  }
+
+  return sequence[(currentIndex + 1) % sequence.length].teamId;
+};
+
 export const normalizeGameStateForTeams = (state: GameState): GameState => {
   const playMode = state?.playMode || DEFAULT_PLAY_MODE;
   const teamPlayStyle = state?.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE;

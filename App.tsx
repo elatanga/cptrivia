@@ -31,6 +31,8 @@ import {
   DEFAULT_TEAM_PLAY_STYLE,
   applyScoreDeltaByMode,
   buildContestantsFromTeams,
+  getNextTeamTurnSelection,
+  getTeamsValidationError,
   normalizeGameStateForTeams,
   normalizeTemplateConfigForTeams,
   rotateActiveMemberForTeamById,
@@ -1114,6 +1116,22 @@ const App: React.FC = () => {
     });
 
     const normalizedTemplateConfig = normalizeTemplateConfigForTeams(template.config);
+    const templateTeamsValidationError = getTeamsValidationError(
+      normalizedTemplateConfig.playMode || DEFAULT_PLAY_MODE,
+      normalizedTemplateConfig.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE,
+      normalizedTemplateConfig.teams || []
+    );
+    if (templateTeamsValidationError) {
+      logger.warn('template_play_blocked_invalid_teams', {
+        templateId: template.id,
+        reason: templateTeamsValidationError,
+        playMode: normalizedTemplateConfig.playMode,
+        teamPlayStyle: normalizedTemplateConfig.teamPlayStyle,
+      });
+      addToast('error', templateTeamsValidationError);
+      return;
+    }
+
     const isTeamsMode = normalizedTemplateConfig.playMode === 'TEAMS' && (normalizedTemplateConfig.teams || []).length > 0;
     const targetPlayerCount = resolveTemplatePlayerCount(template);
     const timerEnabledFromTemplate = resolveTemplateTimerEnabled(template, questionTimerEnabled);
@@ -1484,7 +1502,11 @@ const App: React.FC = () => {
     // Only advance if this was a scored play (award, steal, or fail resolution)
     const shouldAutoAdvance = action === 'award' || action === 'steal' || resolvesAsFail;
     if (shouldAutoAdvance && newPlayers.length > 0) {
-      const nextSelectedPlayerId = getNextPlayerSelection(newPlayers, current.selectedPlayerId);
+      const autoAdvanceFromTeamId = scoringTargetId || current.selectedPlayerId;
+      const nextSelectedPlayerId =
+        activePlayMode === 'TEAMS' && activeTeamStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+          ? getNextTeamTurnSelection(newTeams, autoAdvanceFromTeamId)
+          : getNextPlayerSelection(newPlayers, current.selectedPlayerId);
       if (nextSelectedPlayerId && nextSelectedPlayerId !== current.selectedPlayerId) {
         const nextPlayer = newPlayers.find(p => p.id === nextSelectedPlayerId);
         if (nextPlayer) {
