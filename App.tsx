@@ -25,6 +25,7 @@ import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specia
 import { deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
+import { getNextPlayerSelection, getInitialAutoSelectedPlayer } from './services/playerSelectionCycler';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
 
 const QUESTION_TIMER_DURATION_OPTIONS = [5, 7, 8, 10, 15] as const;
@@ -267,18 +268,39 @@ const App: React.FC = () => {
     isEndGameCelebrationOpen,
     showTimerExpiredPrompt,
     showEndGameConfirm,
-  ]);
+   ]);
 
-  // Layout Logging
-  useEffect(() => {
-    const logLayout = () => {
-      const isCompact = window.innerWidth < 1024;
-      logger.info("layout_mode", { compact: isCompact, width: window.innerWidth, height: window.innerHeight });
-    };
-    logLayout();
-    window.addEventListener('resize', logLayout);
-    return () => window.removeEventListener('resize', logLayout);
-  }, []);
+   // INITIAL AUTO-SELECTION SAFETY
+   // When game becomes active with no valid current selection, auto-select first player.
+   useEffect(() => {
+     if (!gameState.isGameStarted || gameState.players.length === 0) {
+       return;
+     }
+
+     const autoSelected = getInitialAutoSelectedPlayer(gameState.players, gameState.selectedPlayerId);
+     if (autoSelected && autoSelected !== gameState.selectedPlayerId) {
+       const nextPlayer = gameState.players.find(p => p.id === autoSelected);
+       if (nextPlayer) {
+         logger.info('initial_auto_selection', {
+           selectedPlayerId: autoSelected,
+           selectedPlayerName: nextPlayer.name,
+           reason: 'game_active_no_valid_selection'
+         });
+         saveGameState({ ...gameState, selectedPlayerId: autoSelected });
+       }
+     }
+   }, [gameState.isGameStarted, gameState.players.length]);
+
+   // Layout Logging
+   useEffect(() => {
+     const logLayout = () => {
+       const isCompact = window.innerWidth < 1024;
+       logger.info("layout_mode", { compact: isCompact, width: window.innerWidth, height: window.innerHeight });
+     };
+     logLayout();
+     window.addEventListener('resize', logLayout);
+     return () => window.removeEventListener('resize', logLayout);
+   }, []);
 
   // --- PERSISTENCE & SYNC ---
   const saveGameState = (state: GameState) => {
@@ -1402,6 +1424,32 @@ const App: React.FC = () => {
     } else if (resolvesAsFail) {
       const attemptedName = attemptedPlayer?.name || 'Unknown';
       addToast('error', `${Math.abs(points)} points lost by ${attemptedName}`);
+    }
+
+    // AUTO-ADVANCE PLAYER SELECTION AFTER PLAY COMPLETION
+    // Only advance if this was a scored play (award, steal, or fail resolution)
+    const shouldAutoAdvance = action === 'award' || action === 'steal' || resolvesAsFail;
+    if (shouldAutoAdvance && newPlayers.length > 0) {
+      const nextSelectedPlayerId = getNextPlayerSelection(newPlayers, current.selectedPlayerId);
+      if (nextSelectedPlayerId && nextSelectedPlayerId !== current.selectedPlayerId) {
+        const nextPlayer = newPlayers.find(p => p.id === nextSelectedPlayerId);
+        if (nextPlayer) {
+          logger.info('auto_advance_player_selection', {
+            previousPlayerId: current.selectedPlayerId,
+            previousPlayerName: current.players.find(p => p.id === current.selectedPlayerId)?.name,
+            nextPlayerId: nextSelectedPlayerId,
+            nextPlayerName: nextPlayer.name,
+            action: action,
+            tileId: activeQ.id
+          });
+          // Update gameState with the auto-advanced selection
+          setGameState(prevState => {
+            const updatedState = { ...prevState, selectedPlayerId: nextSelectedPlayerId };
+            saveGameState(updatedState);
+            return updatedState;
+          });
+        }
+      }
     }
   };
 
