@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { GameState, Team, TemplateConfig } from '../types';
+import type { GameState, Player, Team, TemplateConfig } from '../types';
 import {
   DEFAULT_PLAY_MODE,
   DEFAULT_TEAM_PLAY_STYLE,
@@ -9,6 +9,7 @@ import {
   getTeamsValidationError,
   normalizeGameStateForTeams,
   normalizeTemplateConfigForTeams,
+  resetLiveScoresByMode,
   rotateActiveMemberForTeamById,
 } from './teamsMode';
 
@@ -230,6 +231,57 @@ describe('teamsMode helpers', () => {
     ];
 
     expect(getNextTeamTurnSelection(teams, 'B')).toBe('C');
+  });
+
+  it('resets all individual contestant scores to zero', () => {
+    const players: Player[] = [
+      { id: 'p1', name: 'ALICE', score: 300, color: '#fff' },
+      { id: 'p2', name: 'BOB', score: -100, color: '#fff' },
+    ];
+
+    const next = resetLiveScoresByMode(players, [], 'INDIVIDUALS');
+    expect(next.players.map((player) => player.score)).toEqual([0, 0]);
+    expect(next.teams).toEqual([]);
+  });
+
+  it('resets team totals to zero in TEAM_PLAYS_AS_ONE', () => {
+    const teams = [
+      makeTeam({ id: 't1', score: 200, members: [{ id: 'm1', name: 'A1', score: 40, orderIndex: 0 }] }),
+      makeTeam({ id: 't2', score: 150, members: [{ id: 'm2', name: 'B1', score: 20, orderIndex: 0 }] }),
+    ];
+    const players: Player[] = [
+      { id: 't1', name: 'TEAM 1', score: 200, color: '#fff' },
+      { id: 't2', name: 'TEAM 2', score: 150, color: '#fff' },
+    ];
+
+    const next = resetLiveScoresByMode(players, teams, 'TEAMS');
+
+    expect(next.players.map((player) => player.score)).toEqual([0, 0]);
+    expect(next.teams.map((team) => team.score)).toEqual([0, 0]);
+  });
+
+  it('resets team member scores in TEAM_MEMBERS_TAKE_TURNS without changing roster metadata', () => {
+    const teams = [
+      {
+        id: 't1',
+        name: 'TEAM A',
+        score: 100,
+        activeMemberId: 'm2',
+        members: [
+          { id: 'm1', name: 'ALPHA', score: 20, orderIndex: 0 },
+          { id: 'm2', name: 'BETA', score: 80, orderIndex: 1 },
+        ],
+      },
+    ];
+    const players: Player[] = [{ id: 't1', name: 'TEAM A', score: 100, color: '#fff' }];
+
+    const next = resetLiveScoresByMode(players, teams, 'TEAMS');
+    const resetTeam = next.teams[0];
+
+    expect(resetTeam.score).toBe(0);
+    expect(resetTeam.members.map((member) => member.score)).toEqual([0, 0]);
+    expect(resetTeam.activeMemberId).toBe('m2');
+    expect(resetTeam.members.map((member) => member.name)).toEqual(['ALPHA', 'BETA']);
   });
 });
 

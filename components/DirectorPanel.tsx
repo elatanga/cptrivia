@@ -11,7 +11,7 @@ import { CategoryRegenerationMode, isTileActive, preserveTileStateOnRegenerate, 
 import { DirectorAiRegenerator } from './DirectorAiRegenerator';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
 import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
-import { getTeamsValidationError as getTeamsModeValidationError } from '../services/teamsMode';
+import { getTeamsValidationError as getTeamsModeValidationError, resetLiveScoresByMode } from '../services/teamsMode';
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
@@ -1010,6 +1010,8 @@ export const DirectorPanel: React.FC<Props> = ({
   };
 
   const isTeamsMode = (gameState.playMode || 'INDIVIDUALS') === 'TEAMS';
+  const activeTeamPlayStyle = gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE';
+  const teamPlayStyleLabel = activeTeamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'TAKE TURNS' : 'PLAYS AS ONE';
   const canEditTeams = !gameState.isGameStarted;
   const teamsValidationError = isTeamsMode
     ? getTeamsModeValidationError('TEAMS', gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE', gameState.teams || [])
@@ -1204,6 +1206,48 @@ export const DirectorPanel: React.FC<Props> = ({
       actor: { role: 'director' }, 
       context: { after: safeUpdates } 
     });
+  };
+
+  const safeConfirm = (message: string): boolean => {
+    try {
+      return typeof window !== 'undefined' && typeof window.confirm === 'function'
+        ? window.confirm(message)
+        : false;
+    } catch {
+      return false;
+    }
+  };
+
+  const buildStateWithResetLiveScores = (state: GameState): GameState => {
+    const mode = state.playMode || 'INDIVIDUALS';
+    const { players, teams } = resetLiveScoresByMode(state.players || [], state.teams || [], mode);
+    return {
+      ...state,
+      players,
+      teams,
+    };
+  };
+
+  const handleResetLiveScores = () => {
+    if (!safeConfirm('Reset all live scores to zero?')) return;
+    onUpdateState(buildStateWithResetLiveScores(gameState));
+    emitGameEvent('SCORE_ADJUSTED', {
+      actor: { role: 'director' },
+      context: { note: 'Reset all live scores to zero from Players tab', delta: 0 },
+    });
+    addToast('info', 'Live scores reset to zero.');
+  };
+
+  const transformStateAfterBoardRegen = (nextState: GameState): GameState => {
+    if (!safeConfirm('Do you also want to reset live scores to zero?')) {
+      return nextState;
+    }
+    emitGameEvent('SCORE_ADJUSTED', {
+      actor: { role: 'director' },
+      context: { note: 'Reset all live scores to zero after AI board regeneration', delta: 0 },
+    });
+    addToast('info', 'Board regenerated and live scores reset to zero.');
+    return buildStateWithResetLiveScores(nextState);
   };
 
   const handleArmMove = async (tileId: string) => {
@@ -1624,35 +1668,53 @@ export const DirectorPanel: React.FC<Props> = ({
                 <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
                   <Users className="w-4 h-4" /> Contestant Management
                 </h3>
-                <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Live roster overrides for game session</p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Live roster overrides for game session</span>
+                  {isTeamsMode && (
+                    <>
+                      <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-blue-200">Teams Mode</span>
+                      <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-purple-200">{teamPlayStyleLabel}</span>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="flex gap-2">
-                {!confirmResetAll ? (
-                  <button 
-                    onClick={() => setConfirmResetAll(true)}
-                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase transition-all"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Reset All Wildcards
-                  </button>
-                ) : (
-                  <button 
-                    onClick={handleResetAllWildcards}
-                    className="bg-red-600 hover:bg-red-500 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase animate-pulse shadow-lg shadow-red-900/20"
-                  >
-                    <AlertTriangle className="w-3.5 h-3.5" /> Click to Confirm Reset All
-                  </button>
-                )}
-                <button 
-                  onClick={() => setIsAddingPlayer(true)}
-                  disabled={(gameState.players || []).length >= 8}
-                  className="bg-gold-600 hover:bg-gold-500 text-black font-black px-5 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase disabled:opacity-30 transition-all shadow-xl shadow-gold-900/10 active:scale-95"
+                <button
+                  onClick={handleResetLiveScores}
+                  className="bg-red-700/90 hover:bg-red-600 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase transition-all shadow-lg shadow-red-950/20"
                 >
-                  <UserPlus className="w-4 h-4" /> Add Player
+                  <RotateCcw className="w-3.5 h-3.5" /> Reset Live Scores
                 </button>
+                {!isTeamsMode && (
+                  <>
+                    {!confirmResetAll ? (
+                      <button 
+                        onClick={() => setConfirmResetAll(true)}
+                        className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase transition-all"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Reset All Wildcards
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={handleResetAllWildcards}
+                        className="bg-red-600 hover:bg-red-500 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase animate-pulse shadow-lg shadow-red-900/20"
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" /> Click to Confirm Reset All
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => setIsAddingPlayer(true)}
+                      disabled={(gameState.players || []).length >= 8}
+                      className="bg-gold-600 hover:bg-gold-500 text-black font-black px-5 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase disabled:opacity-30 transition-all shadow-xl shadow-gold-900/10 active:scale-95"
+                    >
+                      <UserPlus className="w-4 h-4" /> Add Player
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
-            {isAddingPlayer && (
+            {!isTeamsMode && isAddingPlayer && (
               <div className="bg-zinc-900 p-5 rounded-2xl border border-gold-500/30 flex gap-3 animate-in slide-in-from-top-2 shadow-2xl">
                 <input 
                   autoFocus
@@ -1667,99 +1729,171 @@ export const DirectorPanel: React.FC<Props> = ({
               </div>
             )}
 
-            <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-sm">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-black/60 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
-                  <tr>
-                    <th className="p-5 border-b border-zinc-800">Contestant Name</th>
-                    <th className="p-5 border-b border-zinc-800">Live Score</th>
-                    <th className="p-5 border-b border-zinc-800">Wildcards</th>
-                    <th className="p-5 border-b border-zinc-800">Steals</th>
-                    <th className="p-5 border-b border-zinc-800">Special Moves</th>
-                    <th className="p-5 border-b border-zinc-800 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/40">
-                  {(gameState.players || []).map(p => (
-                    <tr key={p.id} className="hover:bg-white/[0.02] transition-colors group">
-                      <td className="p-5">
-                        <input 
-                          value={p.name}
-                          onChange={e => handleUpdatePlayer(p.id, 'name', normalizePlayerName(e.target.value))}
-                          className="bg-transparent border-b border-transparent focus:border-gold-500 outline-none font-black text-sm text-white w-full uppercase tracking-tight transition-all py-1"
-                          placeholder="NAME REQUIRED"
-                        />
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-3">
-                          <button 
-                            onClick={() => handleUpdatePlayer(p.id, 'score', p.score - 100)}
-                            className="p-2 bg-black rounded-lg hover:text-red-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
-                            title="Subtract 100"
-                          ><Minus className="w-4 h-4"/></button>
-                          <span className="font-mono text-gold-500 font-black min-w-[5rem] text-center text-xl drop-shadow-md select-none">{p.score}</span>
-                          <button 
-                            onClick={() => handleUpdatePlayer(p.id, 'score', p.score + 100)}
-                            className="p-2 bg-black rounded-lg hover:text-green-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
-                            title="Add 100"
-                          ><Plus className="w-4 h-4"/></button>
-                        </div>
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-2">
-                           <button 
-                             disabled={(p.wildcardsUsed || 0) >= 4}
-                             onClick={() => handleUseWildcard(p.id)}
-                             title="Increment Wildcard Usage"
-                             className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase flex items-center gap-2 transition-all ${(p.wildcardsUsed || 0) >= 4 ? 'bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed' : 'bg-gold-600/10 border-gold-600/30 text-gold-500 hover:bg-gold-600 hover:text-black'}`}
-                           >
-                             <Star className={`w-3 h-3 ${(p.wildcardsUsed || 0) > 0 ? 'fill-current' : ''}`} /> 
-                             {(p.wildcardsUsed || 0) >= 4 ? 'MAX 4 USED' : `${p.wildcardsUsed || 0}/4`}
-                           </button>
-                           <button 
-                             disabled={(p.wildcardsUsed || 0) === 0}
-                             onClick={() => handleResetWildcards(p.id)}
-                             title="Reset Wildcards"
-                             className="p-2 text-zinc-600 hover:text-red-500 disabled:opacity-0 transition-all"
-                           >
-                             <RotateCcw className="w-4 h-4" />
-                           </button>
-                        </div>
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-2 text-purple-400">
-                          <ShieldAlert className="w-4 h-4" />
-                          <span className="font-mono font-black text-sm">{p.stealsCount || 0}</span>
-                        </div>
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-2 text-red-400" title={(p.specialMovesUsedNames || []).join(', ')}>
-                          <Sparkles className="w-4 h-4" />
-                          <span className="font-mono font-black text-sm">{p.specialMovesUsedCount || 0}</span>
-                        </div>
-                      </td>
-                      <td className="p-5 text-right">
-                        <button 
-                          /* Fix: Replace undefined 'id' with 'p.id' */
-                          onClick={() => handleRemovePlayer(p.id)}
-                          className="p-3 text-zinc-800 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10 rounded-xl"
-                          title="Delete Contestant"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {(!gameState.players || gameState.players.length === 0) && (
+            {!isTeamsMode && (
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-sm">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-black/60 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
                     <tr>
-                      <td colSpan={6} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
-                        No contestants registered for this session
-                      </td>
+                      <th className="p-5 border-b border-zinc-800">Contestant Name</th>
+                      <th className="p-5 border-b border-zinc-800">Live Score</th>
+                      <th className="p-5 border-b border-zinc-800">Wildcards</th>
+                      <th className="p-5 border-b border-zinc-800">Steals</th>
+                      <th className="p-5 border-b border-zinc-800">Special Moves</th>
+                      <th className="p-5 border-b border-zinc-800 text-right">Actions</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/40">
+                    {(gameState.players || []).map(p => (
+                      <tr key={p.id} className="hover:bg-white/[0.02] transition-colors group">
+                        <td className="p-5">
+                          <input 
+                            value={p.name}
+                            onChange={e => handleUpdatePlayer(p.id, 'name', normalizePlayerName(e.target.value))}
+                            className="bg-transparent border-b border-transparent focus:border-gold-500 outline-none font-black text-sm text-white w-full uppercase tracking-tight transition-all py-1"
+                            placeholder="NAME REQUIRED"
+                          />
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => handleUpdatePlayer(p.id, 'score', p.score - 100)}
+                              className="p-2 bg-black rounded-lg hover:text-red-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
+                              title="Subtract 100"
+                            ><Minus className="w-4 h-4"/></button>
+                            <span className="font-mono text-gold-500 font-black min-w-[5rem] text-center text-xl drop-shadow-md select-none">{p.score}</span>
+                            <button 
+                              onClick={() => handleUpdatePlayer(p.id, 'score', p.score + 100)}
+                              className="p-2 bg-black rounded-lg hover:text-green-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
+                              title="Add 100"
+                            ><Plus className="w-4 h-4"/></button>
+                          </div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2">
+                             <button 
+                               disabled={(p.wildcardsUsed || 0) >= 4}
+                               onClick={() => handleUseWildcard(p.id)}
+                               title="Increment Wildcard Usage"
+                               className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase flex items-center gap-2 transition-all ${(p.wildcardsUsed || 0) >= 4 ? 'bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed' : 'bg-gold-600/10 border-gold-600/30 text-gold-500 hover:bg-gold-600 hover:text-black'}`}
+                             >
+                               <Star className={`w-3 h-3 ${(p.wildcardsUsed || 0) > 0 ? 'fill-current' : ''}`} /> 
+                               {(p.wildcardsUsed || 0) >= 4 ? 'MAX 4 USED' : `${p.wildcardsUsed || 0}/4`}
+                             </button>
+                             <button 
+                               disabled={(p.wildcardsUsed || 0) === 0}
+                               onClick={() => handleResetWildcards(p.id)}
+                               title="Reset Wildcards"
+                               className="p-2 text-zinc-600 hover:text-red-500 disabled:opacity-0 transition-all"
+                             >
+                               <RotateCcw className="w-4 h-4" />
+                             </button>
+                          </div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2 text-purple-400">
+                            <ShieldAlert className="w-4 h-4" />
+                            <span className="font-mono font-black text-sm">{p.stealsCount || 0}</span>
+                          </div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2 text-red-400" title={(p.specialMovesUsedNames || []).join(', ')}>
+                            <Sparkles className="w-4 h-4" />
+                            <span className="font-mono font-black text-sm">{p.specialMovesUsedCount || 0}</span>
+                          </div>
+                        </td>
+                        <td className="p-5 text-right">
+                          <button 
+                            onClick={() => handleRemovePlayer(p.id)}
+                            className="p-3 text-zinc-800 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10 rounded-xl"
+                            title="Delete Contestant"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {(!gameState.players || gameState.players.length === 0) && (
+                      <tr>
+                        <td colSpan={6} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
+                          No contestants registered for this session
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {isTeamsMode && (
+              <div className="space-y-4">
+                <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-wider font-black text-zinc-400">
+                    {`${(gameState.teams || []).length} team${(gameState.teams || []).length === 1 ? '' : 's'} • ${gameState.players.length} total contestants`}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-wider font-black text-zinc-500">
+                    {activeTeamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+                      ? 'Active member badge reflects current turn state'
+                      : 'Team totals drive scoring while member list stays visible for context'}
+                  </div>
+                </div>
+
+                {(gameState.teams || []).length === 0 ? (
+                  <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-14 text-center text-zinc-500 text-[11px] uppercase font-black tracking-[0.2em]">
+                    No teams configured yet. Open the Teams tab to set up rosters.
+                  </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {(gameState.teams || []).map((team) => {
+                      const members = team.members || [];
+                      const isSelected = gameState.selectedPlayerId === team.id;
+                      return (
+                        <div key={team.id} className={`rounded-2xl border p-4 bg-zinc-900/30 ${isSelected ? 'border-gold-500/70 shadow-lg shadow-gold-900/20' : 'border-zinc-800'}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="text-white font-black uppercase tracking-wide truncate">{team.name}</h4>
+                                <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-blue-200">Team</span>
+                                <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-purple-200">{teamPlayStyleLabel}</span>
+                              </div>
+                              <div className="mt-1 text-[10px] uppercase tracking-wider font-bold text-zinc-500">
+                                {members.length} player{members.length === 1 ? '' : 's'}
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className="text-[9px] uppercase tracking-widest text-zinc-500 font-black">Team Score</div>
+                              <div className="font-mono text-2xl text-gold-500 font-black leading-none">{Number(team.score || 0)}</div>
+                            </div>
+                          </div>
+
+                          {activeTeamPlayStyle === 'TEAM_PLAYS_AS_ONE' && (
+                            <div className="mt-3 rounded-xl border border-zinc-800 bg-black/40 p-2 text-[11px] text-zinc-300 uppercase tracking-wide">
+                              {members.map((member) => member.name).join(' • ') || 'No members'}
+                            </div>
+                          )}
+
+                          {activeTeamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' && (
+                            <div className="mt-3 space-y-1.5">
+                              {members.map((member) => {
+                                const isActive = team.activeMemberId === member.id;
+                                return (
+                                  <div key={member.id} className={`rounded-lg border px-2.5 py-2 flex items-center justify-between gap-2 ${isActive ? 'border-gold-500/40 bg-gold-900/20' : 'border-zinc-800 bg-black/30'}`}>
+                                    <div className="min-w-0 flex items-center gap-2">
+                                      <span className="text-[11px] font-bold uppercase text-zinc-200 truncate">{member.name}</span>
+                                      {isActive && <span className="inline-flex items-center rounded-full border border-gold-500/50 bg-gold-900/40 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-gold-300">Active</span>}
+                                    </div>
+                                    <span className="font-mono text-sm font-black text-zinc-200">{Number(member.score || 0)}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -2525,7 +2659,7 @@ export const DirectorPanel: React.FC<Props> = ({
 
         {activeTab === 'BOARD' && (
           <div className="space-y-8 animate-in fade-in duration-300">
-            <DirectorAiRegenerator gameState={gameState} onUpdateState={onUpdateState} addToast={addToast} emitGameEvent={emitGameEvent} />
+            <DirectorAiRegenerator gameState={gameState} onUpdateState={onUpdateState} addToast={addToast} emitGameEvent={emitGameEvent} onTransformSuccessfulState={transformStateAfterBoardRegen} />
             <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${gameState.categories.length}, minmax(180px, 1fr))` }}>
               {gameState.categories.map((cat, cIdx) => (
                 <div key={cat.id} className="space-y-3">

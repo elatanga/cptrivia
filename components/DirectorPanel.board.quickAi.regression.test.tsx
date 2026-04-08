@@ -11,6 +11,7 @@ import * as geminiService from '../services/geminiService';
 vi.mock('../services/geminiService', () => ({
   generateSingleQuestion: vi.fn(),
   generateCategoryQuestions: vi.fn(),
+  generateTriviaGame: vi.fn(),
 }));
 
 vi.mock('../services/logger', () => ({
@@ -366,6 +367,111 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
       expect(firstTile.isAnswered).toBe(false);
       expect(secondTile.isVoided).toBe(false);
       expect(firstTile.isRevealed).toBe(false);
+    });
+  });
+
+  it('9) BOARD REPOPULATE: prompts to optionally reset live scores and applies reset on Yes', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(geminiService.generateTriviaGame).mockResolvedValue([
+      {
+        id: 'cat-ai-1',
+        title: 'New Science',
+        questions: [{ id: 'qa-1', text: 'AI Q', answer: 'AI A', points: 100, isRevealed: false, isAnswered: false }],
+      },
+    ] as any);
+
+    const teamState: GameState = {
+      ...baseGameState,
+      playMode: 'TEAMS',
+      teamPlayStyle: 'TEAM_MEMBERS_TAKE_TURNS',
+      players: [{ id: 't1', name: 'TEAM A', score: 500, color: '#fff' }],
+      teams: [{
+        id: 't1',
+        name: 'TEAM A',
+        score: 500,
+        activeMemberId: 'm1',
+        members: [
+          { id: 'm1', name: 'A1', score: 200, orderIndex: 0 },
+          { id: 'm2', name: 'A2', score: 300, orderIndex: 1 },
+        ],
+      }],
+      selectedPlayerId: 't1',
+    };
+
+    render(
+      <DirectorPanel
+        gameState={teamState}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/1990s Pop Culture/i), { target: { value: 'Space' } });
+    fireEvent.click(screen.getByRole('button', { name: /Regenerate All/i }));
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalledWith('Do you also want to reset live scores to zero?');
+      const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
+      expect(nextState.players[0].score).toBe(0);
+      expect(nextState.teams?.[0].score).toBe(0);
+      expect(nextState.teams?.[0].members.map((member) => member.score)).toEqual([0, 0]);
+    });
+  });
+
+  it('10) BOARD REPOPULATE: keeps live scores when director chooses No', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.mocked(geminiService.generateTriviaGame).mockResolvedValue([
+      {
+        id: 'cat-ai-1',
+        title: 'New Science',
+        questions: [{ id: 'qa-1', text: 'AI Q', answer: 'AI A', points: 100, isRevealed: false, isAnswered: false }],
+      },
+    ] as any);
+
+    const state: GameState = {
+      ...baseGameState,
+      players: [{ id: 'p1', name: 'ALICE', score: 700, color: '#fff' }],
+      selectedPlayerId: 'p1',
+    };
+
+    render(
+      <DirectorPanel
+        gameState={state}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/1990s Pop Culture/i), { target: { value: 'Space' } });
+    fireEvent.click(screen.getByRole('button', { name: /Regenerate All/i }));
+
+    await waitFor(() => {
+      const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
+      expect(nextState.players[0].score).toBe(700);
+    });
+  });
+
+  it('11) BOARD REPOPULATE: regeneration failure does not trigger score reset prompt', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(geminiService.generateTriviaGame).mockRejectedValue(new Error('regen failed'));
+
+    render(
+      <DirectorPanel
+        gameState={baseGameState}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/1990s Pop Culture/i), { target: { value: 'Broken' } });
+    fireEvent.click(screen.getByRole('button', { name: /Regenerate All/i }));
+
+    await waitFor(() => {
+      expect(mockOnUpdateState).not.toHaveBeenCalled();
+      expect(window.confirm).not.toHaveBeenCalledWith('Do you also want to reset live scores to zero?');
     });
   });
 });

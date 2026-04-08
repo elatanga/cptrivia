@@ -218,3 +218,35 @@ export const rotateActiveMemberForTeamById = (teams: Team[], teamId: string | nu
   return teams.map((team) => (team.id === teamId ? rotateTeamActiveMember(team) : team));
 };
 
+export const resetLiveScoresByMode = (
+  players: Player[],
+  teams: Team[],
+  playMode: PlayMode
+): { players: Player[]; teams: Team[] } => {
+  const nextPlayers = (players || []).map((player) => ({
+    ...player,
+    score: 0,
+  }));
+
+  if (playMode !== 'TEAMS') {
+    return {
+      players: nextPlayers,
+      teams: teams || [],
+    };
+  }
+
+  const nextTeams = (teams || []).map((team) => ({
+    ...team,
+    score: 0,
+    members: (team.members || []).map((member) => ({
+      ...member,
+      score: 0,
+    })),
+  }));
+
+  return {
+    players: nextPlayers,
+    teams: nextTeams,
+  };
+};
+
