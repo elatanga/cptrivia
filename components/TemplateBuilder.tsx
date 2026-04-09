@@ -8,6 +8,12 @@ import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { normalizePlayerName } from '../services/utils';
 import { getTeamsValidationError as getTeamsModeValidationError } from '../services/teamsMode';
+import {
+  SESSION_TIMER_PRESET_SECONDS,
+  normalizeCustomTimerToSeconds,
+  resolveSessionTimerDuration,
+} from '../services/sessionTimerUtils';
+import type { SessionTimerUnit } from '../services/sessionTimerUtils';
 
 type GenerationStatus = 'IDLE' | 'GENERATING' | 'APPLYING' | 'COMPLETE' | 'FAILED' | 'CANCELED';
 
@@ -28,7 +34,6 @@ interface Props {
 
 type QuickGameMode = 'single_player' | 'two_player' | null;
 type QuickTimerMode = 'timed' | 'untimed' | null;
-const QUICK_TIMER_DURATION_OPTIONS = [5, 7, 8, 10, 15] as const;
 
 const MAX_PLAYERS = 8;
 const MIN_PLAYERS = 1;
@@ -36,12 +41,16 @@ const makeStableId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ?
 const DEFAULT_PLAY_MODE: PlayMode = 'INDIVIDUALS';
 const DEFAULT_TEAM_STYLE: TeamPlayStyle = 'TEAM_PLAYS_AS_ONE';
 
-const resolveQuickTimerDuration = (raw: unknown) => {
-  const duration = Number(raw);
-  if (QUICK_TIMER_DURATION_OPTIONS.includes(duration as (typeof QUICK_TIMER_DURATION_OPTIONS)[number])) {
-    return duration;
+/** Format seconds into a compact human-readable string for the UI display. */
+const formatSessionDuration = (seconds: number): string => {
+  if (seconds <= 0) return '0s';
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) {
+    const mins = seconds / 60;
+    return Number.isInteger(mins) ? `${mins}m` : `${(seconds / 60).toFixed(1)}m`;
   }
-  return 10;
+  const hrs = seconds / 3600;
+  return Number.isInteger(hrs) ? `${hrs}h` : `${(seconds / 3600).toFixed(1)}h`;
 };
 
 export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onClose, onSave, onLogout, addToast }) => {
@@ -65,8 +74,12 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
   const [quickGameMode, setQuickGameMode] = useState<QuickGameMode>(initialTemplate?.config?.quickGameMode ?? null);
   const [quickTimerMode, setQuickTimerMode] = useState<QuickTimerMode>(initialTemplate?.config?.quickTimerMode ?? null);
   const [quickTimerDurationSeconds, setQuickTimerDurationSeconds] = useState<number>(
-    resolveQuickTimerDuration(initialTemplate?.config?.quickTimerDurationSeconds)
+    resolveSessionTimerDuration(initialTemplate?.config?.quickTimerDurationSeconds, 10)
   );
+  // Custom manual session timer input state
+  const [customTimerValue, setCustomTimerValue] = useState('');
+  const [customTimerUnit, setCustomTimerUnit] = useState<SessionTimerUnit>('seconds');
+  const [customTimerError, setCustomTimerError] = useState<string | null>(null);
   const [playMode, setPlayMode] = useState<PlayMode>(initialTemplate?.config?.playMode || DEFAULT_PLAY_MODE);
   const [teamPlayStyle, setTeamPlayStyle] = useState<TeamPlayStyle>(initialTemplate?.config?.teamPlayStyle || DEFAULT_TEAM_STYLE);
   const [teamConfigs, setTeamConfigs] = useState<Team[]>(() => {
@@ -169,6 +182,19 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     if (isLocked) return;
     setQuickTimerMode(mode);
     logger.info('template_quick_timer_mode_selected', { showId, mode });
+  };
+
+  const handleApplyCustomTimer = () => {
+    if (isLocked || quickTimerMode !== 'timed') return;
+    const resolved = normalizeCustomTimerToSeconds(customTimerValue, customTimerUnit);
+    if (resolved === null) {
+      setCustomTimerError('Enter a valid positive duration (max 24 h).');
+      return;
+    }
+    setCustomTimerError(null);
+    setQuickTimerDurationSeconds(resolved);
+    setCustomTimerValue('');
+    logger.info('template_custom_session_timer_applied', { showId, value: customTimerValue, unit: customTimerUnit, resolved });
   };
 
   const [categories, setCategories] = useState<Category[]>(initialTemplate?.categories || []);
@@ -331,7 +357,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
       const normalizedTimerMode: QuickTimerMode = quickGameMode
         ? (quickTimerMode || 'timed')
         : quickTimerMode;
-      const normalizedTimerDurationSeconds = resolveQuickTimerDuration(quickTimerDurationSeconds);
+      const normalizedTimerDurationSeconds = resolveSessionTimerDuration(quickTimerDurationSeconds, 10);
 
       if (quickGameMode && !quickTimerMode) {
         logger.warn('template_quick_timer_mode_defaulted', {
@@ -671,7 +697,8 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                     </div>
                     <div className="space-y-2" data-testid="template-session-timer-section">
                       <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Session Timer</h3>
-                      <p className="text-[10px] text-zinc-500">Used for quick game modes by default. You can adjust this before starting.</p>
+                      <p className="text-[10px] text-zinc-500">Sets the session-wide countdown for quick game modes. Preset in seconds — or enter a custom duration below.</p>
+                      {/* Timed / No Timer toggle */}
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
@@ -690,20 +717,70 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                           No Timer
                         </button>
                       </div>
+                      {/* Quick preset buttons (expanded: 5s–60s) */}
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {QUICK_TIMER_DURATION_OPTIONS.map((seconds) => (
+                        {SESSION_TIMER_PRESET_SECONDS.map((secs) => (
                           <button
-                            key={seconds}
+                            key={secs}
                             type="button"
                             disabled={isLocked || quickTimerMode !== 'timed'}
-                            onClick={() => setQuickTimerDurationSeconds(seconds)}
-                            className={`px-2 py-1 rounded text-[9px] font-bold border transition-all ${quickTimerDurationSeconds === seconds ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
+                            onClick={() => { setQuickTimerDurationSeconds(secs); setCustomTimerError(null); }}
+                            className={`px-2 py-1 rounded text-[9px] font-bold border transition-all ${quickTimerDurationSeconds === secs && quickTimerMode === 'timed' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
                           >
-                            {seconds}s
+                            {secs}s
                           </button>
                         ))}
                       </div>
-                      <p className="text-[9px] text-zinc-500 font-mono">Current quick timer: <span data-testid="template-session-timer-duration">{quickTimerDurationSeconds}</span>s</p>
+                      {/* Custom duration input */}
+                      <div className={`mt-2 space-y-1 ${quickTimerMode !== 'timed' ? 'opacity-40 pointer-events-none' : ''}`}>
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-wide font-bold">Custom duration</p>
+                        <div className="flex gap-1 items-center">
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={customTimerValue}
+                            disabled={isLocked || quickTimerMode !== 'timed'}
+                            onChange={(e) => { setCustomTimerValue(e.target.value); setCustomTimerError(null); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleApplyCustomTimer(); }}
+                            placeholder="e.g. 5"
+                            className="w-20 bg-black border border-zinc-700 text-white text-[10px] font-mono px-2 py-1 rounded outline-none focus:border-purple-500 disabled:opacity-40"
+                            data-testid="custom-session-timer-input"
+                          />
+                          <select
+                            value={customTimerUnit}
+                            disabled={isLocked || quickTimerMode !== 'timed'}
+                            onChange={(e) => setCustomTimerUnit(e.target.value as SessionTimerUnit)}
+                            className="bg-black border border-zinc-700 text-zinc-300 text-[10px] px-2 py-1 rounded outline-none focus:border-purple-500 disabled:opacity-40"
+                            data-testid="custom-session-timer-unit"
+                          >
+                            <option value="seconds">sec</option>
+                            <option value="minutes">min</option>
+                            <option value="hours">hr</option>
+                          </select>
+                          <button
+                            type="button"
+                            disabled={isLocked || quickTimerMode !== 'timed' || !customTimerValue}
+                            onClick={handleApplyCustomTimer}
+                            className="px-2 py-1 rounded text-[9px] font-black uppercase border border-purple-700 text-purple-300 hover:bg-purple-900/30 disabled:opacity-40 transition-all"
+                            data-testid="custom-session-timer-apply"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                        {customTimerError && (
+                          <p className="text-[9px] text-red-400 font-bold">{customTimerError}</p>
+                        )}
+                      </div>
+                      {/* Current duration readout */}
+                      <p className="text-[9px] text-zinc-500 font-mono mt-1">
+                        Session timer:{' '}
+                        <span data-testid="template-session-timer-duration" className="text-purple-300 font-bold">
+                          {quickTimerMode === 'timed'
+                            ? `${quickTimerDurationSeconds}s (${formatSessionDuration(quickTimerDurationSeconds)})`
+                            : 'off'}
+                        </span>
+                      </p>
                     </div>
                   </div>
 
