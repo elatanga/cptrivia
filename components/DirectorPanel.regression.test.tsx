@@ -28,6 +28,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
   const mockStopQuestionCountdown = vi.fn();
   const mockToggleQuestionTimer = vi.fn();
   const mockStartSessionTimer = vi.fn();
+  const mockStartSessionTimerWithDuration = vi.fn();
   const mockPauseSessionTimer = vi.fn();
   const mockResetSessionTimer = vi.fn();
   const mockToggleSessionTimer = vi.fn();
@@ -107,6 +108,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
           selectedPreset: null,
         }}
         onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerStartWithDuration={mockStartSessionTimerWithDuration}
         onSessionTimerPause={mockPauseSessionTimer}
         onSessionTimerReset={mockResetSessionTimer}
       />
@@ -271,6 +273,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
           selectedPreset: null,
         }}
         onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerStartWithDuration={mockStartSessionTimerWithDuration}
         onSessionTimerPause={mockPauseSessionTimer}
         onSessionTimerReset={mockResetSessionTimer}
       />
@@ -278,6 +281,68 @@ describe('DirectorPanel: Settings & Category Regen', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '30m' }));
     expect(mockStartSessionTimer).toHaveBeenCalledWith('30m');
+  });
+
+  it('D2) COUNTER STUDIO: applies manual H/M/S for both timer types', () => {
+    const { rerender } = renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: /counter studio/i }));
+
+    fireEvent.change(screen.getByLabelText(/Question timer hours/i), { target: { value: '0' } });
+    fireEvent.change(screen.getByLabelText(/Question timer minutes/i), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText(/Question timer seconds/i), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: /Apply Question Timer/i }));
+    expect(mockStartQuestionCountdown).toHaveBeenCalledWith(65);
+
+    fireEvent.change(screen.getByLabelText(/Session timer hours/i), { target: { value: '0' } });
+    fireEvent.change(screen.getByLabelText(/Session timer minutes/i), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText(/Session timer seconds/i), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /Apply Session Timer/i }));
+    expect(mockStartSessionTimerWithDuration).not.toHaveBeenCalled();
+
+    rerender(
+      <DirectorPanel
+        gameState={baseGameState as any}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+        questionTimer={{
+          durationSeconds: 10,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          activeQuestionId: null,
+        }}
+        questionTimerEnabled={true}
+        questionTimerDurationSeconds={10}
+        onQuestionTimerToggle={mockToggleQuestionTimer}
+        onQuestionTimerDurationChange={mockStartQuestionCountdown}
+        onQuestionTimerStop={mockStopQuestionCountdown}
+        sessionTimerEnabled={true}
+        onSessionTimerToggle={mockToggleSessionTimer}
+        sessionTimer={{
+          durationSeconds: 0,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          selectedPreset: null,
+        }}
+        onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerStartWithDuration={mockStartSessionTimerWithDuration}
+        onSessionTimerPause={mockPauseSessionTimer}
+        onSessionTimerReset={mockResetSessionTimer}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(/Session timer hours/i), { target: { value: '0' } });
+    fireEvent.change(screen.getByLabelText(/Session timer minutes/i), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText(/Session timer seconds/i), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /Apply Session Timer/i }));
+    expect(mockStartSessionTimerWithDuration).toHaveBeenCalledWith(150);
   });
 
   it('E) AUDIT REALTIME: refreshes highlights and keeps only newest 12 gameplay events', () => {
@@ -344,6 +409,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
           selectedPreset: null,
         }}
         onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerStartWithDuration={mockStartSessionTimerWithDuration}
         onSessionTimerPause={mockPauseSessionTimer}
         onSessionTimerReset={mockResetSessionTimer}
       />

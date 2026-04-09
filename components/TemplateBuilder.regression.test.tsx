@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -63,7 +62,13 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
   const mockOnClose = vi.fn();
   const mockOnSave = vi.fn();
   const mockAddToast = vi.fn();
-  
+
+  const setViewport = (width: number, height = 800) => {
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: width });
+    Object.defineProperty(window, 'innerHeight', { writable: true, configurable: true, value: height });
+    window.dispatchEvent(new Event('resize'));
+  };
+
   const defaultProps = {
     showId: 'show-123',
     onClose: mockOnClose,
@@ -82,6 +87,7 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(screen.getByText(/New Template Configuration/i)).toBeInTheDocument();
       expect(screen.getByText(/Start Manual Studio Building/i)).toBeInTheDocument();
       expect(screen.getByTestId('ai-config-health')).toBeInTheDocument();
+      expect(screen.getByTestId('template-session-timer-section')).toBeInTheDocument();
     });
 
     it('enforces title requirement before building', () => {
@@ -120,14 +126,114 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringContaining('At least 1'));
     });
 
-    it('quick setup mode applies 1-player and 2-player roster presets', () => {
+    it('quick setup mode applies 1-player and 2-player defaults and stays editable', () => {
       render(<TemplateBuilder {...defaultProps} />);
 
       fireEvent.click(screen.getByRole('button', { name: '1 Player' }));
       expect(screen.getAllByPlaceholderText('ENTER NAME')).toHaveLength(1);
+      expect(screen.getByTestId('template-row-count')).toHaveTextContent('10');
+      expect(screen.getByTestId('template-cat-count')).toHaveTextContent('1');
+      expect(screen.getByTestId('template-session-timer-duration')).toHaveTextContent('10');
+      expect(screen.getByRole('button', { name: '10' })).toHaveClass('bg-gold-600');
+      expect(screen.getByRole('button', { name: 'Timed' })).toHaveClass('bg-purple-600');
 
       fireEvent.click(screen.getByRole('button', { name: '2 Players' }));
       expect(screen.getAllByPlaceholderText('ENTER NAME')).toHaveLength(2);
+      expect(screen.getByTestId('template-row-count')).toHaveTextContent('10');
+      expect(screen.getByTestId('template-cat-count')).toHaveTextContent('2');
+
+      fireEvent.click(screen.getByRole('button', { name: '5s' }));
+      expect(screen.getByTestId('template-session-timer-duration')).toHaveTextContent('5');
+
+      const categoryCount = screen.getByTestId('template-cat-count');
+      const categoryControl = categoryCount.parentElement as HTMLElement;
+      const categoryDecrementButton = categoryControl.querySelectorAll('button')[0] as HTMLButtonElement;
+      fireEvent.click(categoryDecrementButton);
+      expect(screen.getByTestId('template-cat-count')).toHaveTextContent('1');
+    });
+
+    it('enforces Teams and Quick setup as mutually exclusive in the UI', () => {
+      render(<TemplateBuilder {...defaultProps} />);
+
+      const teamsButton = screen.getByRole('button', { name: 'Teams' });
+      const quickOneButton = screen.getByRole('button', { name: '1 Player' });
+      const quickTwoButton = screen.getByRole('button', { name: '2 Players' });
+
+      fireEvent.click(teamsButton);
+      expect(quickOneButton).toBeDisabled();
+      expect(quickTwoButton).toBeDisabled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Individuals' }));
+      expect(quickOneButton).not.toBeDisabled();
+      expect(quickTwoButton).not.toBeDisabled();
+
+      fireEvent.click(quickOneButton);
+      expect(teamsButton).toBeDisabled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Individuals' }));
+      expect(teamsButton).not.toBeDisabled();
+    });
+
+    it('keeps Individuals + Quick Setup + Session Timer controls rendered in compact width', () => {
+      setViewport(375, 740);
+      render(<TemplateBuilder {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: '1 Player' }));
+
+      expect(screen.getByRole('button', { name: 'Individuals' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '1 Player' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '2 Players' })).toBeInTheDocument();
+      expect(screen.getByTestId('template-session-timer-section')).toBeInTheDocument();
+      expect(screen.getByTestId('custom-session-timer-input')).toBeInTheDocument();
+      expect(screen.getByTestId('custom-session-timer-apply')).toBeInTheDocument();
+    });
+
+    it('keeps Teams configuration controls rendered with multiple teams and members', () => {
+      setViewport(768, 900);
+      render(<TemplateBuilder {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
+      fireEvent.click(screen.getByRole('button', { name: /ADD TEAM/i }));
+      fireEvent.click(screen.getByRole('button', { name: /ADD TEAM/i }));
+      fireEvent.click(screen.getAllByText('+ MEMBER')[0]);
+      fireEvent.click(screen.getAllByText('+ MEMBER')[1]);
+
+      expect(screen.getByText(/Teams Setup/i)).toBeInTheDocument();
+      expect(screen.getAllByDisplayValue(/TEAM \d/i).length).toBeGreaterThanOrEqual(2);
+      expect(screen.getAllByDisplayValue(/MEMBER \d/i).length).toBeGreaterThanOrEqual(4);
+      expect(screen.getByRole('button', { name: /Team plays as one/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Team members take turns/i })).toBeInTheDocument();
+    });
+
+    it('keeps AI generation controls rendered and accessible in config layout', () => {
+      setViewport(1280, 900);
+      render(<TemplateBuilder {...defaultProps} />);
+
+      expect(screen.getByText(/AI Magic Studio/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/e.g. 90s Pop Culture/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Generate Complete Board/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Start Manual Studio Building/i })).toBeInTheDocument();
+    });
+
+    it('uses desktop no-scroll container strategy while keeping key config sections visible', () => {
+      setViewport(1366, 768);
+      render(<TemplateBuilder {...defaultProps} />);
+
+      const root = document.querySelector('.template-builder') as HTMLElement;
+      expect(root).toBeInTheDocument();
+      expect(root.className).toContain('lg:overflow-hidden');
+
+      const bodyGrid = Array.from(root.querySelectorAll('div')).find((el) =>
+        (el as HTMLElement).className.includes('lg:grid-cols-[1fr_340px]')
+      ) as HTMLElement | undefined;
+      expect(bodyGrid).toBeInTheDocument();
+      expect(bodyGrid!.className).toContain('lg:overflow-hidden');
+
+      expect(screen.getByText(/Board Dimensions/i)).toBeInTheDocument();
+      expect(screen.getByText(/Play Mode/i)).toBeInTheDocument();
+      expect(screen.getByText(/Quick Game Setup/i)).toBeInTheDocument();
+      expect(screen.getByTestId('template-session-timer-section')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Start Manual Studio Building/i })).toBeInTheDocument();
     });
   });
 
@@ -160,6 +266,26 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(screen.getAllByText('50').length).toBeGreaterThanOrEqual(4);
       expect(screen.getAllByText('250').length).toBeGreaterThanOrEqual(4); // Last row (5 * 50)
     });
+
+    it('exposes live-builder parity controls and applies board dimension changes to preview', () => {
+      enterBuilder();
+
+      expect(screen.getByTestId('builder-parity-controls')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Individuals' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Teams' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '1 Player' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '2 Players' })).toBeInTheDocument();
+      expect(screen.getByTestId('builder-session-timer-section')).toBeInTheDocument();
+      expect(screen.getByTestId('builder-contestants-section')).toBeInTheDocument();
+
+      expect(screen.getAllByDisplayValue(/Category \d/)).toHaveLength(4);
+      const categoryIncrementButtons = Array.from(
+        screen.getByTestId('builder-parity-controls').querySelectorAll('button')
+      ).filter((btn) => btn.querySelector('.lucide-plus')) as HTMLButtonElement[];
+      fireEvent.click(categoryIncrementButtons[0]);
+
+      expect(screen.getAllByDisplayValue(/Category \d/)).toHaveLength(5);
+    });
   });
 
   describe('PHASE 3: Persistence Logic', () => {
@@ -177,7 +303,7 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
         expect(dataService.createTemplate).toHaveBeenCalledWith(
           'show-123',
           'New Template Test',
-          expect.objectContaining({ rowCount: 5, categoryCount: 4, quickGameMode: 'two_player', quickTimerMode: 'timed' }),
+          expect.objectContaining({ rowCount: 10, categoryCount: 2, pointScale: 10, quickGameMode: 'two_player', quickTimerMode: 'timed', quickTimerDurationSeconds: 10 }),
           expect.any(Array)
         );
         expect(mockAddToast).toHaveBeenCalledWith('success', 'Template saved successfully.');

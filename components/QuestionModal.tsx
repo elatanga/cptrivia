@@ -113,6 +113,11 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
 
   const isRevealed = question.isRevealed;
   const isDouble = question.isDoubleOrNothing || false;
+  const bannerTitles = useMemo(() => {
+    const titles = [specialMoveSummary?.displayTitle, isDouble ? 'DOUBLE OR NOTHING' : null]
+      .filter((title): title is string => Boolean(title));
+    return Array.from(new Set(titles));
+  }, [specialMoveSummary?.displayTitle, isDouble]);
 
   const answerOptions = useMemo(() => {
     const q = question as Question & { options?: string[] };
@@ -369,34 +374,37 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
         <LegacyQuestionTimerBadge timer={timer} onTimerEnd={onTimerEnd} />
 
         {/* 1. TOP RISK/MODIFIER LABELS */}
-        <div className="min-h-12 flex flex-col items-center justify-center gap-1">
-          {specialMoveSummary && (
+        {bannerTitles.length > 0 && (
+          <div className="flex flex-col items-center justify-center gap-2 md:gap-3 pb-1 md:pb-2">
             <div
               data-testid="special-move-banner"
-              className="w-full max-w-4xl rounded-xl border border-gold-500/40 bg-black/35 px-3 py-2 text-center"
+              className="w-full max-w-5xl rounded-2xl border border-red-500/45 bg-gradient-to-r from-red-950/45 via-black/35 to-red-950/45 px-4 py-3 md:px-6 md:py-4 text-center shadow-[0_0_30px_rgba(239,68,68,0.18)] backdrop-blur-sm"
             >
-              <div className="text-[11px] md:text-xs font-black uppercase tracking-[0.2em] text-gold-300">
-                {specialMoveSummary.displayTitle}
-              </div>
-              <div className="mt-1 flex flex-wrap justify-center gap-1.5 text-[9px] md:text-[10px] uppercase tracking-wider font-black text-zinc-100">
-                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.pointsEffect}</span>
-                {specialMoveSummary.penaltyEffect && (
-                  <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.penaltyEffect}</span>
+              <div className="flex flex-col items-center justify-center gap-1.5 md:gap-2">
+                {bannerTitles.map((title) => (
+                  <div
+                    key={title}
+                    data-testid={title === 'DOUBLE OR NOTHING' ? 'double-label' : undefined}
+                    className="font-black uppercase text-red-400 tracking-[0.22em] drop-shadow-[0_0_14px_rgba(248,113,113,0.55)]"
+                    style={{ fontSize: 'clamp(20px, 2.6vw, 34px)', lineHeight: 1.05 }}
+                  >
+                    {title}
+                  </div>
+                ))}
+
+                {specialMoveSummary && (
+                  <div className="mt-1 flex flex-wrap justify-center gap-1.5 text-[9px] md:text-[10px] uppercase tracking-[0.18em] font-black text-zinc-100">
+                    <span className="rounded-full border border-red-400/25 bg-black/45 px-2.5 py-1">{specialMoveSummary.pointsEffect}</span>
+                    {specialMoveSummary.penaltyEffect && (
+                      <span className="rounded-full border border-red-400/25 bg-black/45 px-2.5 py-1">{specialMoveSummary.penaltyEffect}</span>
+                    )}
+                    <span className="rounded-full border border-red-400/25 bg-black/45 px-2.5 py-1">{specialMoveSummary.stealPolicy}</span>
+                  </div>
                 )}
-                <span className="rounded-full border border-zinc-600/70 bg-zinc-950/60 px-2 py-0.5">{specialMoveSummary.stealPolicy}</span>
               </div>
             </div>
-          )}
-          {isDouble && (
-            <span
-              data-testid="double-label"
-              className="text-red-500 font-black uppercase tracking-[0.3em] drop-shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-in fade-in slide-in-from-top-2 duration-700"
-              style={{ fontSize: 'clamp(16px, 1.6vw, 26px)' }}
-            >
-              DOUBLE OR NOTHING
-            </span>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* 2. QUESTION AREA */}
         {questionContent}
