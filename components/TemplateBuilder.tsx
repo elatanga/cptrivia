@@ -611,7 +611,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
   if (step === 'CONFIG') {
     // Overhauled Config View for Card 1: Viewport-fit grid layout with zero scroll on desktop
     return (
-      <div className="template-builder font-roboto font-bold fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-0 md:p-4 overflow-y-auto">
+      <div className="template-builder font-roboto font-bold fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-0 md:p-4 overflow-y-auto lg:overflow-hidden">
         <div className="w-full h-full md:h-auto md:max-h-[100dvh] md:max-w-6xl bg-zinc-900 border-0 md:border md:border-gold-600 md:rounded-xl shadow-2xl grid grid-rows-[auto_1fr_auto] overflow-hidden">
           
           {/* HEADER */}
@@ -624,10 +624,10 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
           </div>
 
           {/* BODY: Viewport fit non-scrollable grid on desktop */}
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_360px] min-h-0 overflow-y-auto lg:overflow-hidden p-4 md:p-6 gap-6 md:gap-10">
+          <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_340px] min-h-0 overflow-y-auto lg:overflow-hidden p-4 md:p-5 lg:p-4 gap-5 md:gap-6 lg:gap-5">
 
             {/* LEFT COLUMN: Main Config */}
-            <div className="flex flex-col gap-6 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
+            <div className="flex flex-col gap-5 md:gap-5 lg:gap-4 min-h-0 overflow-y-auto lg:overflow-hidden pr-1 lg:pr-0 custom-scrollbar">
                 <div className="shrink-0">
                   <label className="block text-[10px] uppercase text-gold-500 font-black mb-1.5 tracking-widest">Show or Game Topic</label>
                   <input 
@@ -638,10 +638,10 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                   />
                 </div>
                 
-                <div className="flex-1 flex flex-col gap-6 min-h-0">
-                  
+                <div className="flex-1 flex flex-col gap-4 md:gap-5 lg:gap-4 min-h-0">
+
                   {/* Dimensions & Scale */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 lg:gap-4 shrink-0">
                     <div className="space-y-3">
                       <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Board Dimensions</h3>
                       <div className="flex justify-between items-center text-xs text-zinc-300 font-bold">
@@ -673,7 +673,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-4 lg:gap-3 shrink-0">
                     <div className="space-y-2">
                       <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Play Mode</h3>
                       <p className="text-[10px] text-zinc-500">Choose individual contestants or team-based play.</p>
@@ -934,7 +934,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
             </div>
 
             {/* RIGHT COLUMN: AI Magic Studio */}
-            <div className="flex flex-col bg-black/40 border border-purple-500/20 rounded-xl p-6 space-y-6 relative overflow-hidden group">
+            <div className="hidden lg:flex flex-col bg-black/40 border border-purple-500/20 rounded-xl p-4 space-y-4 relative overflow-hidden group">
                  <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
                     <Sparkles className="w-32 h-32 text-purple-500" />
                  </div>

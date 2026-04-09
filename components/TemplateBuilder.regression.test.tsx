@@ -214,6 +214,27 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(screen.getByRole('button', { name: /Generate Complete Board/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /Start Manual Studio Building/i })).toBeInTheDocument();
     });
+
+    it('uses desktop no-scroll container strategy while keeping key config sections visible', () => {
+      setViewport(1366, 768);
+      render(<TemplateBuilder {...defaultProps} />);
+
+      const root = document.querySelector('.template-builder') as HTMLElement;
+      expect(root).toBeInTheDocument();
+      expect(root.className).toContain('lg:overflow-hidden');
+
+      const bodyGrid = Array.from(root.querySelectorAll('div')).find((el) =>
+        (el as HTMLElement).className.includes('lg:grid-cols-[1fr_340px]')
+      ) as HTMLElement | undefined;
+      expect(bodyGrid).toBeInTheDocument();
+      expect(bodyGrid!.className).toContain('lg:overflow-hidden');
+
+      expect(screen.getByText(/Board Dimensions/i)).toBeInTheDocument();
+      expect(screen.getByText(/Play Mode/i)).toBeInTheDocument();
+      expect(screen.getByText(/Quick Game Setup/i)).toBeInTheDocument();
+      expect(screen.getByTestId('template-session-timer-section')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Start Manual Studio Building/i })).toBeInTheDocument();
+    });
   });
 
   describe('PHASE 2: Manual Building & Point Reflow', () => {
