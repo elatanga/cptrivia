@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -137,14 +136,36 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(screen.getByTestId('template-row-count')).toHaveTextContent('10');
       expect(screen.getByTestId('template-cat-count')).toHaveTextContent('2');
 
-      fireEvent.click(screen.getByRole('button', { name: '7s' }));
-      expect(screen.getByTestId('template-session-timer-duration')).toHaveTextContent('7');
+      fireEvent.click(screen.getByRole('button', { name: '5s' }));
+      expect(screen.getByTestId('template-session-timer-duration')).toHaveTextContent('5');
 
       const categoryCount = screen.getByTestId('template-cat-count');
       const categoryControl = categoryCount.parentElement as HTMLElement;
       const categoryDecrementButton = categoryControl.querySelectorAll('button')[0] as HTMLButtonElement;
       fireEvent.click(categoryDecrementButton);
       expect(screen.getByTestId('template-cat-count')).toHaveTextContent('1');
+    });
+
+    it('enforces Teams and Quick setup as mutually exclusive in the UI', () => {
+      render(<TemplateBuilder {...defaultProps} />);
+
+      const teamsButton = screen.getByRole('button', { name: 'Teams' });
+      const quickOneButton = screen.getByRole('button', { name: '1 Player' });
+      const quickTwoButton = screen.getByRole('button', { name: '2 Players' });
+
+      fireEvent.click(teamsButton);
+      expect(quickOneButton).toBeDisabled();
+      expect(quickTwoButton).toBeDisabled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Individuals' }));
+      expect(quickOneButton).not.toBeDisabled();
+      expect(quickTwoButton).not.toBeDisabled();
+
+      fireEvent.click(quickOneButton);
+      expect(teamsButton).toBeDisabled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Individuals' }));
+      expect(teamsButton).not.toBeDisabled();
     });
   });
 
