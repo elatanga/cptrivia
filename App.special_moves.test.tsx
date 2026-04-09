@@ -142,6 +142,35 @@ describe('Special Moves Feature Suite', () => {
     expect(await screen.findByText('GOLDEN GAMBLE')).toBeInTheDocument();
   });
 
+  it('A3) CATALOG LOCK: Special Moves tab includes all guide-listed moves', async () => {
+    await setupAndPlay();
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+
+    const guideMoves = [
+      'DOUBLE OR LOSE',
+      'TRIPLE OR LOSE',
+      'DOUBLE YOUR WINS OR NOTHING',
+      'TRIPLE YOUR WINS OR NOTHING',
+      'SAFE BET',
+      'LOCKOUT',
+      'SUPER SAVE',
+      'GOLDEN GAMBLE',
+      'SHIELD BOOST',
+      'FINAL SHOT',
+      'SECOND CHANCE',
+      'CATEGORY FREEZE',
+    ];
+
+    for (const moveName of guideMoves) {
+      expect(await screen.findByText(moveName)).toBeInTheDocument();
+    }
+
+    expect(screen.getByRole('button', { name: /second chance build-gated/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /category freeze build-gated/i })).toBeDisabled();
+  });
+
   it.each([
     ['FIRESTORE_FALLBACK', /backend:\s*firestore fallback/i],
     ['MEMORY_FALLBACK', /backend:\s*in-memory fallback/i]
@@ -517,6 +546,50 @@ describe('Special Moves Feature Suite', () => {
     await waitFor(() => {
       const nextState = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
       const expectedDelta = Number(donTile.points) * -2; // DoN (x2) base, Double Trouble fail applies negative base
+      expect(nextState.players?.[0]?.score).toBe(expectedDelta);
+    });
+  });
+
+  it('B2d) COMPOSITION: DoN + Triple or Lose both apply on award path', async () => {
+    await setupAndPlay();
+
+    const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+    const allQuestions = (state.categories || []).flatMap((category: any) =>
+      (category.questions || []).map((question: any) => ({ ...question }))
+    );
+    const donTile = allQuestions.find((question: any) => question.isDoubleOrNothing);
+    expect(donTile).toBeTruthy();
+
+    await act(async () => {
+      (specialMovesClient as any).__triggerUpdate({
+        deploymentsByTileId: {
+          [donTile.id]: { status: 'ARMED', moveType: 'TRIPLE_THREAT', updatedAt: Date.now() }
+        },
+        activeByTargetId: {},
+        updatedAt: Date.now(),
+        version: 1
+      });
+    });
+
+    const boardTile = (await screen.findByTestId(`special-move-tile-tag-${donTile.id}`)).closest('button');
+    expect(boardTile).toBeTruthy();
+    fireEvent.click(boardTile!);
+
+    const banner = await screen.findByTestId('special-move-banner');
+    expect(banner).toHaveTextContent('TRIPLE OR LOSE');
+    expect(banner).toHaveTextContent('DOUBLE OR NOTHING');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /reveal/i }));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /award/i }));
+    });
+
+    await waitFor(() => {
+      const nextState = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+      const expectedDelta = Number(donTile.points) * 6; // DoN (x2) then Triple or Lose award (x3)
       expect(nextState.players?.[0]?.score).toBe(expectedDelta);
     });
   });

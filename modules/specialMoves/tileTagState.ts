@@ -1,8 +1,14 @@
-import { GameAnalyticsEvent } from '../../types';
+import { GameAnalyticsEvent, SpecialMoveType } from '../../types';
+import { getSpecialMoveDisplayTitle } from './catalog';
 
-const SPECIAL_MOVE_NOTE_REGEX = /double|triple|safe bet|lockout|super save|golden gamble|shield boost|final shot|special move failure/i;
+const SPECIAL_MOVE_NOTE_REGEX = /double|triple|safe bet|lockout|super save|golden gamble|shield boost|final shot|second chance|category freeze|wins or nothing|special move failure/i;
 
 export type TileSpecialMoveTagState = 'none' | 'armed' | 'resolved';
+
+const getCatalogLabel = (moveType?: string): string | undefined => {
+  if (!moveType) return undefined;
+  return getSpecialMoveDisplayTitle(moveType as SpecialMoveType);
+};
 
 const SPECIAL_MOVE_LABELS: Record<string, string> = {
   DOUBLE_TROUBLE: 'DOUBLE OR LOSE',
@@ -15,8 +21,8 @@ const SPECIAL_MOVE_LABELS: Record<string, string> = {
   GOLDEN_GAMBLE: 'GOLDEN GAMBLE',
   SHIELD_BOOST: 'SHIELD BOOST',
   FINAL_SHOT: 'FINAL SHOT',
-  DOUBLE_WINS_OR_NOTHING: 'DOUBLE WINS OR NOTHING',
-  TRIPLE_WINS_OR_NOTHING: 'TRIPLE WINS OR NOTHING',
+  DOUBLE_WINS_OR_NOTHING: 'DOUBLE YOUR WINS OR NOTHING',
+  TRIPLE_WINS_OR_NOTHING: 'TRIPLE YOUR WINS OR NOTHING',
 };
 
 const isSpecialMoveContext = (event: GameAnalyticsEvent): boolean => {
@@ -57,7 +63,7 @@ export const deriveResolvedSpecialMoveLabelsByTileId = (
       continue;
     }
     if (moveType) {
-      labelsByTileId[tileId] = SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ');
+      labelsByTileId[tileId] = getCatalogLabel(moveType) || SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ');
     }
   }
   return labelsByTileId;
@@ -76,10 +82,10 @@ export const getTileSpecialMoveTagText = (
 ): string => {
   if (state === 'resolved') {
     if (resolvedLabel) return `${resolvedLabel} RESOLVED`;
-    if (moveType) return `${SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ')} RESOLVED`;
+    if (moveType) return `${getCatalogLabel(moveType) || SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ')} RESOLVED`;
     return 'MOVE RESOLVED';
   }
   if (!moveType) return 'SPECIAL MOVE';
-  return SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ');
+  return getCatalogLabel(moveType) || SPECIAL_MOVE_LABELS[moveType] || moveType.replace(/_/g, ' ');
 };
 
