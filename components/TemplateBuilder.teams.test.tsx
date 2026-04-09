@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { TemplateBuilder } from './TemplateBuilder';
 import { dataService } from '../services/dataService';
 import { generateTriviaGame } from '../services/geminiService';
@@ -73,6 +73,50 @@ describe('TemplateBuilder Teams Mode', () => {
 
     expect(screen.getByDisplayValue('TEAM 1')).toBeInTheDocument();
     expect(screen.getByDisplayValue('MEMBER 1')).toBeInTheDocument();
+  });
+
+  it('renders Team Setup in Template Builder config and updates it immediately on Add Team', () => {
+    render(
+      <TemplateBuilder
+        showId="show-1"
+        onClose={() => undefined}
+        onSave={() => undefined}
+        addToast={() => undefined}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
+
+    const configTeamsSetup = screen.getByTestId('template-teams-setup');
+    expect(configTeamsSetup).toBeInTheDocument();
+    expect(within(configTeamsSetup).getByText(/No teams configured yet/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('template-add-team-button'));
+
+    expect(within(configTeamsSetup).getByDisplayValue('TEAM 1')).toBeInTheDocument();
+    expect(within(configTeamsSetup).getByDisplayValue('MEMBER 1')).toBeInTheDocument();
+    expect(screen.queryByText(/Live Builder Preview/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps teams visible in builder sidebar after adding a team in Template Builder config', async () => {
+    render(
+      <TemplateBuilder
+        showId="show-1"
+        onClose={() => undefined}
+        onSave={() => undefined}
+        addToast={() => undefined}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
+    fireEvent.click(screen.getByTestId('template-add-team-button'));
+    fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Teams Builder Flow' } });
+    fireEvent.click(screen.getByRole('button', { name: /Start Manual Studio Building/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('builder-teams-setup')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('TEAM 1')).toBeInTheDocument();
+    });
   });
 
   it('supports adding teams and players from Builder step after board generation path', () => {
