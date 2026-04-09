@@ -28,12 +28,21 @@ interface Props {
 
 type QuickGameMode = 'single_player' | 'two_player' | null;
 type QuickTimerMode = 'timed' | 'untimed' | null;
+const QUICK_TIMER_DURATION_OPTIONS = [5, 7, 8, 10, 15] as const;
 
 const MAX_PLAYERS = 8;
 const MIN_PLAYERS = 1;
 const makeStableId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 const DEFAULT_PLAY_MODE: PlayMode = 'INDIVIDUALS';
 const DEFAULT_TEAM_STYLE: TeamPlayStyle = 'TEAM_PLAYS_AS_ONE';
+
+const resolveQuickTimerDuration = (raw: unknown) => {
+  const duration = Number(raw);
+  if (QUICK_TIMER_DURATION_OPTIONS.includes(duration as (typeof QUICK_TIMER_DURATION_OPTIONS)[number])) {
+    return duration;
+  }
+  return 10;
+};
 
 export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onClose, onSave, onLogout, addToast }) => {
   // --- STATE MACHINE ---
@@ -55,6 +64,9 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
   const [aiDifficulty, setAiDifficulty] = useState<Difficulty>('mixed');
   const [quickGameMode, setQuickGameMode] = useState<QuickGameMode>(initialTemplate?.config?.quickGameMode ?? null);
   const [quickTimerMode, setQuickTimerMode] = useState<QuickTimerMode>(initialTemplate?.config?.quickTimerMode ?? null);
+  const [quickTimerDurationSeconds, setQuickTimerDurationSeconds] = useState<number>(
+    resolveQuickTimerDuration(initialTemplate?.config?.quickTimerDurationSeconds)
+  );
   const [playMode, setPlayMode] = useState<PlayMode>(initialTemplate?.config?.playMode || DEFAULT_PLAY_MODE);
   const [teamPlayStyle, setTeamPlayStyle] = useState<TeamPlayStyle>(initialTemplate?.config?.teamPlayStyle || DEFAULT_TEAM_STYLE);
   const [teamConfigs, setTeamConfigs] = useState<Team[]>(() => {
@@ -138,9 +150,16 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
       return next;
     });
 
-    if (!quickTimerMode) {
-      setQuickTimerMode('untimed');
-    }
+    setConfig((prev) => ({
+      ...prev,
+      catCount: mode === 'single_player' ? 1 : 2,
+      rowCount: 10,
+      pointScale: 10,
+    }));
+
+    setQuickTimerMode('timed');
+    setQuickTimerDurationSeconds(10);
+    setPlayMode('INDIVIDUALS');
 
     setQuickGameMode(mode);
     logger.info('template_quick_game_mode_selected', { showId, mode, targetCount });
@@ -310,14 +329,15 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
       }));
       const normalizedQuickMode: QuickGameMode = quickGameMode;
       const normalizedTimerMode: QuickTimerMode = quickGameMode
-        ? (quickTimerMode || 'untimed')
+        ? (quickTimerMode || 'timed')
         : quickTimerMode;
+      const normalizedTimerDurationSeconds = resolveQuickTimerDuration(quickTimerDurationSeconds);
 
       if (quickGameMode && !quickTimerMode) {
         logger.warn('template_quick_timer_mode_defaulted', {
           showId,
           templateId: initialTemplate?.id || 'new',
-          defaultedTo: 'untimed',
+          defaultedTo: 'timed',
         });
       }
 
@@ -326,6 +346,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
         templateId: initialTemplate?.id || 'new',
         quickGameMode: normalizedQuickMode,
         quickTimerMode: normalizedTimerMode,
+        quickTimerDurationSeconds: normalizedTimerDurationSeconds,
         playerCount: finalPlayerNames.length,
         categories: validatedCategories.length,
         rowCount: validatedCategories[0]?.questions.length || config.rowCount,
@@ -344,6 +365,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
             pointScale: config.pointScale,
             quickGameMode: normalizedQuickMode,
             quickTimerMode: normalizedTimerMode,
+            quickTimerDurationSeconds: normalizedTimerDurationSeconds,
             playMode,
             teamPlayStyle,
             teams: playMode === 'TEAMS' ? sanitizedTeams : [],
@@ -358,6 +380,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
           pointScale: config.pointScale,
           quickGameMode: normalizedQuickMode,
           quickTimerMode: normalizedTimerMode,
+          quickTimerDurationSeconds: normalizedTimerDurationSeconds,
           playMode,
           teamPlayStyle,
           teams: playMode === 'TEAMS' ? sanitizedTeams : [],
@@ -576,7 +599,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                           <label>Categories (Max 8)</label>
                           <div className="flex items-center gap-2 bg-black p-1 rounded border border-zinc-800">
                             <button disabled={isLocked} onClick={() => setConfig(p => ({...p, catCount: Math.max(1, p.catCount - 1)}))} className="p-1 hover:text-gold-500 transition-colors"><Minus className="w-3 h-3 text-gold-500" /></button>
-                            <span className="w-4 text-center text-white font-mono">{config.catCount}</span>
+                            <span data-testid="template-cat-count" className="w-4 text-center text-white font-mono">{config.catCount}</span>
                             <button disabled={isLocked} onClick={() => setConfig(p => ({...p, catCount: Math.min(8, p.catCount + 1)}))} className="p-1 hover:text-gold-500 transition-colors"><Plus className="w-3 h-3 text-gold-500" /></button>
                           </div>
                       </div>
@@ -584,7 +607,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                           <label>Rows (Max 10)</label>
                           <div className="flex items-center gap-2 bg-black p-1 rounded border border-zinc-800">
                             <button disabled={isLocked} onClick={() => setConfig(p => ({...p, rowCount: Math.max(1, p.rowCount - 1)}))} className="p-1 hover:text-gold-500 transition-colors"><Minus className="w-3 h-3 text-gold-500" /></button>
-                            <span className="w-4 text-center text-white font-mono">{config.rowCount}</span>
+                            <span data-testid="template-row-count" className="w-4 text-center text-white font-mono">{config.rowCount}</span>
                             <button disabled={isLocked} onClick={() => setConfig(p => ({...p, rowCount: Math.min(10, p.rowCount + 1)}))} className="p-1 hover:text-gold-500 transition-colors"><Plus className="w-3 h-3 text-gold-500" /></button>
                           </div>
                       </div>
@@ -646,9 +669,9 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                         </button>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Timer Mode</h3>
-                      <p className="text-[10px] text-zinc-500">Sets default timer behavior for games started from this template.</p>
+                    <div className="space-y-2" data-testid="template-session-timer-section">
+                      <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Session Timer</h3>
+                      <p className="text-[10px] text-zinc-500">Used for quick game modes by default. You can adjust this before starting.</p>
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
@@ -667,6 +690,20 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                           No Timer
                         </button>
                       </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {QUICK_TIMER_DURATION_OPTIONS.map((seconds) => (
+                          <button
+                            key={seconds}
+                            type="button"
+                            disabled={isLocked || quickTimerMode !== 'timed'}
+                            onClick={() => setQuickTimerDurationSeconds(seconds)}
+                            className={`px-2 py-1 rounded text-[9px] font-bold border transition-all ${quickTimerDurationSeconds === seconds ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
+                          >
+                            {seconds}s
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[9px] text-zinc-500 font-mono">Current quick timer: <span data-testid="template-session-timer-duration">{quickTimerDurationSeconds}</span>s</p>
                     </div>
                   </div>
 
