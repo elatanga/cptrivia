@@ -31,6 +31,19 @@ const mockCategories: Category[] = [
   },
 ];
 
+const mockCategoriesWithQuestionMove: Category[] = [
+  {
+    id: 'c1',
+    title: 'Science',
+    questions: [
+      { id: 'q1', text: 'Q1', answer: 'A1', points: 100, isRevealed: false, isAnswered: false, isDoubleOrNothing: true, specialMoveType: 'DOUBLE_TROUBLE' },
+      { id: 'q2', text: 'Q2', answer: 'A2', points: 200, isRevealed: false, isAnswered: false, isDoubleOrNothing: false },
+      { id: 'q3', text: 'Q3', answer: 'A3', points: 300, isRevealed: false, isAnswered: true, isDoubleOrNothing: false },
+      { id: 'q4', text: 'Q4', answer: 'A4', points: 400, isRevealed: false, isAnswered: false, isVoided: true },
+    ],
+  },
+];
+
 const mockViewSettings: BoardViewSettings = {
   // Fix: Corrected property names and types to match the BoardViewSettings interface.
   categoryTitleScale: 'M',
@@ -180,5 +193,19 @@ describe('GameBoard Component Visibility & Theme', () => {
     );
 
     expect(screen.getByTestId('special-move-tile-tag-q1')).toHaveAttribute('data-state', 'resolved');
+  });
+
+  test('H) SPECIAL MOVE TAG: Uses question metadata fallback when overlay has not synced yet', () => {
+    render(
+      <GameBoard
+        categories={mockCategoriesWithQuestionMove}
+        onSelectQuestion={vi.fn()}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    const tag = screen.getByTestId('special-move-tile-tag-q1');
+    expect(tag).toHaveAttribute('data-state', 'armed');
+    expect(tag).toHaveTextContent('DOUBLE OR LOSE');
   });
 });
