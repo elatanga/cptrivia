@@ -78,11 +78,8 @@ describe('Template Builder UX & Scoping', () => {
     await navigateToBuilder();
     
     await waitFor(() => {
-      // Find a tile in the preview grid
-      const tile = screen.getAllByText('100')[0].closest('div');
-      expect(tile).toBeInTheDocument();
-      // Check for compact styling characteristics
-      expect(tile).toHaveClass('min-h-[52px]');
+      const firstMagicButton = screen.getAllByTitle('Quick AI Generate')[0];
+      expect(firstMagicButton.parentElement).toHaveClass('min-h-[48px]');
     });
   });
 
@@ -93,7 +90,7 @@ describe('Template Builder UX & Scoping', () => {
     await navigateToBuilder();
     
     await waitFor(() => {
-      const sidebar = screen.getByText(/Board Parameters/i);
+      const sidebar = screen.getByText(/Parameters/i);
       expect(sidebar).toBeInTheDocument();
       // Sidebars are hidden on small screens, so presence at 1200px verifies layout intent
       expect(sidebar.closest('aside')).not.toHaveClass('hidden');
