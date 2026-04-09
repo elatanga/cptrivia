@@ -1033,17 +1033,35 @@ export const DirectorPanel: React.FC<Props> = ({
         : team.members?.[0]?.id,
     }));
 
-    const contestants = normalizedTeams.map((team) => ({
-      id: team.id,
-      name: team.name,
-      score: Number(team.score || 0),
-      color: '#ffffff',
-      wildcardsUsed: 0,
-      wildcardActive: false,
-      stealsCount: 0,
-      specialMovesUsedCount: 0,
-      specialMovesUsedNames: [],
-    }));
+    // Preserve live player stats (score, wildcards, steals, etc.) for teams that
+    // already exist in the current player list. Only create a fresh entry for
+    // brand-new teams that have no matching player yet.
+    const existingPlayersById: Record<string, Player> = {};
+    (gameState.players || []).forEach((p) => { existingPlayersById[p.id] = p; });
+
+    const contestants = normalizedTeams.map((team) => {
+      const existing = existingPlayersById[team.id];
+      if (existing) {
+        return {
+          ...existing,
+          name: team.name,
+          score: Number(team.score || 0),
+        };
+      }
+      return {
+        id: team.id,
+        name: team.name,
+        score: Number(team.score || 0),
+        color: '#ffffff',
+        wildcardsUsed: 0,
+        wildcardActive: false,
+        stealsCount: 0,
+        questionsAnswered: 0,
+        lostOrVoidedCount: 0,
+        specialMovesUsedCount: 0,
+        specialMovesUsedNames: [],
+      };
+    });
 
     onUpdateState({
       ...gameState,
@@ -1113,7 +1131,6 @@ export const DirectorPanel: React.FC<Props> = ({
   };
 
   const handleAddTeamConfig = () => {
-    if (!canEditTeams) return;
     const nextTeams = [
       ...(gameState.teams || []),
       {
@@ -1133,12 +1150,10 @@ export const DirectorPanel: React.FC<Props> = ({
   };
 
   const handleUpdateTeamName = (teamId: string, name: string) => {
-    if (!canEditTeams) return;
     setTeamsState((gameState.teams || []).map((team) => team.id === teamId ? { ...team, name } : team));
   };
 
   const handleAddTeamMemberConfig = (teamId: string) => {
-    if (!canEditTeams) return;
     setTeamsState((gameState.teams || []).map((team) => {
       if (team.id !== teamId) return team;
       const members = [
@@ -1150,7 +1165,6 @@ export const DirectorPanel: React.FC<Props> = ({
   };
 
   const handleUpdateTeamMemberConfig = (teamId: string, memberId: string, name: string) => {
-    if (!canEditTeams) return;
     setTeamsState((gameState.teams || []).map((team) => {
       if (team.id !== teamId) return team;
       return {
@@ -1905,7 +1919,7 @@ export const DirectorPanel: React.FC<Props> = ({
               </h3>
               <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Configure teams and team play style.</p>
               {!canEditTeams && (
-                <p className="text-[10px] text-amber-300 uppercase font-bold mt-2">Teams setup is locked after gameplay starts.</p>
+                <p className="text-[10px] text-amber-300 uppercase font-bold mt-2">Play style and mode are locked after gameplay starts. Team names and roster can still be edited.</p>
               )}
             </div>
 
@@ -1953,9 +1967,8 @@ export const DirectorPanel: React.FC<Props> = ({
 
                   <div className="flex justify-end">
                     <button
-                      disabled={!canEditTeams}
                       onClick={handleAddTeamConfig}
-                      className="bg-gold-600 hover:bg-gold-500 text-black font-black px-4 py-2 rounded-xl text-[10px] flex items-center gap-2 uppercase disabled:opacity-40"
+                      className="bg-gold-600 hover:bg-gold-500 text-black font-black px-4 py-2 rounded-xl text-[10px] flex items-center gap-2 uppercase"
                     >
                       <Plus className="w-3 h-3" /> Add Team
                     </button>
@@ -1966,7 +1979,6 @@ export const DirectorPanel: React.FC<Props> = ({
                       <div key={team.id} className="bg-black/40 border border-zinc-800 rounded-xl p-3">
                         <div className="flex items-center gap-2 mb-2">
                           <input
-                            disabled={!canEditTeams}
                             value={team.name}
                             onChange={(e) => handleUpdateTeamName(team.id, e.target.value)}
                             className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[11px] uppercase text-white"
@@ -1975,21 +1987,20 @@ export const DirectorPanel: React.FC<Props> = ({
                           <span className="text-[10px] px-2 py-1 rounded border border-blue-700/40 bg-blue-900/20 text-blue-300 uppercase font-black">
                             {gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'TURN MODE' : 'PLAYS AS ONE'}
                           </span>
-                          <button disabled={!canEditTeams} onClick={() => handleAddTeamMemberConfig(team.id)} className="text-[10px] text-gold-500 hover:text-white font-bold px-2 py-1 border border-zinc-800 rounded">+ MEMBER</button>
-                          <button disabled={!canEditTeams} onClick={() => handleRemoveTeamConfig(team.id)} className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 border border-zinc-800 rounded">REMOVE</button>
+                          <button onClick={() => handleAddTeamMemberConfig(team.id)} className="text-[10px] text-gold-500 hover:text-white font-bold px-2 py-1 border border-zinc-800 rounded">+ MEMBER</button>
+                          <button disabled={!canEditTeams} onClick={() => handleRemoveTeamConfig(team.id)} className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 border border-zinc-800 rounded disabled:opacity-40">REMOVE</button>
                         </div>
 
                         <div className="space-y-1">
                           {(team.members || []).map((member) => (
                             <div key={member.id} className="flex items-center gap-2">
                               <input
-                                disabled={!canEditTeams}
                                 value={member.name}
                                 onChange={(e) => handleUpdateTeamMemberConfig(team.id, member.id, e.target.value)}
                                 className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-zinc-200"
                                 placeholder="MEMBER NAME"
                               />
-                              <button disabled={!canEditTeams} onClick={() => handleRemoveTeamMemberConfig(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1">X</button>
+                              <button disabled={!canEditTeams} onClick={() => handleRemoveTeamMemberConfig(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1 disabled:opacity-40">X</button>
                             </div>
                           ))}
                         </div>
