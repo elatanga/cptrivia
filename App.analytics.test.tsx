@@ -186,7 +186,7 @@ describe('Director Panel: Live Game Analytics (Verification Suite)', () => {
     
     // Verify file naming pattern
     const link = (document.createElement as any).mock.results.find((r: any) => r.value.tagName === 'A').value;
-    expect(link.download).toMatch(/^cruzpham-trivia-logs-\d{8}-\d{4}\.txt$/);
+    expect(link.download).toMatch(/^cruzpham-trivia-logs-\d{8}T\d{6}\.csv$/);
 
     // Cleanup mock
     document.createElement = originalCreateElement;

@@ -1,5 +1,21 @@
 
 const admin = require("firebase-admin");
+const functions = require("firebase-functions");
+
+const ALLOWED_MOVE_TYPES = new Set([
+  'DOUBLE_TROUBLE',
+  'TRIPLE_THREAT',
+  'SABOTAGE',
+  'MEGA_STEAL',
+  'DOUBLE_WINS_OR_NOTHING',
+  'TRIPLE_WINS_OR_NOTHING',
+  'SAFE_BET',
+  'LOCKOUT',
+  'SUPER_SAVE',
+  'GOLDEN_GAMBLE',
+  'SHIELD_BOOST',
+  'FINAL_SHOT'
+]);
 
 /**
  * Structured Logging Helper
@@ -16,6 +32,10 @@ const logSMS = (event, context, metadata = {}) => {
   }));
 };
 
+const throwSmsError = (code, message, details = {}) => {
+  throw new functions.https.HttpsError(code, message, details);
+};
+
 /**
  * Handler: Arm a Tile
  */
@@ -25,7 +45,12 @@ exports.requestArm = async (data, context) => {
 
   if (!gameId || !tileId || !moveType || !idempotencyKey) {
     logSMS("ARM_REJECTED", { gameId, correlationId, idempotencyKey }, { reason: "MISSING_ARGS" });
-    throw new Error("INVALID_ARGUMENT: Missing required fields");
+    throwSmsError("invalid-argument", "Missing required fields", { reason: "MISSING_ARGS" });
+  }
+
+  if (!ALLOWED_MOVE_TYPES.has(moveType)) {
+    logSMS("ARM_REJECTED", { gameId, correlationId, idempotencyKey }, { reason: "UNSUPPORTED_MOVE_TYPE", moveType });
+    throwSmsError("invalid-argument", "Unsupported move type", { reason: "UNSUPPORTED_MOVE_TYPE", moveType });
   }
 
   logSMS("ARM_REQUEST_RECEIVED", { gameId, correlationId, idempotencyKey }, { moveType, tileId });
@@ -44,7 +69,7 @@ exports.requestArm = async (data, context) => {
     const conflictSnap = await transaction.get(activeCol.where("tileId", "==", tileId).limit(1));
     if (!conflictSnap.empty) {
       logSMS("ARM_REQUEST_CONFLICT", { gameId, correlationId, idempotencyKey }, { tileId });
-      throw new Error("CONFLICT: Tile is already affected by an active move");
+      throwSmsError("already-exists", "Tile is already affected by an active move", { reason: "TILE_CONFLICT", tileId });
     }
 
     const requestDoc = {
@@ -85,6 +110,11 @@ exports.approveMove = async (data, context) => {
   const { gameId, requestId, correlationId } = data;
   const db = admin.firestore();
 
+  if (!gameId || !requestId) {
+    logSMS("APPROVE_REJECTED", { gameId, correlationId }, { reason: "MISSING_ARGS", requestId });
+    throwSmsError("invalid-argument", "Missing required fields", { reason: "MISSING_ARGS" });
+  }
+
   logSMS("APPROVE_REQUEST_RECEIVED", { gameId, correlationId }, { requestId });
 
   const requestRef = db.collection(`games/${gameId}/specialMoves_requests`).doc(requestId);
@@ -93,10 +123,14 @@ exports.approveMove = async (data, context) => {
 
   return db.runTransaction(async (transaction) => {
     const reqSnap = await transaction.get(requestRef);
-    if (!reqSnap.exists) throw new Error("NOT_FOUND: Request does not exist");
+    if (!reqSnap.exists) {
+      throwSmsError("not-found", "Request does not exist", { requestId });
+    }
     
     const req = reqSnap.data();
-    if (req.state !== "REQUESTED") throw new Error("PRECONDITION_FAILED: Request is not in REQUESTED state");
+    if (req.state !== "REQUESTED") {
+      throwSmsError("failed-precondition", "Request is not in REQUESTED state", { requestId, state: req.state });
+    }
 
     transaction.update(requestRef, { state: "APPROVED", updatedAt: Date.now() });
 
@@ -130,6 +164,12 @@ exports.approveMove = async (data, context) => {
  */
 exports.clearArmory = async (data, context) => {
   const { gameId, correlationId } = data;
+
+  if (!gameId) {
+    logSMS("CLEAR_ARMORY_REJECTED", { gameId, correlationId }, { reason: "MISSING_ARGS" });
+    throwSmsError("invalid-argument", "Missing required fields", { reason: "MISSING_ARGS" });
+  }
+
   const db = admin.firestore();
   const activeCol = db.collection(`games/${gameId}/specialMoves_active`);
 

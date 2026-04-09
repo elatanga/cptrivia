@@ -167,6 +167,23 @@ export interface ScoreboardLayoutTokens {
   allowTwoColumn: boolean;
 }
 
+export interface QuestionDisplayLayoutTokens {
+  modalMaxWidthPx: number;
+  modalMaxHeightPx: number;
+  contentMaxWidthPercent: number;
+  contentPaddingPx: number;
+  questionMinFontPx: number;
+  questionMaxFontPx: number;
+  questionClampVw: number;
+  optionMinFontPx: number;
+  optionMaxFontPx: number;
+  optionClampVw: number;
+  answerMinFontPx: number;
+  answerMaxFontPx: number;
+  answerClampVw: number;
+  optionGridClass: string;
+}
+
 const getViewportCompactFactor = (viewportWidth: number) => {
   if (viewportWidth < 768) return 0.86;
   if (viewportWidth < 1024) return 0.93;
@@ -175,22 +192,31 @@ const getViewportCompactFactor = (viewportWidth: number) => {
 
 export const getTriviaBoardLayoutTokens = (
   settings: BoardViewSettings,
-  viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280
+  viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280,
+  rowCount = 5
 ): TriviaBoardLayoutTokens => {
   const safe = sanitizeBoardViewSettings(settings);
   const compact = getViewportCompactFactor(viewportWidth);
   const scale = getScaleMap(safe.tileScale).factor;
   const densityScale = clamp(1 + (safe.tilePaddingScale - 1) * 0.3, 0.82, 1.18);
 
-  const categoryTitleFontPx = clamp(Math.round(getScaleMap(safe.categoryTitleScale).px * compact), 10, 28);
+  // Auto-fit: proportionally shrink tile height/font for boards with more than 5 rows so all
+  // tiles remain visible without any manual Director Panel adjustment.
+  const rowDensityFactor = rowCount > 5 ? Math.max(0.50, 5 / rowCount) : 1.0;
+
+  // Expanded max clamp (28→32) so XL category headers are clearly larger at wide viewports.
+  const categoryTitleFontPx = clamp(Math.round(getScaleMap(safe.categoryTitleScale).px * compact), 10, 32);
   const categoryLineClamp = categoryTitleFontPx >= 22 ? 2 : 3;
   const categoryTitleLineHeight = categoryTitleFontPx >= 20 ? 1.1 : 1.2;
   const categoryPaddingPx = clamp(Math.round((8 + (safe.tilePaddingScale - 1) * 4) * compact), 4, 14);
 
   const boardGapPx = clamp(Math.round((10 + (safe.tilePaddingScale - 1) * 6) * compact), 6, 18);
-  const tileMinWidthPx = clamp(Math.round(88 * scale * compact * densityScale), 62, 136);
-  const tileMinHeightPx = clamp(Math.round(72 * scale * compact * densityScale), 52, 124);
-  const tilePointFontPx = clamp(Math.round(38 * scale * compact * densityScale), 16, 82);
+  // Lowered min clamps (62→44 width, 52→36 height) so XS scale produces visibly smaller tiles
+  // than S/M, creating a wider effective visual range across settings.
+  // rowDensityFactor reduces tile size proportionally when row count exceeds 5.
+  const tileMinWidthPx = clamp(Math.round(88 * scale * compact * densityScale), 44, 136);
+  const tileMinHeightPx = clamp(Math.round(72 * scale * compact * densityScale * rowDensityFactor), 36, 124);
+  const tilePointFontPx = clamp(Math.round(38 * scale * compact * densityScale * rowDensityFactor), 12, 82);
   const tileInnerPaddingPx = clamp(Math.round((4 + (safe.tilePaddingScale - 1) * 4) * compact), 2, 10);
   const categoryMinHeightPx = clamp(Math.round((categoryTitleFontPx * categoryLineClamp * categoryTitleLineHeight) + (categoryPaddingPx * 2)), 38, 96);
 
@@ -233,6 +259,61 @@ export const getScoreboardLayoutTokens = (
     scoreboardScale: safe.scoreboardScale,
     panelWidthCss,
     allowTwoColumn,
+  };
+};
+
+export const getQuestionDisplayLayoutTokens = (
+  settings?: Partial<BoardViewSettings> | null,
+  optionCount = 0
+): QuestionDisplayLayoutTokens => {
+  const safe = sanitizeBoardViewSettings(settings);
+
+  const modalProfiles: Record<BoardViewSettings['questionModalSize'], { maxWidth: number; maxHeight: number }> = {
+    Small: { maxWidth: 920, maxHeight: 760 },
+    Medium: { maxWidth: 1120, maxHeight: 860 },
+    Large: { maxWidth: 1280, maxHeight: 920 },
+    ExtraLarge: { maxWidth: 1440, maxHeight: 980 },
+  };
+
+  const profile = modalProfiles[safe.questionModalSize] ?? modalProfiles[DEFAULT_BOARD_VIEW_SETTINGS.questionModalSize];
+  const fontScale = clamp(safe.questionFontScale, 0.8, 1.5);
+
+  const questionMinFontPx = clamp(Math.round(20 * fontScale), 16, 42);
+  const questionMaxFontPx = clamp(Math.round(84 * fontScale), 44, 124);
+  const questionClampVw = clamp(Number((4.5 * fontScale).toFixed(2)), 2.8, 6.4);
+
+  const optionMinFontPx = clamp(Math.round(14 * fontScale), 12, 28);
+  const optionMaxFontPx = clamp(Math.round(30 * fontScale), 22, 48);
+  const optionClampVw = clamp(Number((2.2 * fontScale).toFixed(2)), 1.8, 3.8);
+
+  const answerMinFontPx = clamp(Math.round(18 * fontScale), 14, 38);
+  const answerMaxFontPx = clamp(Math.round(62 * fontScale), 34, 98);
+  const answerClampVw = clamp(Number((3.2 * fontScale).toFixed(2)), 2.2, 5.2);
+
+  let optionGridClass = 'grid-cols-1';
+  if (safe.multipleChoiceColumns === '1') {
+    optionGridClass = 'grid-cols-1';
+  } else if (safe.multipleChoiceColumns === '2') {
+    optionGridClass = optionCount > 1 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1';
+  } else if (optionCount >= 2) {
+    optionGridClass = 'grid-cols-1 sm:grid-cols-2';
+  }
+
+  return {
+    modalMaxWidthPx: profile.maxWidth,
+    modalMaxHeightPx: profile.maxHeight,
+    contentMaxWidthPercent: clamp(safe.questionMaxWidthPercent, 60, 100),
+    contentPaddingPx: clamp(safe.questionContentPadding, 4, 24),
+    questionMinFontPx,
+    questionMaxFontPx,
+    questionClampVw,
+    optionMinFontPx,
+    optionMaxFontPx,
+    optionClampVw,
+    answerMinFontPx,
+    answerMaxFontPx,
+    answerClampVw,
+    optionGridClass,
   };
 };
 

@@ -48,6 +48,9 @@ app.get("/runtime-config.js", (req, res) => {
       FIREBASE_MESSAGING_SENDER_ID: "${safe(process.env.FIREBASE_MESSAGING_SENDER_ID)}",
       FIREBASE_APP_ID: "${safe(process.env.FIREBASE_APP_ID)}",
       API_KEY: "${safe(process.env.API_KEY)}",
+      GEMINI_API_KEY: "${safe(process.env.GEMINI_API_KEY)}",
+      GEMINI_MODEL: "${safe(process.env.GEMINI_MODEL)}",
+      AI_MODEL: "${safe(process.env.AI_MODEL)}",
       BUILD_ENV: "${safe(process.env.BUILD_ENV || "production")}"
     };
   `;

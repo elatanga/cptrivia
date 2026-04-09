@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, test, expect, vi } from 'vitest';
 import { GameBoard } from './GameBoard';
 import { Category, BoardViewSettings } from '../types';
+import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 
 // Mock sound service
 vi.mock('../services/soundService', () => ({
@@ -37,7 +38,21 @@ const mockViewSettings: BoardViewSettings = {
   playerNameScale: 'M',
   scoreboardScale: 1.0,
   tilePaddingScale: 1.0,
+  questionModalSize: 'Medium',
+  questionMaxWidthPercent: 80,
+  questionFontScale: 1,
+  questionContentPadding: 12,
+  multipleChoiceColumns: 'auto',
   updatedAt: new Date().toISOString(),
+};
+
+const mockOverlay: SMSOverlayDoc = {
+  deploymentsByTileId: {
+    q1: { status: 'ARMED', moveType: 'DOUBLE_TROUBLE', updatedAt: Date.now() },
+  },
+  activeByTargetId: {},
+  updatedAt: Date.now(),
+  version: 1,
 };
 
 describe('GameBoard Component Visibility & Theme', () => {
@@ -128,18 +143,42 @@ describe('GameBoard Component Visibility & Theme', () => {
     );
   });
 
-  test('F) GAME TIMER: Renders board clock when session timer is active', () => {
+  test('F) GAME TIMER LOCATION: Board no longer renders session timer UI', () => {
     render(
       <GameBoard
         categories={mockCategories}
         onSelectQuestion={vi.fn()}
         viewSettings={mockViewSettings}
-        sessionTimerActive={true}
-        sessionTimeRemaining={95}
       />
     );
 
-    expect(screen.getByText(/Game Time/i)).toBeInTheDocument();
-    expect(screen.getByText('1:35')).toBeInTheDocument();
+    expect(screen.queryByText(/Session Timer/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Game Time/i)).not.toBeInTheDocument();
+  });
+
+  test('G) SPECIAL MOVE TAG: Re-renders tile tag when only resolvedSpecialMoveTileIds changes', () => {
+    const { rerender } = render(
+      <GameBoard
+        categories={mockCategories}
+        onSelectQuestion={vi.fn()}
+        viewSettings={mockViewSettings}
+        overlay={mockOverlay}
+        resolvedSpecialMoveTileIds={new Set<string>()}
+      />
+    );
+
+    expect(screen.getByTestId('special-move-tile-tag-q1')).toHaveAttribute('data-state', 'armed');
+
+    rerender(
+      <GameBoard
+        categories={mockCategories}
+        onSelectQuestion={vi.fn()}
+        viewSettings={mockViewSettings}
+        overlay={mockOverlay}
+        resolvedSpecialMoveTileIds={new Set<string>(['q1'])}
+      />
+    );
+
+    expect(screen.getByTestId('special-move-tile-tag-q1')).toHaveAttribute('data-state', 'resolved');
   });
 });

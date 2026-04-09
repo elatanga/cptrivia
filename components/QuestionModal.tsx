@@ -1,11 +1,12 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ShieldAlert, ArrowLeft, Trash2, Trophy, Eye } from 'lucide-react';
-import { Question, Player, GameTimer } from '../types';
+import { Question, Player, GameTimer, BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { CountdownOverlay } from './CountdownOverlay';
 import { AutoFitText } from './AutoFitText';
+import { getQuestionDisplayLayoutTokens } from '../services/boardViewSettings';
 
 const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => void }> = React.memo(({ timer, onTimerEnd }) => {
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
@@ -66,6 +67,16 @@ interface Props {
   players: Player[];
   selectedPlayerId: string | null;
   timer: GameTimer;
+  viewSettings?: Partial<BoardViewSettings> | null;
+  specialMoveSummary?: {
+    moveType: string;
+    displayTitle: string;
+    pointsEffect: string;
+    penaltyEffect?: string;
+    stealPolicy: 'NO STEAL' | 'STEAL ALLOWED';
+  } | null;
+  allowSteal?: boolean;
+  stealDisabledReason?: string;
   questionCountdownRemainingSeconds?: number;
   questionCountdownDurationSeconds?: number;
   isQuestionCountdownRunning?: boolean;
@@ -82,7 +93,10 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
   players,
   selectedPlayerId,
   timer,
-  displaySettings,
+  viewSettings,
+  specialMoveSummary,
+  allowSteal = true,
+  stealDisabledReason,
   questionCountdownRemainingSeconds,
   questionCountdownDurationSeconds,
   isQuestionCountdownRunning,
@@ -99,6 +113,11 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
 
   const isRevealed = question.isRevealed;
   const isDouble = question.isDoubleOrNothing || false;
+  const bannerTitles = useMemo(() => {
+    const titles = [specialMoveSummary?.displayTitle, isDouble ? 'DOUBLE OR NOTHING' : null]
+      .filter((title): title is string => Boolean(title));
+    return Array.from(new Set(titles));
+  }, [specialMoveSummary?.displayTitle, isDouble]);
 
   const answerOptions = useMemo(() => {
     const q = question as Question & { options?: string[] };
@@ -106,13 +125,19 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
     return q.options.filter((option) => typeof option === 'string' && option.trim().length > 0).slice(0, 4);
   }, [question]);
 
-  const optionGridClass = answerOptions.length === 4
-    ? 'grid-cols-2'
-    : answerOptions.length === 3
-      ? 'grid-cols-1 sm:grid-cols-2'
-      : answerOptions.length === 2
-        ? 'grid-cols-1 sm:grid-cols-2'
-        : 'grid-cols-1';
+  const displayTokens = useMemo(
+    () => getQuestionDisplayLayoutTokens(viewSettings, answerOptions.length),
+    [viewSettings, answerOptions.length]
+  );
+
+  const contentRegionStyle = useMemo(
+    () => ({
+      maxWidth: `${displayTokens.contentMaxWidthPercent}%`,
+      paddingLeft: `${displayTokens.contentPaddingPx}px`,
+      paddingRight: `${displayTokens.contentPaddingPx}px`,
+    }),
+    [displayTokens.contentMaxWidthPercent, displayTokens.contentPaddingPx]
+  );
 
   // LOGGING & SCROLL LOCK
   useEffect(() => {
@@ -147,23 +172,27 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
   }, [isDouble, isRevealed]);
 
   const questionContent = useMemo(() => (
-    <div data-testid="question-viewport" className="w-full px-1 md:px-4 overflow-hidden min-h-0 flex items-center justify-center">
+    <div
+      data-testid="question-viewport"
+      className="w-full overflow-hidden min-h-0 flex items-center justify-center mx-auto"
+      style={contentRegionStyle}
+    >
       <AutoFitText
         testId="question-text"
         text={question.text}
-        minFontSizePx={20}
-        maxFontSizePx={84}
-        clampVw={4.5}
+        minFontSizePx={displayTokens.questionMinFontPx}
+        maxFontSizePx={displayTokens.questionMaxFontPx}
+        clampVw={displayTokens.questionClampVw}
         className={`font-roboto-bold text-center transition-[opacity,transform,filter] duration-500 max-h-full ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
         containerClassName="w-full h-full flex items-center justify-center"
       />
     </div>
-  ), [question.text, isRevealed]);
+  ), [question.text, isRevealed, contentRegionStyle, displayTokens.questionMinFontPx, displayTokens.questionMaxFontPx, displayTokens.questionClampVw]);
 
   const answerContent = useMemo(() => (
-    <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-[3.5rem] md:min-h-[5rem]">
+    <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-[3.5rem] md:min-h-[5rem] mx-auto" style={contentRegionStyle}>
       {!isRevealed && answerOptions.length > 0 && (
-        <div data-testid="answer-options-grid" className={`w-full grid ${optionGridClass} gap-2 md:gap-3`}>
+        <div data-testid="answer-options-grid" className={`w-full grid ${displayTokens.optionGridClass} gap-2 md:gap-3`}>
           {answerOptions.map((option, idx) => (
             <div
               key={`${option}-${idx}`}
@@ -172,9 +201,9 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
               <AutoFitText
                 testId={`answer-option-${idx}`}
                 text={option}
-                minFontSizePx={14}
-                maxFontSizePx={30}
-                clampVw={2.2}
+                minFontSizePx={displayTokens.optionMinFontPx}
+                maxFontSizePx={displayTokens.optionMaxFontPx}
+                clampVw={displayTokens.optionClampVw}
                 className="font-roboto-bold text-zinc-100 text-left"
                 containerClassName="w-full h-full flex items-center"
               />
@@ -191,9 +220,9 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
           <AutoFitText
             testId="answer-text-value"
             text={question.answer}
-            minFontSizePx={18}
-            maxFontSizePx={62}
-            clampVw={3.2}
+            minFontSizePx={displayTokens.answerMinFontPx}
+            maxFontSizePx={displayTokens.answerMaxFontPx}
+            clampVw={displayTokens.answerClampVw}
             className="text-gold-400 font-roboto-bold text-center drop-shadow-2xl"
             containerClassName="w-full"
           />
@@ -202,7 +231,19 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
         <div className="h-2 w-32 bg-zinc-800/50 rounded-full flex-none" />
       )}
     </div>
-  ), [isRevealed, answerOptions, optionGridClass, question.answer]);
+  ), [
+    isRevealed,
+    answerOptions,
+    question.answer,
+    contentRegionStyle,
+    displayTokens.optionGridClass,
+    displayTokens.optionMinFontPx,
+    displayTokens.optionMaxFontPx,
+    displayTokens.optionClampVw,
+    displayTokens.answerMinFontPx,
+    displayTokens.answerMaxFontPx,
+    displayTokens.answerClampVw,
+  ]);
 
   const handleAction = useCallback((action: 'reveal' | 'award' | 'steal' | 'void' | 'return', event?: React.MouseEvent | React.KeyboardEvent) => {
     if (event) {
@@ -231,7 +272,7 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
         }
         break;
       case 'steal':
-        if (isRevealed) {
+        if (isRevealed && allowSteal) {
           soundService.playSteal();
           setShowStealSelect(true);
         }
@@ -252,7 +293,7 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
         }
         break;
     }
-  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, isQuestionCountdownRunning]);
+  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, isQuestionCountdownRunning, allowSteal]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -323,22 +364,47 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
       <div 
         data-testid="luxury-container"
         className="relative z-10 w-full max-w-7xl h-[min(94dvh,920px)] max-h-[94dvh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2rem] md:rounded-[2.5rem] p-3 md:p-8 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden grid grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-2 md:gap-4"
+        style={{
+          maxWidth: `${displayTokens.modalMaxWidthPx}px`,
+          height: `min(94dvh, ${displayTokens.modalMaxHeightPx}px)`,
+          maxHeight: '94dvh',
+        }}
       >
         {/* Legacy per-question timer badge isolated from modal rendering flow */}
         <LegacyQuestionTimerBadge timer={timer} onTimerEnd={onTimerEnd} />
 
-        {/* 1. DOUBLE OR NOTHING LABEL */}
-        <div className="h-12 flex items-center justify-center">
-          {isDouble && (
-            <span 
-              data-testid="double-label"
-              className="text-red-500 font-black uppercase tracking-[0.3em] drop-shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-in fade-in slide-in-from-top-2 duration-700"
-              style={{ fontSize: 'clamp(18px, 2vw, 32px)' }}
+        {/* 1. TOP RISK/MODIFIER LABELS */}
+        {bannerTitles.length > 0 && (
+          <div className="flex flex-col items-center justify-center gap-2 md:gap-3 pb-1 md:pb-2">
+            <div
+              data-testid="special-move-banner"
+              className="w-full max-w-5xl rounded-2xl border border-red-500/45 bg-gradient-to-r from-red-950/45 via-black/35 to-red-950/45 px-4 py-3 md:px-6 md:py-4 text-center shadow-[0_0_30px_rgba(239,68,68,0.18)] backdrop-blur-sm"
             >
-              DOUBLE OR NOTHING
-            </span>
-          )}
-        </div>
+              <div className="flex flex-col items-center justify-center gap-1.5 md:gap-2">
+                {bannerTitles.map((title) => (
+                  <div
+                    key={title}
+                    data-testid={title === 'DOUBLE OR NOTHING' ? 'double-label' : undefined}
+                    className="font-black uppercase text-red-400 tracking-[0.22em] drop-shadow-[0_0_14px_rgba(248,113,113,0.55)]"
+                    style={{ fontSize: 'clamp(20px, 2.6vw, 34px)', lineHeight: 1.05 }}
+                  >
+                    {title}
+                  </div>
+                ))}
+
+                {specialMoveSummary && (
+                  <div className="mt-1 flex flex-wrap justify-center gap-1.5 text-[9px] md:text-[10px] uppercase tracking-[0.18em] font-black text-zinc-100">
+                    <span className="rounded-full border border-red-400/25 bg-black/45 px-2.5 py-1">{specialMoveSummary.pointsEffect}</span>
+                    {specialMoveSummary.penaltyEffect && (
+                      <span className="rounded-full border border-red-400/25 bg-black/45 px-2.5 py-1">{specialMoveSummary.penaltyEffect}</span>
+                    )}
+                    <span className="rounded-full border border-red-400/25 bg-black/45 px-2.5 py-1">{specialMoveSummary.stealPolicy}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 2. QUESTION AREA */}
         {questionContent}
@@ -399,10 +465,10 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
             {/* STEAL */}
             <button 
               type="button"
-              disabled={!isRevealed}
+              disabled={!isRevealed || !allowSteal}
               onClick={(e) => handleAction('steal', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && !isQuestionCountdownRunning ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
-              title="Steal (S)"
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && allowSteal && !isQuestionCountdownRunning ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              title={stealDisabledReason || 'Steal (S)'}
             >
               <div className="p-3 md:p-5 bg-purple-950/20 border-2 border-purple-500/50 rounded-full shadow-xl group-hover:bg-purple-900/40 transition-all">
                 <ShieldAlert className="w-5 h-5 md:w-8 md:h-8" />

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
 import { GameState } from '../types';
@@ -11,6 +11,7 @@ import * as geminiService from '../services/geminiService';
 vi.mock('../services/geminiService', () => ({
   generateSingleQuestion: vi.fn(),
   generateCategoryQuestions: vi.fn(),
+  generateTriviaGame: vi.fn(),
 }));
 
 vi.mock('../services/logger', () => ({
@@ -65,6 +66,11 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
       tileScale: 'M',
       scoreboardScale: 1.0,
       tilePaddingScale: 1.0,
+      questionModalSize: 'Large',
+      questionMaxWidthPercent: 86,
+      questionFontScale: 1,
+      questionContentPadding: 16,
+      multipleChoiceColumns: '2',
       updatedAt: '',
     },
     lastPlays: [],
@@ -108,7 +114,9 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
     );
 
     const quickAiBtn = screen.getByTitle('Quick AI Generate');
-    fireEvent.click(quickAiBtn);
+    await act(async () => {
+      fireEvent.click(quickAiBtn);
+    });
 
     expect(geminiService.generateSingleQuestion).toHaveBeenCalledWith(
       'Regression Show',   // Topic
@@ -152,6 +160,57 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
       expect(updatedTile.isAnswered).toBe(false);
       expect(updatedTile.isDoubleOrNothing).toBe(true);
     });
+  });
+
+  it('3a) REACTIVATION: Quick regenerate reactivates previously inactive tile', async () => {
+    const inactiveState: GameState = {
+      ...baseGameState,
+      categories: [
+        {
+          ...baseGameState.categories[0],
+          questions: [
+            {
+              ...baseGameState.categories[0].questions[0],
+              isAnswered: true,
+              isVoided: true,
+              isRevealed: true,
+              isPlayable: false,
+            } as any,
+          ],
+        },
+      ],
+    };
+
+    vi.mocked(geminiService.generateSingleQuestion).mockResolvedValue({
+      text: 'REACTIVATED Q',
+      answer: 'REACTIVATED A'
+    });
+
+    render(
+      <DirectorPanel
+        gameState={inactiveState}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    fireEvent.click(screen.getByTitle('Quick AI Generate'));
+
+    await waitFor(() => {
+      expect(mockOnUpdateState).toHaveBeenCalledTimes(1);
+      const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
+      const updatedTile = nextState.categories[0].questions[0] as any;
+
+      expect(updatedTile.text).toBe('REACTIVATED Q');
+      expect(updatedTile.answer).toBe('REACTIVATED A');
+      expect(updatedTile.isAnswered).toBe(false);
+      expect(updatedTile.isVoided).toBe(false);
+      expect(updatedTile.isRevealed).toBe(false);
+      expect(updatedTile.isPlayable).toBe(true);
+    });
+
+    expect(mockAddToast).toHaveBeenCalledWith('success', 'Tile content regenerated and reactivated.');
   });
 
   it('4) FAILURE: Shows error toast and aborts state mutation on API crash', async () => {
@@ -209,7 +268,7 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
   });
 
   it('6) SNAPSHOT: Action region visual lock', () => {
-    const { asFragment } = render(
+    render(
       <DirectorPanel 
         gameState={baseGameState} 
         onUpdateState={mockOnUpdateState} 
@@ -308,6 +367,111 @@ describe('DirectorPanel: Board Quick AI Regression', () => {
       expect(firstTile.isAnswered).toBe(false);
       expect(secondTile.isVoided).toBe(false);
       expect(firstTile.isRevealed).toBe(false);
+    });
+  });
+
+  it('9) BOARD REPOPULATE: prompts to optionally reset live scores and applies reset on Yes', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(geminiService.generateTriviaGame).mockResolvedValue([
+      {
+        id: 'cat-ai-1',
+        title: 'New Science',
+        questions: [{ id: 'qa-1', text: 'AI Q', answer: 'AI A', points: 100, isRevealed: false, isAnswered: false }],
+      },
+    ] as any);
+
+    const teamState: GameState = {
+      ...baseGameState,
+      playMode: 'TEAMS',
+      teamPlayStyle: 'TEAM_MEMBERS_TAKE_TURNS',
+      players: [{ id: 't1', name: 'TEAM A', score: 500, color: '#fff' }],
+      teams: [{
+        id: 't1',
+        name: 'TEAM A',
+        score: 500,
+        activeMemberId: 'm1',
+        members: [
+          { id: 'm1', name: 'A1', score: 200, orderIndex: 0 },
+          { id: 'm2', name: 'A2', score: 300, orderIndex: 1 },
+        ],
+      }],
+      selectedPlayerId: 't1',
+    };
+
+    render(
+      <DirectorPanel
+        gameState={teamState}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/1990s Pop Culture/i), { target: { value: 'Space' } });
+    fireEvent.click(screen.getByRole('button', { name: /Regenerate All/i }));
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalledWith('Do you also want to reset live scores to zero?');
+      const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
+      expect(nextState.players[0].score).toBe(0);
+      expect(nextState.teams?.[0].score).toBe(0);
+      expect(nextState.teams?.[0].members.map((member) => member.score)).toEqual([0, 0]);
+    });
+  });
+
+  it('10) BOARD REPOPULATE: keeps live scores when director chooses No', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.mocked(geminiService.generateTriviaGame).mockResolvedValue([
+      {
+        id: 'cat-ai-1',
+        title: 'New Science',
+        questions: [{ id: 'qa-1', text: 'AI Q', answer: 'AI A', points: 100, isRevealed: false, isAnswered: false }],
+      },
+    ] as any);
+
+    const state: GameState = {
+      ...baseGameState,
+      players: [{ id: 'p1', name: 'ALICE', score: 700, color: '#fff' }],
+      selectedPlayerId: 'p1',
+    };
+
+    render(
+      <DirectorPanel
+        gameState={state}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/1990s Pop Culture/i), { target: { value: 'Space' } });
+    fireEvent.click(screen.getByRole('button', { name: /Regenerate All/i }));
+
+    await waitFor(() => {
+      const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
+      expect(nextState.players[0].score).toBe(700);
+    });
+  });
+
+  it('11) BOARD REPOPULATE: regeneration failure does not trigger score reset prompt', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(geminiService.generateTriviaGame).mockRejectedValue(new Error('regen failed'));
+
+    render(
+      <DirectorPanel
+        gameState={baseGameState}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/1990s Pop Culture/i), { target: { value: 'Broken' } });
+    fireEvent.click(screen.getByRole('button', { name: /Regenerate All/i }));
+
+    await waitFor(() => {
+      expect(mockOnUpdateState).not.toHaveBeenCalled();
+      expect(window.confirm).not.toHaveBeenCalledWith('Do you also want to reset live scores to zero?');
     });
   });
 });
