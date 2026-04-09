@@ -1,10 +1,9 @@
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import App from './App';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
-import * as geminiService from './services/geminiService';
 
 // --- TYPE DECLARATIONS ---
 declare const jest: any;
@@ -12,8 +11,6 @@ declare const describe: any;
 declare const test: any;
 declare const expect: any;
 declare const beforeEach: any;
-// Fix: Declare require for dynamic module loading in tests to fix "Cannot find name 'require'"
-declare const require: any;
 
 // --- MOCKS ---
 jest.mock('./services/logger', () => ({
@@ -62,7 +59,7 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     fireEvent.click(screen.getByText(/Create Template/i));
     await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
 
-    fireEvent.change(screen.getByPlaceholderText(/Show or Game Topic/i), { target: { value: 'Save Button Test' } });
+    fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Save Button Test' } });
     fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     await waitFor(() => screen.getByText(/Live Builder Preview/i));
   };
@@ -74,20 +71,16 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     
     await navigateToBuilder();
     
-    const saveBtn = screen.getByRole('button', { name: /save template/i });
+    const saveBtn = screen.getByTestId('save-template-button');
     expect(saveBtn).toBeInTheDocument();
     expect(saveBtn).toBeVisible();
     
     // Test clickability
     fireEvent.click(saveBtn);
     
-    // Successful click should trigger logging
+    // Successful click should persist and show success feedback
     await waitFor(() => {
-        const matchingCall = (screen.getByTestId ? null : (console as any).info); // placeholder for verifying logic
-        // Verify logger was called via mock
-        // Fix: require usage in test context
-        const { logger } = require('./services/logger');
-        expect(logger.info).toHaveBeenCalledWith("template_save_click", expect.any(Object));
+        expect(screen.getByText('Template saved successfully.')).toBeInTheDocument();
     });
   });
 
@@ -98,7 +91,7 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     expect(actionsRow).toBeInTheDocument();
     expect(actionsRow).toHaveClass('z-[60]'); // Ensuring high z-index as required
     
-    const saveBtn = within(actionsRow).getByRole('button', { name: /save template/i });
+    const saveBtn = within(actionsRow).getByTestId('save-template-button');
     expect(saveBtn).toBeInTheDocument();
   });
 
@@ -107,8 +100,8 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     
     const actionsRow = screen.getByTestId("builder-actions-row");
     const logoutBtn = within(actionsRow).getByText(/logout/i);
-    const saveBtn = within(actionsRow).getByRole('button', { name: /save template/i });
-    
+    const saveBtn = within(actionsRow).getByTestId('save-template-button');
+
     // Stacked vertically: Logout then Save
     expect(logoutBtn).toBeInTheDocument();
     expect(saveBtn).toBeInTheDocument();
@@ -124,15 +117,11 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
         throw new Error('Persistence Failed');
     });
 
-    const saveBtn = screen.getByRole('button', { name: /save template/i });
+    const saveBtn = screen.getByTestId('save-template-button');
     fireEvent.click(saveBtn);
     
     await waitFor(() => {
-        // Fix: require usage in test context
-        const { logger } = require('./services/logger');
-        expect(logger.error).toHaveBeenCalledWith("template_save_failed", expect.objectContaining({
-            message: 'Persistence Failed'
-        }));
+        expect(screen.getByText('Save failed — please retry')).toBeInTheDocument();
     });
 
     spy.mockRestore();
@@ -145,7 +134,7 @@ describe('Template Builder: Save Button Stacking & Layout (Verification)', () =>
     
     await navigateToBuilder();
     
-    const saveBtn = screen.getByRole('button', { name: /save template/i });
+    const saveBtn = screen.getByTestId('save-template-button');
     expect(saveBtn).toBeInTheDocument();
     expect(saveBtn).toBeVisible();
   });
