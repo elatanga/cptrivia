@@ -126,5 +126,28 @@ describe('Scoreboard Teams Mode', () => {
     fireEvent.click(screen.getByText('RED TEAM'));
     expect(onSelectPlayer).toHaveBeenCalledWith('t1');
   });
+
+  it('renders session timer in teams mode without breaking team list', () => {
+    render(
+      <Scoreboard
+        players={players}
+        teams={teams}
+        playMode="TEAMS"
+        teamPlayStyle="TEAM_PLAYS_AS_ONE"
+        sessionTimerActive={true}
+        sessionTimeRemaining={75}
+        selectedPlayerId="t1"
+        onAddPlayer={() => undefined}
+        onUpdateScore={() => undefined}
+        onSelectPlayer={() => undefined}
+        gameActive
+        viewSettings={viewSettings}
+      />
+    );
+
+    expect(screen.getByTestId('scoreboard-session-timer')).toHaveTextContent('1:15');
+    expect(screen.getByText('RED TEAM')).toBeInTheDocument();
+    expect(screen.getByText('BLUE TEAM')).toBeInTheDocument();
+  });
 });
 
