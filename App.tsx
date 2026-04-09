@@ -1380,14 +1380,14 @@ const App: React.FC = () => {
 
     // ── BUG FIX: 1-player / 2-player quick game modes must activate the
     // Session Game Timer, NOT the Question Countdown Timer. ────────────────
-    const templateQuickGameMode = template.config?.quickGameMode;
-    const templateQuickTimerMode = template.config?.quickTimerMode;
+    const templateQuickGameMode = normalizedTemplateConfig.quickGameMode;
+    const templateQuickTimerMode = normalizedTemplateConfig.quickTimerMode;
 
     if (templateQuickGameMode && templateQuickTimerMode === 'timed') {
       // Quick game + timed → enable Session Game Timer with configured duration
       const sessionDurationSeconds = resolveSessionTimerDuration(
-        template.config?.quickTimerDurationSeconds,
-        10,
+        normalizedTemplateConfig.quickTimerDurationSeconds,
+        timerDurationFromTemplate,
       );
       handleToggleSessionTimerEnabled(true);
       setSessionTimer({
@@ -1411,7 +1411,7 @@ const App: React.FC = () => {
       handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
     }
 
-    setActiveQuickGameMode(template.config?.quickGameMode || null);
+    setActiveQuickGameMode(normalizedTemplateConfig.quickGameMode || null);
 
     const newState: GameState = {
       ...gameState,
