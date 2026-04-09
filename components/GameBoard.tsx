@@ -30,10 +30,11 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
 
   const safeViewSettings = useMemo(() => sanitizeBoardViewSettings(viewSettings), [viewSettings]);
   const viewportWidth = useViewportWidth();
-  const layoutTokens = useMemo(() => getTriviaBoardLayoutTokens(safeViewSettings, viewportWidth), [safeViewSettings, viewportWidth]);
 
   const colCount = categories.length;
   const rowCount = categories[0]?.questions.length || 5;
+
+  const layoutTokens = useMemo(() => getTriviaBoardLayoutTokens(safeViewSettings, viewportWidth, rowCount), [safeViewSettings, viewportWidth, rowCount]);
 
   const boardStyles = {
     '--cat-font-px': `${layoutTokens.categoryTitleFontPx}px`,
