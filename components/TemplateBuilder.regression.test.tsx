@@ -152,6 +152,27 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(screen.getByTestId('template-cat-count')).toHaveTextContent('1');
     });
 
+    it('applies custom session timer from configuration controls to authoritative value', () => {
+      render(<TemplateBuilder {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: '2 Players' }));
+      fireEvent.change(screen.getByTestId('custom-session-timer-input'), { target: { value: '17' } });
+      fireEvent.click(screen.getByTestId('custom-session-timer-apply'));
+
+      expect(screen.getByTestId('template-session-timer-duration')).toHaveTextContent('17');
+    });
+
+    it('rejects invalid custom session timer values', () => {
+      render(<TemplateBuilder {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: '2 Players' }));
+      fireEvent.change(screen.getByTestId('custom-session-timer-input'), { target: { value: '-1' } });
+      fireEvent.click(screen.getByTestId('custom-session-timer-apply'));
+
+      expect(screen.getByText(/Enter a valid positive duration/i)).toBeInTheDocument();
+      expect(screen.getByTestId('template-session-timer-duration')).toHaveTextContent('10');
+    });
+
     it('enforces Teams and Quick setup as mutually exclusive in the UI', () => {
       render(<TemplateBuilder {...defaultProps} />);
 
@@ -286,6 +307,16 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
 
       expect(screen.getAllByDisplayValue(/Category \d/)).toHaveLength(5);
     });
+
+    it('applies custom session timer from live builder controls and keeps value in sync', () => {
+      enterBuilder();
+
+      fireEvent.click(screen.getByRole('button', { name: '2 Players' }));
+      fireEvent.change(screen.getByTestId('builder-custom-session-timer-input'), { target: { value: '23' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+      expect(screen.getByText('23s')).toBeInTheDocument();
+    });
   });
 
   describe('PHASE 3: Persistence Logic', () => {
@@ -310,6 +341,25 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       });
     });
 
+    it('persists custom applied timer duration in saved template config', async () => {
+      render(<TemplateBuilder {...defaultProps} />);
+      fireEvent.click(screen.getByRole('button', { name: '2 Players' }));
+      fireEvent.change(screen.getByTestId('custom-session-timer-input'), { target: { value: '27' } });
+      fireEvent.click(screen.getByTestId('custom-session-timer-apply'));
+      fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Custom Timer Save' } });
+      fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
+      fireEvent.click(screen.getByTestId('save-template-button'));
+
+      await waitFor(() => {
+        expect(dataService.createTemplate).toHaveBeenCalledWith(
+          'show-123',
+          'Custom Timer Save',
+          expect.objectContaining({ quickTimerMode: 'timed', quickTimerDurationSeconds: 27 }),
+          expect.any(Array)
+        );
+      });
+    });
+
     it('calls updateTemplate when initialTemplate is provided', async () => {
       const existingTemplate: any = {
         id: 't-999',
@@ -328,6 +378,35 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
           expect.objectContaining({ id: 't-999', topic: 'Existing Game' })
         );
       });
+    });
+
+    it('hydrates saved custom timer duration when editing an existing template', () => {
+      const existingTemplate: any = {
+        id: 't-1000',
+        topic: 'Saved Timer Template',
+        categories: [
+          {
+            id: 'cat-1',
+            title: 'Category 1',
+            questions: [
+              { id: 'q-1', text: 'Q1', answer: 'A1', points: 10, isRevealed: false, isAnswered: false, isDoubleOrNothing: false }
+            ]
+          }
+        ],
+        config: {
+          rowCount: 1,
+          categoryCount: 1,
+          playerNames: ['PLAYER 1', 'PLAYER 2'],
+          playerCount: 2,
+          quickGameMode: 'two_player',
+          quickTimerMode: 'timed',
+          quickTimerDurationSeconds: 35,
+        }
+      };
+
+      render(<TemplateBuilder {...defaultProps} initialTemplate={existingTemplate} />);
+
+      expect(screen.getByText('35s')).toBeInTheDocument();
     });
   });
 

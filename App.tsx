@@ -24,6 +24,7 @@ import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
 import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specialMoves/logic';
 import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
+import { getSpecialMoveCatalogEntry, getSpecialMoveDisplayTitle } from './modules/specialMoves/catalog';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { getNextPlayerSelection, getInitialAutoSelectedPlayer } from './services/playerSelectionCycler';
@@ -85,24 +86,9 @@ type QuestionModalSpecialMoveModel = {
   stealPolicy: 'NO STEAL' | 'STEAL ALLOWED';
 };
 
-const SPECIAL_MOVE_MODAL_DETAILS: Partial<Record<SpecialMoveType, Omit<QuestionModalSpecialMoveModel, 'moveType'>>> = {
-  DOUBLE_TROUBLE: { displayTitle: 'DOUBLE OR LOSE', pointsEffect: 'WIN: 2X POINTS', penaltyEffect: 'MISS: -TILE VALUE', stealPolicy: 'NO STEAL' },
-  TRIPLE_THREAT: { displayTitle: 'TRIPLE OR LOSE', pointsEffect: 'WIN: 3X POINTS', penaltyEffect: 'MISS: -130%', stealPolicy: 'NO STEAL' },
-  SABOTAGE: { displayTitle: 'SAFE BET', pointsEffect: 'WIN: +50%', penaltyEffect: 'MISS: NO PENALTY', stealPolicy: 'NO STEAL' },
-  SAFE_BET: { displayTitle: 'SAFE BET', pointsEffect: 'WIN: +50%', penaltyEffect: 'MISS: NO PENALTY', stealPolicy: 'NO STEAL' },
-  MEGA_STEAL: { displayTitle: 'LOCKOUT', pointsEffect: 'STANDARD AWARD', penaltyEffect: 'MISS: NO EXTRA PENALTY', stealPolicy: 'NO STEAL' },
-  LOCKOUT: { displayTitle: 'LOCKOUT', pointsEffect: 'STANDARD AWARD', penaltyEffect: 'MISS: NO EXTRA PENALTY', stealPolicy: 'NO STEAL' },
-  SUPER_SAVE: { displayTitle: 'SUPER SAVE', pointsEffect: 'WIN: 3X POINTS', penaltyEffect: 'MISS: NO BONUS', stealPolicy: 'NO STEAL' },
-  GOLDEN_GAMBLE: { displayTitle: 'GOLDEN GAMBLE', pointsEffect: 'WIN: 225%', penaltyEffect: 'MISS: -50%', stealPolicy: 'NO STEAL' },
-  SHIELD_BOOST: { displayTitle: 'SHIELD BOOST', pointsEffect: 'WIN: 2X POINTS', penaltyEffect: 'MISS: NO PENALTY', stealPolicy: 'NO STEAL' },
-  FINAL_SHOT: { displayTitle: 'FINAL SHOT', pointsEffect: 'WIN: 3X POINTS', penaltyEffect: 'MISS: -TILE VALUE', stealPolicy: 'NO STEAL' },
-  DOUBLE_WINS_OR_NOTHING: { displayTitle: 'DOUBLE WINS OR NOTHING', pointsEffect: 'ENDGAME SCORE MOVE', stealPolicy: 'NO STEAL' },
-  TRIPLE_WINS_OR_NOTHING: { displayTitle: 'TRIPLE WINS OR NOTHING', pointsEffect: 'ENDGAME SCORE MOVE', stealPolicy: 'NO STEAL' },
-};
-
 const getQuestionModalSpecialMoveModel = (moveType?: SpecialMoveType): QuestionModalSpecialMoveModel | null => {
   if (!moveType) return null;
-  const details = SPECIAL_MOVE_MODAL_DETAILS[moveType];
+  const details = getSpecialMoveCatalogEntry(moveType);
   if (!details) {
     return {
       moveType,
@@ -111,12 +97,17 @@ const getQuestionModalSpecialMoveModel = (moveType?: SpecialMoveType): QuestionM
       stealPolicy: isStealBlockedForMove(moveType) ? 'NO STEAL' : 'STEAL ALLOWED',
     };
   }
-  return { moveType, ...details };
+  return {
+    moveType,
+    displayTitle: details.displayTitle,
+    pointsEffect: details.pointsEffect,
+    penaltyEffect: details.penaltyEffect,
+    stealPolicy: details.stealPolicy,
+  };
 };
 
 const getSpecialMoveDisplayName = (moveType?: SpecialMoveType): string | undefined => {
-  if (!moveType) return undefined;
-  return getQuestionModalSpecialMoveModel(moveType)?.displayTitle || moveType.replace(/_/g, ' ');
+  return getSpecialMoveDisplayTitle(moveType);
 };
 
 const App: React.FC = () => {
@@ -267,10 +258,16 @@ const App: React.FC = () => {
     }
     if (activeTileMoveTypeRef.current) return;
     const deployment = specialMovesOverlay?.deploymentsByTileId?.[activeTileId];
-    if (deployment?.status === 'ARMED') {
-      setActiveTileMoveType(deployment.moveType as SpecialMoveType | undefined);
+    const activeQuestionFromState = gameState.categories
+      .flatMap((category) => category.questions)
+      .find((question) => question.id === activeTileId);
+    const resolvedMoveType = (deployment?.status === 'ARMED'
+      ? (deployment.moveType as SpecialMoveType | undefined)
+      : undefined) || activeQuestionFromState?.specialMoveType;
+    if (resolvedMoveType) {
+      setActiveTileMoveType(resolvedMoveType);
     }
-  }, [gameState.activeQuestionId, specialMovesOverlay]);
+  }, [gameState.activeQuestionId, gameState.categories, specialMovesOverlay]);
 
   // Tracks remainingSeconds via ref so stopQuestionTimer can log it
   // without capturing questionTimer.remainingSeconds as a dep (which
@@ -1380,14 +1377,14 @@ const App: React.FC = () => {
 
     // ── BUG FIX: 1-player / 2-player quick game modes must activate the
     // Session Game Timer, NOT the Question Countdown Timer. ────────────────
-    const templateQuickGameMode = template.config?.quickGameMode;
-    const templateQuickTimerMode = template.config?.quickTimerMode;
+    const templateQuickGameMode = normalizedTemplateConfig.quickGameMode;
+    const templateQuickTimerMode = normalizedTemplateConfig.quickTimerMode;
 
     if (templateQuickGameMode && templateQuickTimerMode === 'timed') {
       // Quick game + timed → enable Session Game Timer with configured duration
       const sessionDurationSeconds = resolveSessionTimerDuration(
-        template.config?.quickTimerDurationSeconds,
-        10,
+        normalizedTemplateConfig.quickTimerDurationSeconds,
+        timerDurationFromTemplate,
       );
       handleToggleSessionTimerEnabled(true);
       setSessionTimer({
@@ -1411,7 +1408,7 @@ const App: React.FC = () => {
       handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
     }
 
-    setActiveQuickGameMode(template.config?.quickGameMode || null);
+    setActiveQuickGameMode(normalizedTemplateConfig.quickGameMode || null);
 
     const newState: GameState = {
       ...gameState,
@@ -1494,7 +1491,10 @@ const App: React.FC = () => {
     soundService.playSound?.('tileOpen');
 
     const deployment = specialMovesOverlayRef.current?.deploymentsByTileId?.[qId];
-    setActiveTileMoveType(deployment?.status === 'ARMED' ? (deployment.moveType as SpecialMoveType | undefined) : undefined);
+    const selectedTileMoveType = (deployment?.status === 'ARMED'
+      ? (deployment.moveType as SpecialMoveType | undefined)
+      : undefined) || q?.specialMoveType;
+    setActiveTileMoveType(selectedTileMoveType);
 
     if (questionTimerEnabled) {
       const selectedDuration = resolveQuestionCountdownDuration(questionTimerDurationRef.current);
@@ -1540,7 +1540,10 @@ const App: React.FC = () => {
     resolvingQuestionIdRef.current = activeQ.id;
 
     const basePoints = (activeQ.isDoubleOrNothing ? activeQ.points * 2 : activeQ.points);
-    const tileMoveType = activeTileMoveTypeRef.current || specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType;
+    const overlayMoveType = specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.status === 'ARMED'
+      ? specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType
+      : undefined;
+    const tileMoveType = activeTileMoveTypeRef.current || overlayMoveType || activeQ.specialMoveType;
     const stealBlocked = isStealBlockedForMove(tileMoveType);
     const resolvesAsFail = action === 'return' && doesReturnResolveAsFail(tileMoveType);
 
@@ -1572,7 +1575,8 @@ const App: React.FC = () => {
             ...q,
             isRevealed: false,
             isAnswered: action === 'award' || action === 'steal' || resolvesAsFail,
-            isVoided: action === 'void' || resolvesAsFail
+            isVoided: action === 'void' || resolvesAsFail,
+            specialMoveType: action === 'return' && !resolvesAsFail ? q.specialMoveType : undefined,
           };
         })
       };
