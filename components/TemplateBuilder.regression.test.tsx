@@ -82,6 +82,7 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(screen.getByText(/New Template Configuration/i)).toBeInTheDocument();
       expect(screen.getByText(/Start Manual Studio Building/i)).toBeInTheDocument();
       expect(screen.getByTestId('ai-config-health')).toBeInTheDocument();
+      expect(screen.getByTestId('template-session-timer-section')).toBeInTheDocument();
     });
 
     it('enforces title requirement before building', () => {
@@ -120,14 +121,30 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringContaining('At least 1'));
     });
 
-    it('quick setup mode applies 1-player and 2-player roster presets', () => {
+    it('quick setup mode applies 1-player and 2-player defaults and stays editable', () => {
       render(<TemplateBuilder {...defaultProps} />);
 
       fireEvent.click(screen.getByRole('button', { name: '1 Player' }));
       expect(screen.getAllByPlaceholderText('ENTER NAME')).toHaveLength(1);
+      expect(screen.getByTestId('template-row-count')).toHaveTextContent('10');
+      expect(screen.getByTestId('template-cat-count')).toHaveTextContent('1');
+      expect(screen.getByTestId('template-session-timer-duration')).toHaveTextContent('10');
+      expect(screen.getByRole('button', { name: '10' })).toHaveClass('bg-gold-600');
+      expect(screen.getByRole('button', { name: 'Timed' })).toHaveClass('bg-purple-600');
 
       fireEvent.click(screen.getByRole('button', { name: '2 Players' }));
       expect(screen.getAllByPlaceholderText('ENTER NAME')).toHaveLength(2);
+      expect(screen.getByTestId('template-row-count')).toHaveTextContent('10');
+      expect(screen.getByTestId('template-cat-count')).toHaveTextContent('2');
+
+      fireEvent.click(screen.getByRole('button', { name: '7s' }));
+      expect(screen.getByTestId('template-session-timer-duration')).toHaveTextContent('7');
+
+      const categoryCount = screen.getByTestId('template-cat-count');
+      const categoryControl = categoryCount.parentElement as HTMLElement;
+      const categoryDecrementButton = categoryControl.querySelectorAll('button')[0] as HTMLButtonElement;
+      fireEvent.click(categoryDecrementButton);
+      expect(screen.getByTestId('template-cat-count')).toHaveTextContent('1');
     });
   });
 
@@ -177,7 +194,7 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
         expect(dataService.createTemplate).toHaveBeenCalledWith(
           'show-123',
           'New Template Test',
-          expect.objectContaining({ rowCount: 5, categoryCount: 4, quickGameMode: 'two_player', quickTimerMode: 'timed' }),
+          expect.objectContaining({ rowCount: 10, categoryCount: 2, pointScale: 10, quickGameMode: 'two_player', quickTimerMode: 'timed', quickTimerDurationSeconds: 10 }),
           expect.any(Array)
         );
         expect(mockAddToast).toHaveBeenCalledWith('success', 'Template saved successfully.');

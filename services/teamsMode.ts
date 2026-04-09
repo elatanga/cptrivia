@@ -157,6 +157,8 @@ export const buildContestantsFromTeams = (teams: Team[]): Player[] => {
     wildcardsUsed: 0,
     wildcardActive: false,
     stealsCount: 0,
+    questionsAnswered: 0,
+    lostOrVoidedCount: 0,
     specialMovesUsedCount: 0,
     specialMovesUsedNames: [],
   }));

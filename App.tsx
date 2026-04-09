@@ -14,7 +14,7 @@ import { ConfirmationModal } from './components/ConfirmationModal';
 import { EndGameCelebrationModal } from './components/EndGameCelebrationModal';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
-import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType } from './types';
+import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType, Team } from './types';
 import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from './types';
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
@@ -66,6 +66,14 @@ const resolveTemplateTimerEnabled = (
   if (quickTimerMode === 'timed') return true;
   if (quickTimerMode === 'untimed') return false;
   return currentEnabled;
+};
+
+const resolveTemplateTimerDurationSeconds = (
+  template: GameTemplate,
+  fallback: number,
+) => {
+  const raw = Number(template.config?.quickTimerDurationSeconds);
+  return resolveQuestionCountdownDuration(Number.isFinite(raw) ? raw : fallback);
 };
 
 type QuestionModalSpecialMoveModel = {
@@ -132,6 +140,7 @@ const App: React.FC = () => {
   const [showTimerExpiredPrompt, setShowTimerExpiredPrompt] = useState(false);
   const [isEndGameCelebrationOpen, setIsEndGameCelebrationOpen] = useState(false);
   const [hasShownEndGameCelebration, setHasShownEndGameCelebration] = useState(false);
+  const [activeQuickGameMode, setActiveQuickGameMode] = useState<'single_player' | 'two_player' | null>(null);
 
   // --- ADMIN NOTIFICATIONS ---
   const [pendingRequests, setPendingRequests] = useState(0);
@@ -203,7 +212,14 @@ const App: React.FC = () => {
     specialMovesOverlayRef.current = specialMovesOverlay;
   }, [specialMovesOverlay]);
   const isBoardComplete = useMemo(() => isTriviaBoardComplete(gameState.categories), [gameState.categories]);
-  const celebrationResult = useMemo(() => deriveEndGameCelebrationResult(gameState.players), [gameState.players]);
+  const celebrationResult = useMemo(
+    () => deriveEndGameCelebrationResult(gameState.players, {
+      playMode: gameState.playMode,
+      teams: gameState.teams || [],
+      singlePlayerQuickMode: activeQuickGameMode === 'single_player',
+    }),
+    [gameState.players, gameState.playMode, gameState.teams, activeQuickGameMode]
+  );
   const questionTimerDurationRef = useRef(questionTimerDurationSeconds);
   const questionTimerEnabledRef = useRef(questionTimerEnabled);
   const sessionTimerEnabledRef = useRef(sessionTimerEnabled);
@@ -271,6 +287,24 @@ const App: React.FC = () => {
     if (hasShownEndGameCelebration) return;
     if (gameState.activeQuestionId || gameState.activeCategoryId) return;
     if (showTimerExpiredPrompt || showEndGameConfirm) return;
+
+    setQuestionTimer((prev) => ({
+      ...prev,
+      isRunning: false,
+      isStopped: true,
+      remainingSeconds: 0,
+      startedAt: null,
+      endsAt: null,
+      activeQuestionId: null,
+    }));
+    setSessionTimer((prev) => ({
+      ...prev,
+      isRunning: false,
+      isStopped: true,
+      remainingSeconds: 0,
+      startedAt: null,
+      endsAt: null,
+    }));
 
     setIsEndGameCelebrationOpen(true);
     setHasShownEndGameCelebration(true);
@@ -412,6 +446,7 @@ const App: React.FC = () => {
       endsAt: null,
       selectedPreset: null,
     });
+    setActiveQuickGameMode(null);
     setViewMode('BOARD');
   };
 
@@ -968,8 +1003,21 @@ const App: React.FC = () => {
            parsed.players = (parsed.players || []).map((p: Player) => ({
              ...p,
              stealsCount: Number(p?.stealsCount || 0),
+             questionsAnswered: Number(p?.questionsAnswered || 0),
+             lostOrVoidedCount: Number(p?.lostOrVoidedCount || 0),
              specialMovesUsedCount: Number(p?.specialMovesUsedCount || 0),
              specialMovesUsedNames: Array.isArray(p?.specialMovesUsedNames) ? p.specialMovesUsedNames : [],
+           }));
+           parsed.teams = (parsed.teams || []).map((team: Team) => ({
+             ...team,
+             members: (team.members || []).map((member) => ({
+               ...member,
+               stealsCount: Number(member?.stealsCount || 0),
+               questionsAnswered: Number(member?.questionsAnswered || 0),
+               lostOrVoidedCount: Number(member?.lostOrVoidedCount || 0),
+               specialMovesUsedCount: Number(member?.specialMovesUsedCount || 0),
+               specialMovesUsedNames: Array.isArray(member?.specialMovesUsedNames) ? member.specialMovesUsedNames : [],
+             })),
            }));
            const normalized = normalizeGameStateForTeams(parsed as GameState);
            if (normalized.playMode === 'TEAMS' && normalized.players.length === 0 && (normalized.teams || []).length > 0) {
@@ -1077,7 +1125,7 @@ const App: React.FC = () => {
   const handleLoginSuccess = (newSession: Session) => {
     setSession({ id: newSession.id, username: newSession.username, role: newSession.role });
     localStorage.setItem('cruzpham_active_session_id', newSession.id);
-    addToast('success', 'Welcome to CruzPham Trivia Studios!');
+    addToast('success', 'Welcome to CP Jeopardy Studios!');
   };
 
   const handleLogout = () => {
@@ -1092,6 +1140,7 @@ const App: React.FC = () => {
       setViewMode('BOARD');
       setIsEndGameCelebrationOpen(false);
       setHasShownEndGameCelebration(false);
+      setActiveQuickGameMode(null);
     }
   };
 
@@ -1136,6 +1185,7 @@ const App: React.FC = () => {
     const isTeamsMode = normalizedTemplateConfig.playMode === 'TEAMS' && (normalizedTemplateConfig.teams || []).length > 0;
     const targetPlayerCount = resolveTemplatePlayerCount(template);
     const timerEnabledFromTemplate = resolveTemplateTimerEnabled(template, questionTimerEnabled);
+    const timerDurationFromTemplate = resolveTemplateTimerDurationSeconds(template, questionTimerDurationSeconds);
 
     const initTeams = isTeamsMode
       ? (normalizedTemplateConfig.teams || []).map((team) => ({
@@ -1145,6 +1195,11 @@ const App: React.FC = () => {
             ...member,
             score: 0,
             orderIndex: Number.isFinite(Number(member.orderIndex)) ? Number(member.orderIndex) : index,
+            stealsCount: 0,
+            questionsAnswered: 0,
+            lostOrVoidedCount: 0,
+            specialMovesUsedCount: 0,
+            specialMovesUsedNames: [],
           })),
           activeMemberId: team.members?.[0]?.id,
         }))
@@ -1153,12 +1208,12 @@ const App: React.FC = () => {
     const initPlayers: Player[] = isTeamsMode
       ? buildContestantsFromTeams(initTeams)
       : (template.config.playerNames || []).slice(0, Math.max(0, targetPlayerCount)).map(name => ({
-          id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: []
+          id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, questionsAnswered: 0, lostOrVoidedCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: []
         }));
 
     if (!isTeamsMode && initPlayers.length === 0 && targetPlayerCount > 0) {
       for (let i = 0; i < targetPlayerCount; i++) {
-        initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] });
+        initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, questionsAnswered: 0, lostOrVoidedCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] });
       }
     }
 
@@ -1166,11 +1221,14 @@ const App: React.FC = () => {
       templateId: template.id,
       quickGameMode: template.config?.quickGameMode || null,
       quickTimerMode: template.config?.quickTimerMode || null,
+      quickTimerDurationSeconds: timerDurationFromTemplate,
       playerCount: initPlayers.length,
       timerEnabled: timerEnabledFromTemplate,
     });
 
+    handleSetQuestionTimerDuration(timerDurationFromTemplate);
     handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
+    setActiveQuickGameMode(template.config?.quickGameMode || null);
 
     const newState: GameState = {
       ...gameState,
@@ -1242,6 +1300,7 @@ const App: React.FC = () => {
     setShowEndGameConfirm(false);
     setIsEndGameCelebrationOpen(false);
     setHasShownEndGameCelebration(false);
+    setActiveQuickGameMode(null);
     addToast('info', 'Game Session Ended');
   };
 
@@ -1340,12 +1399,30 @@ const App: React.FC = () => {
     let awardedPlayerName = '';
     let stealerPlayerName = '';
     const attemptedPlayer = current.players.find(p => p.id === current.selectedPlayerId);
+    const activePlayMode = current.playMode || DEFAULT_PLAY_MODE;
+    const activeTeamStyle = current.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE;
+
+    const awardOrStealTargetId = (action === 'award' || action === 'steal') ? targetPlayerId : null;
+    const failOrVoidTargetId = (resolvesAsFail || action === 'void') ? current.selectedPlayerId : null;
+    const statTargetId = awardOrStealTargetId || failOrVoidTargetId;
+
+    const trackedTeamForStats = activePlayMode === 'TEAMS'
+      ? (current.teams || []).find((team) => team.id === statTargetId)
+      : undefined;
+    const trackedTeamMemberId = activePlayMode === 'TEAMS' && activeTeamStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+      ? trackedTeamForStats?.activeMemberId
+      : undefined;
+    const trackedTeamMemberName = trackedTeamMemberId
+      ? trackedTeamForStats?.members?.find((member) => member.id === trackedTeamMemberId)?.name
+      : undefined;
 
     if ((action === 'award' || action === 'steal') && targetPlayerId) {
       newPlayers = newPlayers.map(p => {
         if (p.id === targetPlayerId) {
           const isSteal = action === 'steal';
           const newStealsCount = isSteal ? (p.stealsCount || 0) + 1 : (p.stealsCount || 0);
+          const nextQuestionsAnswered = (p.questionsAnswered || 0) + 1;
+          const nextLostOrVoidedCount = p.lostOrVoidedCount || 0;
           const nextSpecialMovesUsedCount = shouldTrackSpecialMoveUsage ? (p.specialMovesUsedCount || 0) + 1 : (p.specialMovesUsedCount || 0);
           const nextSpecialMovesUsedNames = shouldTrackSpecialMoveUsage && specialMoveName
             ? [...(Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []), specialMoveName]
@@ -1356,22 +1433,28 @@ const App: React.FC = () => {
             ...p,
             score: p.score + points,
             stealsCount: newStealsCount,
+            questionsAnswered: nextQuestionsAnswered,
+            lostOrVoidedCount: nextLostOrVoidedCount,
             specialMovesUsedCount: nextSpecialMovesUsedCount,
             specialMovesUsedNames: nextSpecialMovesUsedNames,
           };
         }
         return p;
       });
-    } else if (resolvesAsFail && current.selectedPlayerId) {
+    } else if ((resolvesAsFail || action === 'void') && current.selectedPlayerId) {
       newPlayers = newPlayers.map((p) => {
         if (p.id !== current.selectedPlayerId) return p;
         const nextSpecialMovesUsedCount = shouldTrackSpecialMoveUsage ? (p.specialMovesUsedCount || 0) + 1 : (p.specialMovesUsedCount || 0);
         const nextSpecialMovesUsedNames = shouldTrackSpecialMoveUsage && specialMoveName
           ? [...(Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []), specialMoveName]
           : (Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []);
+        const nextQuestionsAnswered = resolvesAsFail ? (p.questionsAnswered || 0) + 1 : (p.questionsAnswered || 0);
+        const nextLostOrVoidedCount = (p.lostOrVoidedCount || 0) + 1;
         return {
           ...p,
           score: p.score + points,
+          questionsAnswered: nextQuestionsAnswered,
+          lostOrVoidedCount: nextLostOrVoidedCount,
           specialMovesUsedCount: nextSpecialMovesUsedCount,
           specialMovesUsedNames: nextSpecialMovesUsedNames,
         };
@@ -1424,10 +1507,35 @@ const App: React.FC = () => {
     }
 
     let newTeams = [...(current.teams || [])];
-    const activePlayMode = current.playMode || DEFAULT_PLAY_MODE;
-    const activeTeamStyle = current.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE;
     const scoringTargetId = (action === 'award' || action === 'steal') ? targetPlayerId : (resolvesAsFail ? current.selectedPlayerId : null);
     const scoringDelta = (action === 'award' || action === 'steal' || resolvesAsFail) ? points : 0;
+
+    if (activePlayMode === 'TEAMS' && activeTeamStyle === 'TEAM_MEMBERS_TAKE_TURNS' && trackedTeamForStats?.id && trackedTeamMemberId) {
+      newTeams = newTeams.map((team) => {
+        if (team.id !== trackedTeamForStats.id) return team;
+        return {
+          ...team,
+          members: (team.members || []).map((member) => {
+            if (member.id !== trackedTeamMemberId) return member;
+            const isSteal = action === 'steal';
+            const questionAnsweredIncrement = (action === 'award' || action === 'steal' || resolvesAsFail) ? 1 : 0;
+            const lostOrVoidedIncrement = (resolvesAsFail || action === 'void') ? 1 : 0;
+            const specialMoveIncrement = shouldTrackSpecialMoveUsage ? 1 : 0;
+            const nextNames = specialMoveIncrement && specialMoveName
+              ? [...(Array.isArray(member.specialMovesUsedNames) ? member.specialMovesUsedNames : []), specialMoveName]
+              : (Array.isArray(member.specialMovesUsedNames) ? member.specialMovesUsedNames : []);
+            return {
+              ...member,
+              stealsCount: (member.stealsCount || 0) + (isSteal ? 1 : 0),
+              questionsAnswered: (member.questionsAnswered || 0) + questionAnsweredIncrement,
+              lostOrVoidedCount: (member.lostOrVoidedCount || 0) + lostOrVoidedIncrement,
+              specialMovesUsedCount: (member.specialMovesUsedCount || 0) + specialMoveIncrement,
+              specialMovesUsedNames: nextNames,
+            };
+          })
+        };
+      });
+    }
 
     if (activePlayMode === 'TEAMS' && scoringTargetId && scoringDelta !== 0) {
       newTeams = applyScoreDeltaByMode(newTeams, scoringTargetId, scoringDelta, activeTeamStyle);
@@ -1464,6 +1572,8 @@ const App: React.FC = () => {
       rowIndex: qIdx,
       specialMoveType: tileMoveType,
       specialMoveName,
+      teamMemberId: trackedTeamMemberId,
+      teamMemberName: trackedTeamMemberName,
     };
     if (action === 'award' && targetPlayerId) {
        const p = current.players.find(pl => pl.id === targetPlayerId);
@@ -1558,6 +1668,8 @@ const App: React.FC = () => {
       wildcardsUsed: 0,
       wildcardActive: false,
       stealsCount: 0,
+      questionsAnswered: 0,
+      lostOrVoidedCount: 0,
       specialMovesUsedCount: 0,
       specialMovesUsedNames: [],
     };
