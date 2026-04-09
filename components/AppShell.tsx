@@ -115,8 +115,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children, activeShowTitle, u
        {/* HEADER: Sticky on Mobile, Fixed on Desktop */}
        <header className="sticky top-0 lg:static flex-none h-14 md:h-16 z-40 bg-black/95 backdrop-blur-sm lg:bg-gradient-to-b lg:from-black lg:via-black/95 lg:to-transparent px-4 md:px-6 flex items-center justify-between border-b border-gold-900/30">
            {/* Left: Branding */}
-           <div data-testid="brand-lockup" className="flex items-center gap-2.5 min-w-0">
-             <div className="w-5 md:w-6 flex justify-center">
+           <div data-testid="brand-lockup" className="flex items-center gap-1.5 md:gap-2 min-w-0">
+             <div className="w-4 md:w-5 flex justify-center">
                <ChampagneBottleIcon className="w-4 h-4 md:w-5 md:h-5 drop-shadow-[0_0_10px_rgba(255,215,0,0.35)]" />
              </div>
              <div data-testid="brand-title-stack" className="flex flex-col items-center text-center leading-none cursor-pointer hover:opacity-85 transition-opacity" onClick={() => soundService.playClick()}>
@@ -127,7 +127,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, activeShowTitle, u
                  CruzPham Jeopardy Studios
                </p>
              </div>
-             <div className="w-5 md:w-6 flex justify-center">
+             <div className="w-4 md:w-5 flex justify-center">
                <ChampagneFlute className="w-4 h-4 md:w-5 md:h-5 drop-shadow-[0_0_10px_rgba(255,215,0,0.35)]" />
              </div>
            </div>
