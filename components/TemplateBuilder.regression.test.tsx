@@ -62,7 +62,13 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
   const mockOnClose = vi.fn();
   const mockOnSave = vi.fn();
   const mockAddToast = vi.fn();
-  
+
+  const setViewport = (width: number, height = 800) => {
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: width });
+    Object.defineProperty(window, 'innerHeight', { writable: true, configurable: true, value: height });
+    window.dispatchEvent(new Event('resize'));
+  };
+
   const defaultProps = {
     showId: 'show-123',
     onClose: mockOnClose,
@@ -166,6 +172,47 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Individuals' }));
       expect(teamsButton).not.toBeDisabled();
+    });
+
+    it('keeps Individuals + Quick Setup + Session Timer controls rendered in compact width', () => {
+      setViewport(375, 740);
+      render(<TemplateBuilder {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: '1 Player' }));
+
+      expect(screen.getByRole('button', { name: 'Individuals' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '1 Player' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '2 Players' })).toBeInTheDocument();
+      expect(screen.getByTestId('template-session-timer-section')).toBeInTheDocument();
+      expect(screen.getByTestId('custom-session-timer-input')).toBeInTheDocument();
+      expect(screen.getByTestId('custom-session-timer-apply')).toBeInTheDocument();
+    });
+
+    it('keeps Teams configuration controls rendered with multiple teams and members', () => {
+      setViewport(768, 900);
+      render(<TemplateBuilder {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
+      fireEvent.click(screen.getByRole('button', { name: /ADD TEAM/i }));
+      fireEvent.click(screen.getByRole('button', { name: /ADD TEAM/i }));
+      fireEvent.click(screen.getAllByText('+ MEMBER')[0]);
+      fireEvent.click(screen.getAllByText('+ MEMBER')[1]);
+
+      expect(screen.getByText(/Teams Setup/i)).toBeInTheDocument();
+      expect(screen.getAllByDisplayValue(/TEAM \d/i).length).toBeGreaterThanOrEqual(2);
+      expect(screen.getAllByDisplayValue(/MEMBER \d/i).length).toBeGreaterThanOrEqual(4);
+      expect(screen.getByRole('button', { name: /Team plays as one/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Team members take turns/i })).toBeInTheDocument();
+    });
+
+    it('keeps AI generation controls rendered and accessible in config layout', () => {
+      setViewport(1280, 900);
+      render(<TemplateBuilder {...defaultProps} />);
+
+      expect(screen.getByText(/AI Magic Studio/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/e.g. 90s Pop Culture/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Generate Complete Board/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Start Manual Studio Building/i })).toBeInTheDocument();
     });
   });
 
