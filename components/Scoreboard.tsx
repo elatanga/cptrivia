@@ -11,6 +11,8 @@ interface Props {
   teams?: Team[];
   playMode?: PlayMode;
   teamPlayStyle?: TeamPlayStyle;
+  sessionTimerActive?: boolean;
+  sessionTimeRemaining?: number;
   selectedPlayerId: string | null;
   onAddPlayer: (name: string) => void;
   onUpdateScore: (id: string, delta: number) => void;
@@ -24,6 +26,8 @@ export const Scoreboard: React.FC<Props> = ({
   teams = [],
   playMode = 'INDIVIDUALS',
   teamPlayStyle = 'TEAM_PLAYS_AS_ONE',
+  sessionTimerActive = false,
+  sessionTimeRemaining,
   selectedPlayerId,
   onAddPlayer,
   onUpdateScore,
@@ -81,6 +85,8 @@ export const Scoreboard: React.FC<Props> = ({
     '--scoreboard-panel-width': layoutTokens.panelWidthCss,
   } as React.CSSProperties;
 
+  const formattedSessionTime = `${Math.floor((sessionTimeRemaining || 0) / 60)}:${String((sessionTimeRemaining || 0) % 60).padStart(2, '0')}`;
+
   return (
     <div 
       className="h-auto lg:h-full grid grid-rows-[auto_1fr_auto] border-t lg:border-t-0 lg:border-l border-gold-900/30 bg-black/95 w-full lg:w-[var(--scoreboard-panel-width)] shadow-2xl z-20 font-sans font-bold select-none transition-all duration-300 overflow-hidden"
@@ -88,16 +94,30 @@ export const Scoreboard: React.FC<Props> = ({
       data-testid="scoreboard-root"
       data-layout={is2Col ? "grid-2col" : "list-1col"}
     >
-      <div className="flex-none p-3 border-b border-gold-900/30 bg-zinc-900/50 flex items-center justify-between z-10">
-        <h3 className="text-gold-500 tracking-widest text-[10px] md:text-xs uppercase font-black">
-          {playMode === 'TEAMS' ? `TEAMS (${displayCount})` : `CONTESTANTS (${displayCount})`}
-        </h3>
-        <button 
-          onClick={() => { soundService.playClick(); setIsCondensed(!isCondensed); }}
-          className="lg:hidden text-zinc-500 hover:text-gold-500 p-1 rounded hover:bg-zinc-800 transition-colors"
-        >
-          {isCondensed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
-        </button>
+      <div className="flex-none p-3 border-b border-gold-900/30 bg-zinc-900/50 z-10">
+        {sessionTimerActive && sessionTimeRemaining !== undefined && (
+          <div
+            data-testid="scoreboard-session-timer"
+            className="mb-3 rounded-xl border border-red-500/40 bg-black/50 px-3 py-2 text-center shadow-[0_0_20px_rgba(239,68,68,0.22)]"
+          >
+            <div className="text-[9px] md:text-[10px] uppercase tracking-[0.2em] font-black text-zinc-400">Session Timer</div>
+            <div className="text-2xl md:text-3xl font-black font-mono leading-none tabular-nums text-red-400 drop-shadow-[0_0_10px_rgba(248,113,113,0.45)]">
+              {formattedSessionTime}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <h3 className="text-gold-500 tracking-widest text-[10px] md:text-xs uppercase font-black">
+            {playMode === 'TEAMS' ? `TEAMS (${displayCount})` : `CONTESTANTS (${displayCount})`}
+          </h3>
+          <button
+            onClick={() => { soundService.playClick(); setIsCondensed(!isCondensed); }}
+            className="lg:hidden text-zinc-500 hover:text-gold-500 p-1 rounded hover:bg-zinc-800 transition-colors"
+          >
+            {isCondensed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
+          </button>
+        </div>
       </div>
 
       <div className="relative flex-1 p-2 md:p-3 overflow-hidden min-h-0">

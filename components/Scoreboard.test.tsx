@@ -32,6 +32,11 @@ const mockViewSettings: BoardViewSettings = {
   playerNameScale: 'M',
   scoreboardScale: 1.0,
   tilePaddingScale: 1.0,
+  questionModalSize: 'Medium',
+  questionMaxWidthPercent: 80,
+  questionFontScale: 1,
+  questionContentPadding: 12,
+  multipleChoiceColumns: 'auto',
   updatedAt: new Date().toISOString(),
 };
 
@@ -136,5 +141,63 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
         viewport: expect.any(Object)
       })
     );
+  });
+
+  it('E) SESSION TIMER: Renders at top before contestants list', () => {
+    render(
+      <Scoreboard
+        players={generatePlayers(4)}
+        sessionTimerActive={true}
+        sessionTimeRemaining={95}
+        selectedPlayerId="p0"
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    const timer = screen.getByTestId('scoreboard-session-timer');
+    const contestants = screen.getByText(/CONTESTANTS/i);
+    expect(timer).toBeInTheDocument();
+    expect(timer).toHaveTextContent('1:35');
+    const timerTop = timer.getBoundingClientRect().top;
+    const contestantsTop = contestants.getBoundingClientRect().top;
+    expect(timerTop).toBeLessThanOrEqual(contestantsTop);
+  });
+
+  it('F) SESSION TIMER: Reflects live countdown updates from shared state props', () => {
+    const { rerender } = render(
+      <Scoreboard
+        players={generatePlayers(4)}
+        sessionTimerActive={true}
+        sessionTimeRemaining={95}
+        selectedPlayerId="p0"
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    expect(screen.getByTestId('scoreboard-session-timer')).toHaveTextContent('1:35');
+
+    rerender(
+      <Scoreboard
+        players={generatePlayers(4)}
+        sessionTimerActive={true}
+        sessionTimeRemaining={90}
+        selectedPlayerId="p0"
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    expect(screen.getByTestId('scoreboard-session-timer')).toHaveTextContent('1:30');
   });
 });
