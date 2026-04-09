@@ -19,6 +19,7 @@ import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from './
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
 import { normalizePlayerName } from './services/utils';
+import { resolveSessionTimerDuration } from './services/sessionTimerUtils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
 import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specialMoves/logic';
@@ -957,6 +958,36 @@ const App: React.FC = () => {
     });
   };
 
+  /**
+   * Start the Session Game Timer with an explicit number of seconds.
+   * Used by quick-game presets and custom manual duration entries.
+   * The Director Panel calls this when the "Quick Start" button is pressed.
+   */
+  const handleStartSessionTimerWithDuration = useCallback((seconds: number) => {
+    const safeSeconds = Math.max(1, Math.floor(seconds));
+    if (!sessionTimerEnabledRef.current) {
+      logger.info('session_timer_start_blocked_disabled', { seconds: safeSeconds });
+      addToast('info', 'Enable Session Game Timer first.');
+      return;
+    }
+    const now = Date.now();
+    const newTimer: SessionGameTimer = {
+      durationSeconds: safeSeconds,
+      remainingSeconds: safeSeconds,
+      isRunning: true,
+      isStopped: false,
+      startedAt: now,
+      endsAt: now + safeSeconds * 1000,
+      selectedPreset: null,
+    };
+    setSessionTimer(newTimer);
+    logger.info('session_timer_start_custom', { durationSeconds: safeSeconds });
+    emitGameEvent('SESSION_TIMER_START', {
+      actor: { role: 'director' },
+      context: { note: `Game timer started: ${safeSeconds}s (custom)` },
+    });
+  }, [emitGameEvent]);
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('view') === 'director') {
@@ -1226,8 +1257,39 @@ const App: React.FC = () => {
       timerEnabled: timerEnabledFromTemplate,
     });
 
-    handleSetQuestionTimerDuration(timerDurationFromTemplate);
-    handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
+    // ── BUG FIX: 1-player / 2-player quick game modes must activate the
+    // Session Game Timer, NOT the Question Countdown Timer. ────────────────
+    const templateQuickGameMode = template.config?.quickGameMode;
+    const templateQuickTimerMode = template.config?.quickTimerMode;
+
+    if (templateQuickGameMode && templateQuickTimerMode === 'timed') {
+      // Quick game + timed → enable Session Game Timer with configured duration
+      const sessionDurationSeconds = resolveSessionTimerDuration(
+        template.config?.quickTimerDurationSeconds,
+        10,
+      );
+      handleToggleSessionTimerEnabled(true);
+      setSessionTimer({
+        durationSeconds: sessionDurationSeconds,
+        remainingSeconds: 0, // Director explicitly starts it from the Director Panel
+        isRunning: false,
+        isStopped: true,
+        startedAt: null,
+        endsAt: null,
+        selectedPreset: null,
+      });
+      // Ensure Question Countdown Timer is NOT auto-enabled by this quick setup
+      handleToggleQuestionTimerEnabled(false);
+    } else if (templateQuickGameMode && templateQuickTimerMode === 'untimed') {
+      // Quick game + untimed → no timer active
+      handleToggleSessionTimerEnabled(false);
+      handleToggleQuestionTimerEnabled(false);
+    } else {
+      // Standard (non-quick-game) templates: preserve existing question-timer behavior
+      handleSetQuestionTimerDuration(timerDurationFromTemplate);
+      handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
+    }
+
     setActiveQuickGameMode(template.config?.quickGameMode || null);
 
     const newState: GameState = {
