@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { Save, X, Wand2, RefreshCw, Loader2, Download, Upload, Plus, Minus, Trash2, HelpCircle, AlertCircle, Maximize2, Minimize2, RotateCcw, Sparkles, Hash, LogOut, Edit } from 'lucide-react';
 import { GameTemplate, Category, Question, Difficulty, AppError, PlayMode, Team, TeamPlayStyle } from '../types';
@@ -71,7 +70,11 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
   // Config & AI State
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiDifficulty, setAiDifficulty] = useState<Difficulty>('mixed');
-  const [quickGameMode, setQuickGameMode] = useState<QuickGameMode>(initialTemplate?.config?.quickGameMode ?? null);
+  const [quickGameMode, setQuickGameMode] = useState<QuickGameMode>(
+    initialTemplate?.config?.playMode === 'TEAMS'
+      ? null
+      : (initialTemplate?.config?.quickGameMode ?? null)
+  );
   const [quickTimerMode, setQuickTimerMode] = useState<QuickTimerMode>(initialTemplate?.config?.quickTimerMode ?? null);
   const [quickTimerDurationSeconds, setQuickTimerDurationSeconds] = useState<number>(
     resolveSessionTimerDuration(initialTemplate?.config?.quickTimerDurationSeconds, 10)
@@ -176,6 +179,26 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
 
     setQuickGameMode(mode);
     logger.info('template_quick_game_mode_selected', { showId, mode, targetCount });
+  };
+
+  const handlePlayModeSelect = (mode: PlayMode) => {
+    if (isLocked) return;
+
+    if (mode === 'TEAMS') {
+      if (quickGameMode !== null) {
+        setQuickGameMode(null);
+      }
+      setPlayMode('TEAMS');
+      logger.info('template_play_mode_selected', { showId, mode, clearedQuickGameMode: quickGameMode !== null });
+      return;
+    }
+
+    setPlayMode('INDIVIDUALS');
+    if (quickGameMode !== null) {
+      setQuickGameMode(null);
+      logger.info('template_quick_game_mode_cleared', { showId, source: 'play_mode_individuals' });
+    }
+    logger.info('template_play_mode_selected', { showId, mode: 'INDIVIDUALS' });
   };
 
   const handleQuickTimerModeSelect = (mode: Exclude<QuickTimerMode, null>) => {
@@ -353,8 +376,8 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
           orderIndex: index,
         })),
       }));
-      const normalizedQuickMode: QuickGameMode = quickGameMode;
-      const normalizedTimerMode: QuickTimerMode = quickGameMode
+      const normalizedQuickMode: QuickGameMode = playMode === 'TEAMS' ? null : quickGameMode;
+      const normalizedTimerMode: QuickTimerMode = normalizedQuickMode
         ? (quickTimerMode || 'timed')
         : quickTimerMode;
       const normalizedTimerDurationSeconds = resolveSessionTimerDuration(quickTimerDurationSeconds, 10);
@@ -658,16 +681,16 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                         <button
                           type="button"
                           disabled={isLocked}
-                          onClick={() => setPlayMode('INDIVIDUALS')}
+                          onClick={() => handlePlayModeSelect('INDIVIDUALS')}
                           className={`py-2 rounded text-[10px] font-bold border transition-all ${playMode === 'INDIVIDUALS' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
                         >
                           Individuals
                         </button>
                         <button
                           type="button"
-                          disabled={isLocked}
-                          onClick={() => setPlayMode('TEAMS')}
-                          className={`py-2 rounded text-[10px] font-bold border transition-all ${playMode === 'TEAMS' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                          disabled={isLocked || quickGameMode !== null}
+                          onClick={() => handlePlayModeSelect('TEAMS')}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${playMode === 'TEAMS' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
                         >
                           Teams
                         </button>
@@ -679,21 +702,27 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
-                          disabled={isLocked}
+                          disabled={isLocked || playMode === 'TEAMS'}
                           onClick={() => applyQuickGameMode('single_player')}
-                          className={`py-2 rounded text-[10px] font-bold border transition-all ${quickGameMode === 'single_player' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${quickGameMode === 'single_player' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
                         >
                           1 Player
                         </button>
                         <button
                           type="button"
-                          disabled={isLocked}
+                          disabled={isLocked || playMode === 'TEAMS'}
                           onClick={() => applyQuickGameMode('two_player')}
-                          className={`py-2 rounded text-[10px] font-bold border transition-all ${quickGameMode === 'two_player' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                          className={`py-2 rounded text-[10px] font-bold border transition-all ${quickGameMode === 'two_player' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
                         >
                           2 Players
                         </button>
                       </div>
+                      {playMode === 'TEAMS' && (
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-wide">Quick setup is available only for Individuals mode.</p>
+                      )}
+                      {quickGameMode !== null && (
+                        <p className="text-[9px] text-zinc-500 uppercase tracking-wide">Quick setup is active. Switch to Individuals to return to standard mode.</p>
+                      )}
                     </div>
                     <div className="space-y-2" data-testid="template-session-timer-section">
                       <h3 className="text-[10px] uppercase text-zinc-400 font-black border-b border-zinc-800 pb-1 tracking-widest">Session Timer</h3>

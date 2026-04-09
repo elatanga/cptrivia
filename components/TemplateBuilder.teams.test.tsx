@@ -278,5 +278,93 @@ describe('TemplateBuilder Teams Mode', () => {
     fireEvent.click(screen.getByTestId('builder-add-team-button'));
     expect(saveBtn).not.toBeDisabled();
   });
-});
 
+  it('disables quick setup buttons when Teams mode is selected', () => {
+    render(
+      <TemplateBuilder
+        showId="show-1"
+        onClose={() => undefined}
+        onSave={() => undefined}
+        addToast={() => undefined}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
+
+    expect(screen.getByRole('button', { name: '1 Player' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '2 Players' })).toBeDisabled();
+  });
+
+  it('disables Teams while quick mode is active and re-enables via Individuals', () => {
+    render(
+      <TemplateBuilder
+        showId="show-1"
+        onClose={() => undefined}
+        onSave={() => undefined}
+        addToast={() => undefined}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '2 Players' }));
+
+    const teamsButton = screen.getByRole('button', { name: 'Teams' });
+    expect(teamsButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Individuals' }));
+    expect(teamsButton).not.toBeDisabled();
+  });
+
+  it('sanitizes legacy Teams+Quick conflict on save and persists Teams flow only', async () => {
+    const onSave = vi.fn();
+    const conflictedTemplate: any = {
+      id: 'legacy-conflict',
+      topic: 'Legacy Conflict',
+      categories: [
+        {
+          id: 'c1',
+          title: 'Cat 1',
+          questions: [
+            { id: 'q1', text: 'Q1', answer: 'A1', points: 100, isRevealed: false, isAnswered: false, isDoubleOrNothing: false },
+          ],
+        },
+      ],
+      config: {
+        playerCount: 2,
+        playerNames: ['A', 'B'],
+        categoryCount: 1,
+        rowCount: 1,
+        playMode: 'TEAMS',
+        quickGameMode: 'two_player',
+        quickTimerMode: 'timed',
+        quickTimerDurationSeconds: 10,
+        teamPlayStyle: 'TEAM_PLAYS_AS_ONE',
+        teams: [],
+      },
+    };
+
+    render(
+      <TemplateBuilder
+        showId="show-1"
+        initialTemplate={conflictedTemplate}
+        onClose={() => undefined}
+        onSave={onSave}
+        addToast={() => undefined}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('builder-add-team-button'));
+    fireEvent.click(screen.getByTestId('save-template-button'));
+
+    await waitFor(() => {
+      expect(dataService.updateTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            playMode: 'TEAMS',
+            quickGameMode: null,
+          }),
+        })
+      );
+      expect(onSave).toHaveBeenCalled();
+    });
+  });
+});
