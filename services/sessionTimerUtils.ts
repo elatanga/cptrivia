@@ -15,6 +15,8 @@ export type SessionTimerPresetSeconds = (typeof SESSION_TIMER_PRESET_SECONDS)[nu
 /** Maximum allowed session timer duration: 24 hours in seconds. */
 export const MAX_SESSION_TIMER_SECONDS = 86400;
 
+export type TimerWarningLevel = 'normal' | 'warning' | 'urgent';
+
 /**
  * Normalize a custom numeric entry and time unit to a raw seconds value.
  * Returns null if the input is invalid (non-numeric, zero, negative, or exceeds 24 h).
@@ -45,6 +47,57 @@ export const normalizeCustomTimerToSeconds = (
   return seconds;
 };
 
+const parseNonNegativeInt = (value: string): number | null => {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return 0;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+};
+
+/**
+ * Normalize manual H/M/S fields into seconds.
+ * Empty fields are treated as 0; negatives/NaN are rejected.
+ */
+export const normalizeHmsToSeconds = (
+  hoursInput: string,
+  minutesInput: string,
+  secondsInput: string,
+): number | null => {
+  const hours = parseNonNegativeInt(hoursInput);
+  const minutes = parseNonNegativeInt(minutesInput);
+  const seconds = parseNonNegativeInt(secondsInput);
+
+  if (hours === null || minutes === null || seconds === null) return null;
+
+  const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+  if (totalSeconds <= 0 || totalSeconds > MAX_SESSION_TIMER_SECONDS) return null;
+  return totalSeconds;
+};
+
+/** Convert total seconds to H/M/S buckets for manual input UIs. */
+export const secondsToHms = (totalSeconds: number) => {
+  const safe = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  return { hours, minutes, seconds };
+};
+
+/** Visual warning level for countdown surfaces. */
+export const getTimerWarningLevel = (remainingSeconds?: number): TimerWarningLevel => {
+  const safe = Math.max(0, Math.floor(Number(remainingSeconds) || 0));
+  if (safe <= 0) return 'normal';
+  if (safe <= 10) return 'urgent';
+  if (safe <= 60) return 'warning';
+  return 'normal';
+};
+
+/** Quick 1P/2P templates auto-end on session timer expiry. */
+export const shouldAutoEndOnSessionExpiry = (
+  quickGameMode: 'single_player' | 'two_player' | null | undefined,
+): boolean => quickGameMode === 'single_player' || quickGameMode === 'two_player';
+
 /**
  * Safely resolve a session timer duration from a raw (possibly unknown) value.
  * Unlike the question countdown resolver, this accepts any positive integer
@@ -63,4 +116,3 @@ export const resolveSessionTimerDuration = (
   }
   return fallback > 0 ? fallback : 10;
 };
-

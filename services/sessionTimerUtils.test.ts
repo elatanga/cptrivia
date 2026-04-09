@@ -8,6 +8,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeCustomTimerToSeconds,
+  normalizeHmsToSeconds,
+  secondsToHms,
+  getTimerWarningLevel,
+  shouldAutoEndOnSessionExpiry,
   resolveSessionTimerDuration,
   SESSION_TIMER_PRESET_SECONDS,
   MAX_SESSION_TIMER_SECONDS,
@@ -89,6 +93,87 @@ describe('normalizeCustomTimerToSeconds', () => {
 
   it('rejects values over 24 hours in hours', () => {
     expect(normalizeCustomTimerToSeconds('25', 'hours')).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// normalizeHmsToSeconds
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('normalizeHmsToSeconds', () => {
+  it('normalizes hours/minutes/seconds to a total second value', () => {
+    expect(normalizeHmsToSeconds('1', '2', '3')).toBe(3723);
+  });
+
+  it('treats blank fields as zero', () => {
+    expect(normalizeHmsToSeconds('', '5', '')).toBe(300);
+  });
+
+  it('accepts minute/second overflow and normalizes by total seconds', () => {
+    expect(normalizeHmsToSeconds('0', '61', '90')).toBe(3750);
+  });
+
+  it('rejects negative values', () => {
+    expect(normalizeHmsToSeconds('0', '-1', '30')).toBeNull();
+  });
+
+  it('rejects non-numeric values', () => {
+    expect(normalizeHmsToSeconds('a', '1', '1')).toBeNull();
+  });
+
+  it('rejects zero total duration', () => {
+    expect(normalizeHmsToSeconds('0', '0', '0')).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// secondsToHms
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('secondsToHms', () => {
+  it('converts total seconds back to h/m/s', () => {
+    expect(secondsToHms(3723)).toEqual({ hours: 1, minutes: 2, seconds: 3 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getTimerWarningLevel
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('getTimerWarningLevel', () => {
+  it('returns normal above 60 seconds', () => {
+    expect(getTimerWarningLevel(61)).toBe('normal');
+  });
+
+  it('returns warning at and below 60 seconds', () => {
+    expect(getTimerWarningLevel(60)).toBe('warning');
+    expect(getTimerWarningLevel(11)).toBe('warning');
+  });
+
+  it('returns urgent in the final 10 seconds', () => {
+    expect(getTimerWarningLevel(10)).toBe('urgent');
+    expect(getTimerWarningLevel(1)).toBe('urgent');
+  });
+
+  it('returns normal for zero/invalid values', () => {
+    expect(getTimerWarningLevel(0)).toBe('normal');
+    expect(getTimerWarningLevel(undefined)).toBe('normal');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// shouldAutoEndOnSessionExpiry
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('shouldAutoEndOnSessionExpiry', () => {
+  it('enables auto-end for quick 1P and 2P modes', () => {
+    expect(shouldAutoEndOnSessionExpiry('single_player')).toBe(true);
+    expect(shouldAutoEndOnSessionExpiry('two_player')).toBe(true);
+  });
+
+  it('does not auto-end for non-quick mode', () => {
+    expect(shouldAutoEndOnSessionExpiry(null)).toBe(false);
+    expect(shouldAutoEndOnSessionExpiry(undefined)).toBe(false);
   });
 });
 
