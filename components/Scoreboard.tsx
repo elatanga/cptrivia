@@ -5,12 +5,21 @@ import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { getScoreboardLayoutTokens, sanitizeBoardViewSettings } from '../services/boardViewSettings';
 import { useViewportWidth } from '../hooks/useViewportWidth';
+import type { TimerWarningLevel } from '../services/sessionTimerUtils';
 
 interface Props {
   players: Player[];
   teams?: Team[];
   playMode?: PlayMode;
   teamPlayStyle?: TeamPlayStyle;
+  sessionTimerActive?: boolean;
+  sessionTimeRemaining?: number;
+  sessionTimerConfiguredSeconds?: number;
+  sessionTimerWarningLevel?: TimerWarningLevel;
+  showSessionTimerControls?: boolean;
+  onSessionTimerStart?: () => void;
+  onSessionTimerRestart?: () => void;
+  onSessionTimerStop?: () => void;
   selectedPlayerId: string | null;
   onAddPlayer: (name: string) => void;
   onUpdateScore: (id: string, delta: number) => void;
@@ -24,6 +33,14 @@ export const Scoreboard: React.FC<Props> = ({
   teams = [],
   playMode = 'INDIVIDUALS',
   teamPlayStyle = 'TEAM_PLAYS_AS_ONE',
+  sessionTimerActive = false,
+  sessionTimeRemaining,
+  sessionTimerConfiguredSeconds = 0,
+  sessionTimerWarningLevel = 'normal',
+  showSessionTimerControls = false,
+  onSessionTimerStart,
+  onSessionTimerRestart,
+  onSessionTimerStop,
   selectedPlayerId,
   onAddPlayer,
   onUpdateScore,
@@ -81,6 +98,20 @@ export const Scoreboard: React.FC<Props> = ({
     '--scoreboard-panel-width': layoutTokens.panelWidthCss,
   } as React.CSSProperties;
 
+  const hasConfiguredSessionTimer = sessionTimerConfiguredSeconds > 0;
+  const displayedSessionSeconds = (sessionTimerActive || (sessionTimeRemaining || 0) > 0)
+    ? (sessionTimeRemaining || 0)
+    : sessionTimerConfiguredSeconds;
+  const shouldShowSessionTimer = hasConfiguredSessionTimer || sessionTimerActive || (sessionTimeRemaining || 0) > 0;
+  const formattedSessionTime = `${Math.floor(displayedSessionSeconds / 60)}:${String(displayedSessionSeconds % 60).padStart(2, '0')}`;
+
+  const timerCardClasses =
+    sessionTimerWarningLevel === 'urgent'
+      ? 'mb-3 rounded-xl border border-red-400 bg-black/55 px-3 py-2 text-center shadow-[0_0_22px_rgba(248,113,113,0.35)] animate-pulse'
+      : sessionTimerWarningLevel === 'warning'
+        ? 'mb-3 rounded-xl border border-amber-400/60 bg-black/55 px-3 py-2 text-center shadow-[0_0_18px_rgba(251,191,36,0.28)]'
+        : 'mb-3 rounded-xl border border-red-500/40 bg-black/50 px-3 py-2 text-center shadow-[0_0_20px_rgba(239,68,68,0.22)]';
+
   return (
     <div 
       className="h-auto lg:h-full grid grid-rows-[auto_1fr_auto] border-t lg:border-t-0 lg:border-l border-gold-900/30 bg-black/95 w-full lg:w-[var(--scoreboard-panel-width)] shadow-2xl z-20 font-sans font-bold select-none transition-all duration-300 overflow-hidden"
@@ -88,16 +119,65 @@ export const Scoreboard: React.FC<Props> = ({
       data-testid="scoreboard-root"
       data-layout={is2Col ? "grid-2col" : "list-1col"}
     >
-      <div className="flex-none p-3 border-b border-gold-900/30 bg-zinc-900/50 flex items-center justify-between z-10">
-        <h3 className="text-gold-500 tracking-widest text-[10px] md:text-xs uppercase font-black">
-          {playMode === 'TEAMS' ? `TEAMS (${displayCount})` : `CONTESTANTS (${displayCount})`}
-        </h3>
-        <button 
-          onClick={() => { soundService.playClick(); setIsCondensed(!isCondensed); }}
-          className="lg:hidden text-zinc-500 hover:text-gold-500 p-1 rounded hover:bg-zinc-800 transition-colors"
-        >
-          {isCondensed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
-        </button>
+      <div className="flex-none p-3 border-b border-gold-900/30 bg-zinc-900/50 z-10">
+        {shouldShowSessionTimer && (
+          <div
+            data-testid="scoreboard-session-timer"
+            data-warning-level={sessionTimerWarningLevel}
+            className={timerCardClasses}
+          >
+            <div className="text-[9px] md:text-[10px] uppercase tracking-[0.2em] font-black text-zinc-400">Session Timer</div>
+            <div className="text-2xl md:text-3xl font-black font-mono leading-none tabular-nums text-red-400 drop-shadow-[0_0_10px_rgba(248,113,113,0.45)]">
+              {formattedSessionTime}
+            </div>
+            {showSessionTimerControls && (
+              <div className="mt-2 grid grid-cols-3 gap-2" data-testid="scoreboard-session-timer-controls">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundService.playClick();
+                    onSessionTimerStart?.();
+                  }}
+                  className="rounded border border-emerald-400/40 bg-emerald-700/70 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white hover:bg-emerald-600"
+                >
+                  Start
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundService.playClick();
+                    onSessionTimerRestart?.();
+                  }}
+                  className="rounded border border-gold-400/40 bg-gold-700/70 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white hover:bg-gold-600"
+                >
+                  Restart
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundService.playClick();
+                    onSessionTimerStop?.();
+                  }}
+                  className="rounded border border-red-400/40 bg-red-700/70 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white hover:bg-red-600"
+                >
+                  Stop
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <h3 className="text-gold-500 tracking-widest text-[10px] md:text-xs uppercase font-black">
+            {playMode === 'TEAMS' ? `TEAMS (${displayCount})` : `CONTESTANTS (${displayCount})`}
+          </h3>
+          <button
+            onClick={() => { soundService.playClick(); setIsCondensed(!isCondensed); }}
+            className="lg:hidden text-zinc-500 hover:text-gold-500 p-1 rounded hover:bg-zinc-800 transition-colors"
+          >
+            {isCondensed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
+          </button>
+        </div>
       </div>
 
       <div className="relative flex-1 p-2 md:p-3 overflow-hidden min-h-0">
@@ -222,3 +302,4 @@ export const Scoreboard: React.FC<Props> = ({
     </div>
   );
 };
+

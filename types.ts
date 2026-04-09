@@ -27,6 +27,8 @@ export interface Player {
   wildcardsUsed?: number; 
   wildcardActive?: boolean; 
   stealsCount?: number; 
+  questionsAnswered?: number;
+  lostOrVoidedCount?: number;
   specialMovesUsedCount?: number;
   specialMovesUsedNames?: string[];
 }
@@ -39,6 +41,11 @@ export interface TeamMember {
   name: string;
   score?: number;
   orderIndex?: number;
+  stealsCount?: number;
+  questionsAnswered?: number;
+  lostOrVoidedCount?: number;
+  specialMovesUsedCount?: number;
+  specialMovesUsedNames?: string[];
 }
 
 export interface Team {
@@ -170,6 +177,8 @@ export interface GameAnalyticsEvent {
     note?: string;
     specialMoveType?: SpecialMoveType;
     specialMoveName?: string;
+    teamMemberId?: string;
+    teamMemberName?: string;
   };
 }
 
@@ -425,6 +434,7 @@ export interface TemplateConfig {
   pointScale?: number;
   quickGameMode?: 'single_player' | 'two_player' | null;
   quickTimerMode?: 'timed' | 'untimed' | null;
+  quickTimerDurationSeconds?: number | null;
 }
 
 export interface GameTemplate {
