@@ -611,7 +611,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
   if (step === 'CONFIG') {
     // Overhauled Config View for Card 1: Viewport-fit grid layout with zero scroll on desktop
     return (
-      <div className="template-builder font-roboto font-bold fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-0 md:p-4">
+      <div className="template-builder font-roboto font-bold fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-0 md:p-4 overflow-y-auto">
         <div className="w-full h-full md:h-auto md:max-h-[100dvh] md:max-w-6xl bg-zinc-900 border-0 md:border md:border-gold-600 md:rounded-xl shadow-2xl grid grid-rows-[auto_1fr_auto] overflow-hidden">
           
           {/* HEADER */}
@@ -624,10 +624,10 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
           </div>
 
           {/* BODY: Viewport fit non-scrollable grid on desktop */}
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_360px] overflow-hidden p-4 md:p-6 gap-6 md:gap-10">
-            
+          <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_360px] min-h-0 overflow-y-auto lg:overflow-hidden p-4 md:p-6 gap-6 md:gap-10">
+
             {/* LEFT COLUMN: Main Config */}
-            <div className="flex flex-col gap-6 overflow-hidden">
+            <div className="flex flex-col gap-6 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
                 <div className="shrink-0">
                   <label className="block text-[10px] uppercase text-gold-500 font-black mb-1.5 tracking-widest">Show or Game Topic</label>
                   <input 
@@ -763,7 +763,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                       {/* Custom duration input */}
                       <div className={`mt-2 space-y-1 ${quickTimerMode !== 'timed' ? 'opacity-40 pointer-events-none' : ''}`}>
                         <p className="text-[9px] text-zinc-500 uppercase tracking-wide font-bold">Custom duration</p>
-                        <div className="flex gap-1 items-center">
+                        <div className="flex flex-wrap gap-1 items-center">
                           <input
                             type="number"
                             min="1"
@@ -889,11 +889,11 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                       <div className="space-y-2 overflow-y-auto pr-1 custom-scrollbar">
                         {teamConfigs.map((team, teamIndex) => (
                           <div key={team.id} className="border border-zinc-800 rounded-lg p-3 bg-black/30">
-                            <div className="flex items-center gap-2 mb-2">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
                               <input
                                 value={team.name}
                                 onChange={(e) => handleTeamNameChange(team.id, e.target.value)}
-                                className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[11px] uppercase text-white"
+                                className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[11px] uppercase text-white min-w-[140px]"
                                 placeholder={`TEAM ${teamIndex + 1}`}
                               />
                               <button type="button" onClick={() => handleAddTeamMember(team.id)} className="text-[10px] text-gold-500 hover:text-white font-bold px-2 py-1 border border-zinc-800 rounded">+ MEMBER</button>
@@ -901,14 +901,14 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                             </div>
                             <div className="space-y-1">
                               {team.members.map((member, memberIndex) => (
-                                <div key={member.id} className="flex items-center gap-2">
+                                <div key={member.id} className="flex items-center gap-2 flex-wrap">
                                   <input
                                     value={member.name}
                                     onChange={(e) => handleTeamMemberNameChange(team.id, member.id, e.target.value)}
-                                    className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-zinc-200"
+                                    className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[9px] uppercase text-zinc-200 min-w-[120px]"
                                     placeholder={`MEMBER ${memberIndex + 1}`}
                                   />
-                                  <button type="button" onClick={() => handleRemoveTeamMember(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1">X</button>
+                                  <button type="button" onClick={() => handleRemoveTeamMember(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-1">X</button>
                                 </div>
                               ))}
                             </div>
@@ -934,7 +934,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
             </div>
 
             {/* RIGHT COLUMN: AI Magic Studio */}
-            <div className="hidden lg:flex flex-col bg-black/40 border border-purple-500/20 rounded-xl p-6 space-y-6 relative overflow-hidden group">
+            <div className="flex flex-col bg-black/40 border border-purple-500/20 rounded-xl p-6 space-y-6 relative overflow-hidden group">
                  <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
                     <Sparkles className="w-32 h-32 text-purple-500" />
                  </div>
@@ -964,7 +964,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                        <label className="block text-[10px] uppercase text-zinc-500 font-black mb-2 tracking-widest">Game Difficulty</label>
                        <div className="grid grid-cols-2 gap-2">
                           {(['easy', 'medium', 'hard', 'mixed'] as Difficulty[]).map(d => (
-                             <button key={d} type="button" onClick={() => setAiDifficulty(d)} className={`py-2 rounded text-[10px] font-roboto font-bold uppercase border transition-all ${aiDifficulty === d ? 'bg-purple-600 border-purple-400 text-white shadow-lg' : 'bg-zinc-900 border-zinc-800 text-zinc-600 hover:border-zinc-700'}`}>{d}</button>
+                             <button key={d} type="button" onClick={() => setAiDifficulty(d)} className={`py-2 rounded text-[10px] font-roboto font-bold uppercase border transition-all ${aiDifficulty === d ? 'bg-purple-600 border-purple-400 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-600 hover:border-zinc-700'}`}>{d}</button>
                           ))}
                        </div>
                     </div>
@@ -1136,28 +1136,30 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                <div className="space-y-2 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
                  {teamConfigs.map((team, teamIndex) => (
                    <div key={team.id} className="border border-zinc-800 rounded p-2 bg-black/20 space-y-1.5">
-                     <div className="flex items-center gap-2">
+                     <div className="flex items-center gap-2 flex-wrap">
                        <input
                          value={team.name}
                          onChange={(e) => handleTeamNameChange(team.id, e.target.value)}
-                         className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-white"
+                         className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-white min-w-[140px]"
                          placeholder={`TEAM ${teamIndex + 1}`}
                        />
                        <button type="button" onClick={() => handleAddTeamMember(team.id)} className="text-[9px] text-gold-400 border border-zinc-700 rounded px-2 py-1">+ PLAYER</button>
                        <button type="button" onClick={() => handleRemoveTeam(team.id)} className="text-[9px] text-red-400 border border-zinc-700 rounded px-2 py-1">DEL</button>
                      </div>
-                     {(team.members || []).map((member, memberIndex) => (
-                       <div key={member.id} className="flex items-center gap-2">
-                         <input
-                           value={member.name}
-                           onChange={(e) => handleTeamMemberNameChange(team.id, member.id, e.target.value)}
-                           className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[9px] uppercase text-zinc-200"
-                           placeholder={`PLAYER ${memberIndex + 1}`}
-                         />
-                         <button type="button" onClick={() => handleRemoveTeamMember(team.id, member.id)} className="text-[9px] text-zinc-500 hover:text-red-400 px-1">X</button>
-                       </div>
-                     ))}
-                     <div className="text-[9px] text-zinc-500 uppercase">{team.name || `TEAM ${teamIndex + 1}`} ({(team.members || []).length} players)</div>
+                     <div className="space-y-1">
+                       {team.members.map((member, memberIndex) => (
+                         <div key={member.id} className="flex items-center gap-2 flex-wrap">
+                           <input
+                             value={member.name}
+                             onChange={(e) => handleTeamMemberNameChange(team.id, member.id, e.target.value)}
+                             className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[9px] uppercase text-zinc-200 min-w-[120px]"
+                             placeholder={`PLAYER ${memberIndex + 1}`}
+                           />
+                           <button type="button" onClick={() => handleRemoveTeamMember(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-1">X</button>
+                         </div>
+                       ))}
+                     </div>
+                     <div className="mt-2 text-[9px] text-zinc-500 uppercase">{team.name || `TEAM ${teamIndex + 1}`} ({(team.members || []).length} players)</div>
                    </div>
                  ))}
                </div>
