@@ -85,6 +85,90 @@ const setupQuickTimedGame = async (modeLabel: '1 Player' | '2 Players') => {
   await waitFor(() => screen.getByTestId('scoreboard-session-timer-controls'));
 };
 
+const setupQuickTimedGameWithCustomDuration = async (
+  modeLabel: '1 Player' | '2 Players',
+  customSeconds: number,
+) => {
+  const token = await authService.bootstrapMasterAdmin('admin');
+  await authService.login('admin', token);
+
+  render(<App />);
+
+  await waitFor(() => screen.getByText(/Select Production/i));
+
+  fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), {
+    target: { value: `Quick Timer Custom ${modeLabel}` },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
+
+  await waitFor(() => screen.getByText(/Template Library/i));
+  fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
+
+  await waitFor(() => screen.getByPlaceholderText(/e\.g\. Science Night 2024/i));
+  fireEvent.change(screen.getByPlaceholderText(/e\.g\. Science Night 2024/i), {
+    target: { value: `Quick-Custom-${modeLabel}` },
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: modeLabel }));
+  fireEvent.click(screen.getByRole('button', { name: /^Timed$/i }));
+  fireEvent.change(screen.getByTestId('custom-session-timer-input'), { target: { value: String(customSeconds) } });
+  fireEvent.click(screen.getByTestId('custom-session-timer-apply'));
+
+  fireEvent.click(screen.getByRole('button', { name: /Start Manual Studio Building/i }));
+
+  await waitFor(() => screen.getByRole('button', { name: /Save Template/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Save Template/i }));
+
+  await waitFor(() => screen.getByRole('button', { name: /Play Show/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Play Show/i }));
+
+  await waitFor(() => screen.getByRole('button', { name: /End Show/i }));
+  await waitFor(() => screen.getByTestId('scoreboard-session-timer-controls'));
+};
+
+const setupQuickTimedGameWithDefaultDuration = async (modeLabel: '1 Player' | '2 Players') => {
+  const token = await authService.bootstrapMasterAdmin('admin');
+  await authService.login('admin', token);
+
+  render(<App />);
+
+  await waitFor(() => screen.getByText(/Select Production/i));
+
+  fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), {
+    target: { value: `Quick Timer Default ${modeLabel}` },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
+
+  await waitFor(() => screen.getByText(/Template Library/i));
+  fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
+
+  await waitFor(() => screen.getByPlaceholderText(/e\.g\. Science Night 2024/i));
+  fireEvent.change(screen.getByPlaceholderText(/e\.g\. Science Night 2024/i), {
+    target: { value: `Quick-Default-${modeLabel}` },
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: modeLabel }));
+  fireEvent.click(screen.getByRole('button', { name: /^Timed$/i }));
+
+  fireEvent.click(screen.getByRole('button', { name: /Start Manual Studio Building/i }));
+
+  await waitFor(() => screen.getByRole('button', { name: /Save Template/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Save Template/i }));
+
+  await waitFor(() => screen.getByRole('button', { name: /Play Show/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Play Show/i }));
+
+  await waitFor(() => screen.getByRole('button', { name: /End Show/i }));
+  await waitFor(() => screen.getByTestId('scoreboard-session-timer-controls'));
+};
+
+const getDisplayedSessionSeconds = () => {
+  const timerText = screen.getByTestId('scoreboard-session-timer').textContent || '';
+  const timerMatch = timerText.match(/(\d+):(\d{2})/);
+  if (!timerMatch) return 0;
+  return Number(timerMatch[1]) * 60 + Number(timerMatch[2]);
+};
+
 describe('Quick game session timer expiry integration', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -124,6 +208,16 @@ describe('Quick game session timer expiry integration', () => {
   it('auto-ends two player quick timed game when session timer expires', async () => {
     await setupQuickTimedGame('2 Players');
     await assertAutoEndsWithoutPrompt();
+  }, 30000);
+
+  it('uses custom applied timer duration after save/load/launch in runtime scoreboard', async () => {
+    await setupQuickTimedGameWithCustomDuration('2 Players', 17);
+    expect(getDisplayedSessionSeconds()).toBe(17);
+  }, 30000);
+
+  it('falls back to 10 seconds only when no custom duration is saved', async () => {
+    await setupQuickTimedGameWithDefaultDuration('1 Player');
+    expect(getDisplayedSessionSeconds()).toBe(10);
   }, 30000);
 });
 
