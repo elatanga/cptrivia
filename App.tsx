@@ -19,10 +19,12 @@ import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from './
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
 import { normalizePlayerName } from './services/utils';
+import { getTimerWarningLevel, resolveSessionTimerDuration, shouldAutoEndOnSessionExpiry } from './services/sessionTimerUtils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
 import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specialMoves/logic';
 import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
+import { getSpecialMoveCatalogEntry, getSpecialMoveDisplayTitle } from './modules/specialMoves/catalog';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { getNextPlayerSelection, getInitialAutoSelectedPlayer } from './services/playerSelectionCycler';
@@ -73,7 +75,7 @@ const resolveTemplateTimerDurationSeconds = (
   fallback: number,
 ) => {
   const raw = Number(template.config?.quickTimerDurationSeconds);
-  return resolveQuestionCountdownDuration(Number.isFinite(raw) ? raw : fallback);
+  return resolveSessionTimerDuration(Number.isFinite(raw) ? raw : fallback, fallback);
 };
 
 type QuestionModalSpecialMoveModel = {
@@ -84,24 +86,9 @@ type QuestionModalSpecialMoveModel = {
   stealPolicy: 'NO STEAL' | 'STEAL ALLOWED';
 };
 
-const SPECIAL_MOVE_MODAL_DETAILS: Partial<Record<SpecialMoveType, Omit<QuestionModalSpecialMoveModel, 'moveType'>>> = {
-  DOUBLE_TROUBLE: { displayTitle: 'DOUBLE OR LOSE', pointsEffect: 'WIN: 2X POINTS', penaltyEffect: 'MISS: -TILE VALUE', stealPolicy: 'NO STEAL' },
-  TRIPLE_THREAT: { displayTitle: 'TRIPLE OR LOSE', pointsEffect: 'WIN: 3X POINTS', penaltyEffect: 'MISS: -130%', stealPolicy: 'NO STEAL' },
-  SABOTAGE: { displayTitle: 'SAFE BET', pointsEffect: 'WIN: +50%', penaltyEffect: 'MISS: NO PENALTY', stealPolicy: 'NO STEAL' },
-  SAFE_BET: { displayTitle: 'SAFE BET', pointsEffect: 'WIN: +50%', penaltyEffect: 'MISS: NO PENALTY', stealPolicy: 'NO STEAL' },
-  MEGA_STEAL: { displayTitle: 'LOCKOUT', pointsEffect: 'STANDARD AWARD', penaltyEffect: 'MISS: NO EXTRA PENALTY', stealPolicy: 'NO STEAL' },
-  LOCKOUT: { displayTitle: 'LOCKOUT', pointsEffect: 'STANDARD AWARD', penaltyEffect: 'MISS: NO EXTRA PENALTY', stealPolicy: 'NO STEAL' },
-  SUPER_SAVE: { displayTitle: 'SUPER SAVE', pointsEffect: 'WIN: 3X POINTS', penaltyEffect: 'MISS: NO BONUS', stealPolicy: 'NO STEAL' },
-  GOLDEN_GAMBLE: { displayTitle: 'GOLDEN GAMBLE', pointsEffect: 'WIN: 225%', penaltyEffect: 'MISS: -50%', stealPolicy: 'NO STEAL' },
-  SHIELD_BOOST: { displayTitle: 'SHIELD BOOST', pointsEffect: 'WIN: 2X POINTS', penaltyEffect: 'MISS: NO PENALTY', stealPolicy: 'NO STEAL' },
-  FINAL_SHOT: { displayTitle: 'FINAL SHOT', pointsEffect: 'WIN: 3X POINTS', penaltyEffect: 'MISS: -TILE VALUE', stealPolicy: 'NO STEAL' },
-  DOUBLE_WINS_OR_NOTHING: { displayTitle: 'DOUBLE WINS OR NOTHING', pointsEffect: 'ENDGAME SCORE MOVE', stealPolicy: 'NO STEAL' },
-  TRIPLE_WINS_OR_NOTHING: { displayTitle: 'TRIPLE WINS OR NOTHING', pointsEffect: 'ENDGAME SCORE MOVE', stealPolicy: 'NO STEAL' },
-};
-
 const getQuestionModalSpecialMoveModel = (moveType?: SpecialMoveType): QuestionModalSpecialMoveModel | null => {
   if (!moveType) return null;
-  const details = SPECIAL_MOVE_MODAL_DETAILS[moveType];
+  const details = getSpecialMoveCatalogEntry(moveType);
   if (!details) {
     return {
       moveType,
@@ -110,12 +97,17 @@ const getQuestionModalSpecialMoveModel = (moveType?: SpecialMoveType): QuestionM
       stealPolicy: isStealBlockedForMove(moveType) ? 'NO STEAL' : 'STEAL ALLOWED',
     };
   }
-  return { moveType, ...details };
+  return {
+    moveType,
+    displayTitle: details.displayTitle,
+    pointsEffect: details.pointsEffect,
+    penaltyEffect: details.penaltyEffect,
+    stealPolicy: details.stealPolicy,
+  };
 };
 
 const getSpecialMoveDisplayName = (moveType?: SpecialMoveType): string | undefined => {
-  if (!moveType) return undefined;
-  return getQuestionModalSpecialMoveModel(moveType)?.displayTitle || moveType.replace(/_/g, ' ');
+  return getSpecialMoveDisplayTitle(moveType);
 };
 
 const App: React.FC = () => {
@@ -220,9 +212,16 @@ const App: React.FC = () => {
     }),
     [gameState.players, gameState.playMode, gameState.teams, activeQuickGameMode]
   );
+  const sessionTimerWarningLevel = useMemo(
+    () => getTimerWarningLevel(sessionTimer.remainingSeconds),
+    [sessionTimer.remainingSeconds]
+  );
+  const hasEmittedFinalMinuteWarningRef = useRef(false);
+  const hasHandledSessionExpiryRef = useRef(false);
   const questionTimerDurationRef = useRef(questionTimerDurationSeconds);
   const questionTimerEnabledRef = useRef(questionTimerEnabled);
   const sessionTimerEnabledRef = useRef(sessionTimerEnabled);
+  const activeQuickGameModeRef = useRef(activeQuickGameMode);
   const activeTileMoveTypeRef = useRef<SpecialMoveType | undefined>(activeTileMoveType);
 
   useEffect(() => {
@@ -238,6 +237,16 @@ const App: React.FC = () => {
   }, [sessionTimerEnabled]);
 
   useEffect(() => {
+    activeQuickGameModeRef.current = activeQuickGameMode;
+  }, [activeQuickGameMode]);
+
+  useEffect(() => {
+    if (!gameState.isGameStarted) {
+      hasHandledSessionExpiryRef.current = false;
+    }
+  }, [gameState.isGameStarted]);
+
+  useEffect(() => {
     activeTileMoveTypeRef.current = activeTileMoveType;
   }, [activeTileMoveType]);
 
@@ -249,10 +258,16 @@ const App: React.FC = () => {
     }
     if (activeTileMoveTypeRef.current) return;
     const deployment = specialMovesOverlay?.deploymentsByTileId?.[activeTileId];
-    if (deployment?.status === 'ARMED') {
-      setActiveTileMoveType(deployment.moveType as SpecialMoveType | undefined);
+    const activeQuestionFromState = gameState.categories
+      .flatMap((category) => category.questions)
+      .find((question) => question.id === activeTileId);
+    const resolvedMoveType = (deployment?.status === 'ARMED'
+      ? (deployment.moveType as SpecialMoveType | undefined)
+      : undefined) || activeQuestionFromState?.specialMoveType;
+    if (resolvedMoveType) {
+      setActiveTileMoveType(resolvedMoveType);
     }
-  }, [gameState.activeQuestionId, specialMovesOverlay]);
+  }, [gameState.activeQuestionId, gameState.categories, specialMovesOverlay]);
 
   // Tracks remainingSeconds via ref so stopQuestionTimer can log it
   // without capturing questionTimer.remainingSeconds as a dep (which
@@ -380,6 +395,12 @@ const App: React.FC = () => {
       }
     });
 
+    if (shouldAutoEndOnSessionExpiry(activeQuickGameModeRef.current)) {
+      addToast('info', 'Session timer expired. Showing results.');
+      handleEndGameAfterTimerExpired();
+      return;
+    }
+
     addToast('info', 'Game time expired. Continue or end the game.');
     setShowTimerExpiredPrompt(true);
   };
@@ -403,7 +424,17 @@ const App: React.FC = () => {
   };
 
   const handleEndGameAfterTimerExpired = () => {
-    const voidedCategories = gameState.categories.map((cat) => ({
+    if (hasHandledSessionExpiryRef.current) {
+      return;
+    }
+
+    const current = gameStateRef.current;
+    if (!current.isGameStarted) {
+      return;
+    }
+    hasHandledSessionExpiryRef.current = true;
+
+    const voidedCategories = current.categories.map((cat) => ({
       ...cat,
       questions: cat.questions.map((q) =>
         !q.isAnswered && !q.isVoided ? { ...q, isVoided: true } : q
@@ -411,13 +442,11 @@ const App: React.FC = () => {
     }));
 
     saveGameState({
-      ...gameState,
+      ...current,
       categories: voidedCategories,
-      isGameStarted: false,
       activeQuestionId: null,
       activeCategoryId: null,
-      timer: { ...gameState.timer, endTime: null, isRunning: false },
-      lastPlays: []
+      timer: { ...current.timer, endTime: null, isRunning: false },
     });
 
     emitGameEvent('SESSION_ENDED', {
@@ -426,8 +455,6 @@ const App: React.FC = () => {
     });
 
     setShowTimerExpiredPrompt(false);
-    setIsEndGameCelebrationOpen(false);
-    setHasShownEndGameCelebration(false);
     setQuestionTimer({
       durationSeconds: resolveQuestionCountdownDuration(questionTimerDurationRef.current),
       remainingSeconds: 0,
@@ -438,16 +465,16 @@ const App: React.FC = () => {
       activeQuestionId: null,
     });
     setSessionTimer({
-      durationSeconds: 0,
+      durationSeconds: Math.max(0, Math.floor(sessionTimer.durationSeconds || 0)),
       remainingSeconds: 0,
       isRunning: false,
       isStopped: true,
       startedAt: null,
       endsAt: null,
-      selectedPreset: null,
+      selectedPreset: sessionTimer.selectedPreset || null,
     });
-    setActiveQuickGameMode(null);
-    setViewMode('BOARD');
+    setIsEndGameCelebrationOpen(true);
+    setHasShownEndGameCelebration(true);
   };
 
   const getSoundSnapshot = useCallback(() => {
@@ -957,6 +984,127 @@ const App: React.FC = () => {
     });
   };
 
+  const handleResumeSessionTimer = useCallback(() => {
+    if (!sessionTimerEnabledRef.current) return;
+
+    setSessionTimer((prev) => {
+      if (prev.isRunning) return prev;
+      const configuredDuration = Math.max(1, Math.floor(prev.durationSeconds || 0));
+      const usableRemaining = Math.max(0, Math.floor(prev.remainingSeconds || 0));
+      const nextRemaining = usableRemaining > 0 ? usableRemaining : configuredDuration;
+      if (nextRemaining <= 0) return prev;
+
+      const now = Date.now();
+      logger.info('session_timer_start_or_resume', {
+        remainingSeconds: nextRemaining,
+        durationSeconds: configuredDuration,
+      });
+      emitGameEvent('SESSION_TIMER_RESUMED', { actor: { role: 'director' }, context: {} });
+
+      return {
+        ...prev,
+        durationSeconds: configuredDuration,
+        remainingSeconds: nextRemaining,
+        isRunning: true,
+        isStopped: false,
+        startedAt: now,
+        endsAt: now + nextRemaining * 1000,
+      };
+    });
+  }, [emitGameEvent]);
+
+  const handleRestartSessionTimer = useCallback(() => {
+    if (!sessionTimerEnabledRef.current) return;
+
+    setSessionTimer((prev) => {
+      const durationSeconds = Math.max(1, Math.floor(prev.durationSeconds || 0));
+      if (durationSeconds <= 0) return prev;
+      const now = Date.now();
+
+      logger.info('session_timer_restart', { durationSeconds });
+      emitGameEvent('SESSION_TIMER_START', {
+        actor: { role: 'director' },
+        context: { note: `Game timer restarted: ${durationSeconds}s` },
+      });
+
+      return {
+        ...prev,
+        durationSeconds,
+        remainingSeconds: durationSeconds,
+        isRunning: true,
+        isStopped: false,
+        startedAt: now,
+        endsAt: now + durationSeconds * 1000,
+      };
+    });
+  }, [emitGameEvent]);
+
+  const handleStopSessionTimer = useCallback(() => {
+    if (!sessionTimerEnabledRef.current) return;
+
+    setSessionTimer((prev) => {
+      if (!prev.isRunning) return prev;
+      logger.info('session_timer_stop', {
+        remainingSeconds: prev.remainingSeconds,
+        preset: prev.selectedPreset,
+      });
+      emitGameEvent('SESSION_TIMER_PAUSED', { actor: { role: 'director' }, context: {} });
+      return { ...prev, isRunning: false, isStopped: true, endsAt: null };
+    });
+  }, [emitGameEvent]);
+
+  /**
+   * Start the Session Game Timer with an explicit number of seconds.
+   * Used by quick-game presets and custom manual duration entries.
+   * The Director Panel calls this when the "Quick Start" button is pressed.
+   */
+  const handleStartSessionTimerWithDuration = useCallback((seconds: number) => {
+    const safeSeconds = Math.max(1, Math.floor(seconds));
+    if (!sessionTimerEnabledRef.current) {
+      logger.info('session_timer_start_blocked_disabled', { seconds: safeSeconds });
+      addToast('info', 'Enable Session Game Timer first.');
+      return;
+    }
+    const now = Date.now();
+    const newTimer: SessionGameTimer = {
+      durationSeconds: safeSeconds,
+      remainingSeconds: safeSeconds,
+      isRunning: true,
+      isStopped: false,
+      startedAt: now,
+      endsAt: now + safeSeconds * 1000,
+      selectedPreset: null,
+    };
+    setSessionTimer(newTimer);
+    logger.info('session_timer_start_custom', { durationSeconds: safeSeconds });
+    emitGameEvent('SESSION_TIMER_START', {
+      actor: { role: 'director' },
+      context: { note: `Game timer started: ${safeSeconds}s (custom)` },
+    });
+  }, [emitGameEvent]);
+
+  useEffect(() => {
+    if (!gameState.isGameStarted || !sessionTimerEnabled || !sessionTimer.isRunning) {
+      hasEmittedFinalMinuteWarningRef.current = false;
+      return;
+    }
+
+    if (sessionTimer.remainingSeconds <= 60 && sessionTimer.remainingSeconds > 0 && !hasEmittedFinalMinuteWarningRef.current) {
+      hasEmittedFinalMinuteWarningRef.current = true;
+      addToast('info', 'Final 60 seconds.');
+      emitGameEvent('SESSION_TIMER_START', {
+        actor: { role: 'system' },
+        context: { note: 'Session timer entered final 60-second warning window.' },
+      });
+    }
+  }, [
+    gameState.isGameStarted,
+    sessionTimerEnabled,
+    sessionTimer.isRunning,
+    sessionTimer.remainingSeconds,
+    emitGameEvent,
+  ]);
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('view') === 'director') {
@@ -1147,6 +1295,7 @@ const App: React.FC = () => {
   // --- GAME LOGIC ---
 
   const handlePlayTemplate = (template: GameTemplate) => {
+    hasHandledSessionExpiryRef.current = false;
     setIsEndGameCelebrationOpen(false);
     setHasShownEndGameCelebration(false);
 
@@ -1226,9 +1375,40 @@ const App: React.FC = () => {
       timerEnabled: timerEnabledFromTemplate,
     });
 
-    handleSetQuestionTimerDuration(timerDurationFromTemplate);
-    handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
-    setActiveQuickGameMode(template.config?.quickGameMode || null);
+    // ── BUG FIX: 1-player / 2-player quick game modes must activate the
+    // Session Game Timer, NOT the Question Countdown Timer. ────────────────
+    const templateQuickGameMode = normalizedTemplateConfig.quickGameMode;
+    const templateQuickTimerMode = normalizedTemplateConfig.quickTimerMode;
+
+    if (templateQuickGameMode && templateQuickTimerMode === 'timed') {
+      // Quick game + timed → enable Session Game Timer with configured duration
+      const sessionDurationSeconds = resolveSessionTimerDuration(
+        normalizedTemplateConfig.quickTimerDurationSeconds,
+        timerDurationFromTemplate,
+      );
+      handleToggleSessionTimerEnabled(true);
+      setSessionTimer({
+        durationSeconds: sessionDurationSeconds,
+        remainingSeconds: 0, // Director explicitly starts it from the Director Panel
+        isRunning: false,
+        isStopped: true,
+        startedAt: null,
+        endsAt: null,
+        selectedPreset: null,
+      });
+      // Ensure Question Countdown Timer is NOT auto-enabled by this quick setup
+      handleToggleQuestionTimerEnabled(false);
+    } else if (templateQuickGameMode && templateQuickTimerMode === 'untimed') {
+      // Quick game + untimed → no timer active
+      handleToggleSessionTimerEnabled(false);
+      handleToggleQuestionTimerEnabled(false);
+    } else {
+      // Standard (non-quick-game) templates: preserve existing question-timer behavior
+      handleSetQuestionTimerDuration(timerDurationFromTemplate);
+      handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
+    }
+
+    setActiveQuickGameMode(normalizedTemplateConfig.quickGameMode || null);
 
     const newState: GameState = {
       ...gameState,
@@ -1311,7 +1491,10 @@ const App: React.FC = () => {
     soundService.playSound?.('tileOpen');
 
     const deployment = specialMovesOverlayRef.current?.deploymentsByTileId?.[qId];
-    setActiveTileMoveType(deployment?.status === 'ARMED' ? (deployment.moveType as SpecialMoveType | undefined) : undefined);
+    const selectedTileMoveType = (deployment?.status === 'ARMED'
+      ? (deployment.moveType as SpecialMoveType | undefined)
+      : undefined) || q?.specialMoveType;
+    setActiveTileMoveType(selectedTileMoveType);
 
     if (questionTimerEnabled) {
       const selectedDuration = resolveQuestionCountdownDuration(questionTimerDurationRef.current);
@@ -1357,7 +1540,10 @@ const App: React.FC = () => {
     resolvingQuestionIdRef.current = activeQ.id;
 
     const basePoints = (activeQ.isDoubleOrNothing ? activeQ.points * 2 : activeQ.points);
-    const tileMoveType = activeTileMoveTypeRef.current || specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType;
+    const overlayMoveType = specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.status === 'ARMED'
+      ? specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType
+      : undefined;
+    const tileMoveType = activeTileMoveTypeRef.current || overlayMoveType || activeQ.specialMoveType;
     const stealBlocked = isStealBlockedForMove(tileMoveType);
     const resolvesAsFail = action === 'return' && doesReturnResolveAsFail(tileMoveType);
 
@@ -1389,7 +1575,8 @@ const App: React.FC = () => {
             ...q,
             isRevealed: false,
             isAnswered: action === 'award' || action === 'steal' || resolvesAsFail,
-            isVoided: action === 'void' || resolvesAsFail
+            isVoided: action === 'void' || resolvesAsFail,
+            specialMoveType: action === 'return' && !resolvesAsFail ? q.specialMoveType : undefined,
           };
         })
       };
@@ -1773,6 +1960,7 @@ const App: React.FC = () => {
           sessionTimerEnabled={sessionTimerEnabled}
           onSessionTimerToggle={handleToggleSessionTimerEnabled}
           onSessionTimerStart={handleStartSessionTimer}
+          onSessionTimerStartWithDuration={handleStartSessionTimerWithDuration}
           onSessionTimerPause={handlePauseSessionTimer}
           onSessionTimerReset={handleResetSessionTimer}
           timerAudio={timerAudio}
@@ -1869,10 +2057,10 @@ const App: React.FC = () => {
                             <button onClick={() => { soundService.playClick(); setShowEndGameConfirm(true); }} type="button" className="text-[10px] md:text-xs uppercase text-red-500 hover:text-red-600 font-bold tracking-wider flex items-center gap-2"><Power className="w-3 h-3" /> End Show</button>
                             <button onClick={() => setViewMode('DIRECTOR')} className="text-[10px] md:text-xs uppercase font-bold text-zinc-500 hover:text-zinc-800 flex items-center gap-2 px-3 py-1.5 rounded transition-colors"><Grid className="w-3 h-3" /> Director</button>
                           </div>
-                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} resolvedSpecialMoveLabelsByTileId={resolvedSpecialMoveLabelsByTileId} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
+                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} resolvedSpecialMoveLabelsByTileId={resolvedSpecialMoveLabelsByTileId} /></div>
                         </div>
                         <div className="order-1 md:order-2 flex-none h-auto lg:h-full w-full md:w-auto relative z-30">
-                          <Scoreboard players={gameState.players} teams={gameState.teams || []} playMode={gameState.playMode || DEFAULT_PLAY_MODE} teamPlayStyle={gameState.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
+                          <Scoreboard players={gameState.players} teams={gameState.teams || []} playMode={gameState.playMode || DEFAULT_PLAY_MODE} teamPlayStyle={gameState.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} sessionTimerConfiguredSeconds={sessionTimer.durationSeconds} sessionTimerWarningLevel={sessionTimerWarningLevel} showSessionTimerControls={sessionTimerEnabled && shouldAutoEndOnSessionExpiry(activeQuickGameMode)} onSessionTimerStart={handleResumeSessionTimer} onSessionTimerRestart={handleRestartSessionTimer} onSessionTimerStop={handleStopSessionTimer} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
                         </div>
                         {activeQuestion && activeCategory && (
                           (() => {
@@ -1948,6 +2136,7 @@ const App: React.FC = () => {
                      sessionTimerEnabled={sessionTimerEnabled}
                      onSessionTimerToggle={handleToggleSessionTimerEnabled}
                      onSessionTimerStart={handleStartSessionTimer}
+                     onSessionTimerStartWithDuration={handleStartSessionTimerWithDuration}
                      onSessionTimerPause={handlePauseSessionTimer}
                      onSessionTimerReset={handleResetSessionTimer}
                      timerAudio={timerAudio}

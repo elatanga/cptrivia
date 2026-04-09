@@ -23,7 +23,7 @@ const ToastItem: React.FC<{ toast: ToastMessage; onRemove: () => void }> = ({ to
     // Play sound on mount
     soundService.playToast(toast.type);
 
-    const timer = setTimeout(onRemove, 5000);
+    const timer = setTimeout(onRemove, 750);
     return () => clearTimeout(timer);
   }, [toast.type, onRemove]);
 

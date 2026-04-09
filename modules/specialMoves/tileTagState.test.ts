@@ -47,5 +47,11 @@ describe('tileTagState helpers', () => {
     const state = getTileSpecialMoveTagState(true, false);
     expect(getTileSpecialMoveTagText('DOUBLE_TROUBLE', state)).toBe('DOUBLE OR LOSE');
   });
+
+  it('uses product naming for wins-or-nothing moves', () => {
+    const state = getTileSpecialMoveTagState(true, false);
+    expect(getTileSpecialMoveTagText('DOUBLE_WINS_OR_NOTHING', state)).toBe('DOUBLE YOUR WINS OR NOTHING');
+    expect(getTileSpecialMoveTagText('TRIPLE_WINS_OR_NOTHING', state)).toBe('TRIPLE YOUR WINS OR NOTHING');
+  });
 });
 

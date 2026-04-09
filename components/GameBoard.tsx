@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Zap, Clock } from 'lucide-react';
+import { Zap } from 'lucide-react';
 import { Category, BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
@@ -15,13 +15,10 @@ interface Props {
   overlay?: SMSOverlayDoc | null;
   resolvedSpecialMoveTileIds?: Set<string>;
   resolvedSpecialMoveLabelsByTileId?: Record<string, string>;
-  sessionTimerActive?: boolean;
-  sessionTimeRemaining?: number;
 }
 
-export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay, resolvedSpecialMoveTileIds, resolvedSpecialMoveLabelsByTileId, sessionTimerActive, sessionTimeRemaining }) => {
+export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewSettings, overlay, resolvedSpecialMoveTileIds, resolvedSpecialMoveLabelsByTileId }) => {
   const onSelectQuestionRef = useRef(onSelectQuestion);
-  const previousSessionTimerActiveRef = useRef<boolean | null>(null);
 
   useEffect(() => {
     logger.info("trivia_board_theme_updated", { backgroundTheme: "luxury_light", atIso: new Date().toISOString() });
@@ -31,21 +28,13 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
     onSelectQuestionRef.current = onSelectQuestion;
   }, [onSelectQuestion]);
 
-  useEffect(() => {
-    if (previousSessionTimerActiveRef.current === sessionTimerActive) return;
-    previousSessionTimerActiveRef.current = !!sessionTimerActive;
-    logger.info('trivia_board_session_timer_state_changed', {
-      active: !!sessionTimerActive,
-      remainingSeconds: sessionTimeRemaining ?? null,
-    });
-  }, [sessionTimerActive, sessionTimeRemaining]);
-
   const safeViewSettings = useMemo(() => sanitizeBoardViewSettings(viewSettings), [viewSettings]);
   const viewportWidth = useViewportWidth();
-  const layoutTokens = useMemo(() => getTriviaBoardLayoutTokens(safeViewSettings, viewportWidth), [safeViewSettings, viewportWidth]);
 
   const colCount = categories.length;
   const rowCount = categories[0]?.questions.length || 5;
+
+  const layoutTokens = useMemo(() => getTriviaBoardLayoutTokens(safeViewSettings, viewportWidth, rowCount), [safeViewSettings, viewportWidth, rowCount]);
 
   const boardStyles = {
     '--cat-font-px': `${layoutTokens.categoryTitleFontPx}px`,
@@ -99,8 +88,9 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
               const q = cat.questions[rowIdx];
               if (!q) return <div key={`empty-${cat.id}-${rowIdx}`} className="bg-transparent" />;
               const isPlayable = !q.isAnswered && !q.isVoided;
-              const isArmed = overlay?.deploymentsByTileId?.[q.id]?.status === 'ARMED';
-              const moveType = overlay?.deploymentsByTileId?.[q.id]?.moveType;
+              const overlayDeployment = overlay?.deploymentsByTileId?.[q.id];
+              const moveType = (overlayDeployment?.status === 'ARMED' ? overlayDeployment.moveType : undefined) || q.specialMoveType;
+              const isArmed = !!moveType;
               const isResolved = !!resolvedSpecialMoveTileIds?.has(q.id);
               const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, isResolved);
               const specialMoveTagText = getTileSpecialMoveTagText(moveType, specialMoveTagState, resolvedSpecialMoveLabelsByTileId?.[q.id]);
@@ -166,21 +156,6 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
       className="h-full w-full flex flex-col p-2 md:p-4 font-roboto font-bold select-none min-h-[400px] lg:min-h-0 relative"
       style={boardStyles}
     >
-      {/* SESSION TIMER DISPLAY */}
-      {sessionTimerActive && sessionTimeRemaining !== undefined && (
-        <div className="absolute top-2 right-2 md:top-4 md:right-4 z-20 flex items-center gap-3 bg-black/70 backdrop-blur-sm border border-gold-500/40 rounded-xl px-3 md:px-5 py-2 md:py-3 shadow-xl">
-          <Clock className="w-4 h-4 md:w-5 md:h-5 text-gold-500 flex-shrink-0" />
-          <div className="flex flex-col items-end">
-            <div className="text-[8px] md:text-[9px] uppercase tracking-widest font-black text-zinc-400">Game Time</div>
-            <div className="text-lg md:text-2xl font-black font-mono tabular-nums text-gold-500 drop-shadow-lg leading-none">
-              {Math.floor(sessionTimeRemaining / 60)}:{String(sessionTimeRemaining % 60).padStart(2, '0')}
-            </div>
-          </div>
-          {sessionTimeRemaining <= 60 && (
-            <div className="ml-1 w-1.5 h-1.5 md:w-2 md:h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
-          )}
-        </div>
-      )}
       {boardGrid}
     </div>
   );
