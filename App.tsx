@@ -258,10 +258,16 @@ const App: React.FC = () => {
     }
     if (activeTileMoveTypeRef.current) return;
     const deployment = specialMovesOverlay?.deploymentsByTileId?.[activeTileId];
-    if (deployment?.status === 'ARMED') {
-      setActiveTileMoveType(deployment.moveType as SpecialMoveType | undefined);
+    const activeQuestionFromState = gameState.categories
+      .flatMap((category) => category.questions)
+      .find((question) => question.id === activeTileId);
+    const resolvedMoveType = (deployment?.status === 'ARMED'
+      ? (deployment.moveType as SpecialMoveType | undefined)
+      : undefined) || activeQuestionFromState?.specialMoveType;
+    if (resolvedMoveType) {
+      setActiveTileMoveType(resolvedMoveType);
     }
-  }, [gameState.activeQuestionId, specialMovesOverlay]);
+  }, [gameState.activeQuestionId, gameState.categories, specialMovesOverlay]);
 
   // Tracks remainingSeconds via ref so stopQuestionTimer can log it
   // without capturing questionTimer.remainingSeconds as a dep (which
@@ -1485,7 +1491,10 @@ const App: React.FC = () => {
     soundService.playSound?.('tileOpen');
 
     const deployment = specialMovesOverlayRef.current?.deploymentsByTileId?.[qId];
-    setActiveTileMoveType(deployment?.status === 'ARMED' ? (deployment.moveType as SpecialMoveType | undefined) : undefined);
+    const selectedTileMoveType = (deployment?.status === 'ARMED'
+      ? (deployment.moveType as SpecialMoveType | undefined)
+      : undefined) || q?.specialMoveType;
+    setActiveTileMoveType(selectedTileMoveType);
 
     if (questionTimerEnabled) {
       const selectedDuration = resolveQuestionCountdownDuration(questionTimerDurationRef.current);
@@ -1531,7 +1540,10 @@ const App: React.FC = () => {
     resolvingQuestionIdRef.current = activeQ.id;
 
     const basePoints = (activeQ.isDoubleOrNothing ? activeQ.points * 2 : activeQ.points);
-    const tileMoveType = activeTileMoveTypeRef.current || specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType;
+    const overlayMoveType = specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.status === 'ARMED'
+      ? specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType
+      : undefined;
+    const tileMoveType = activeTileMoveTypeRef.current || overlayMoveType || activeQ.specialMoveType;
     const stealBlocked = isStealBlockedForMove(tileMoveType);
     const resolvesAsFail = action === 'return' && doesReturnResolveAsFail(tileMoveType);
 
@@ -1563,7 +1575,8 @@ const App: React.FC = () => {
             ...q,
             isRevealed: false,
             isAnswered: action === 'award' || action === 'steal' || resolvesAsFail,
-            isVoided: action === 'void' || resolvesAsFail
+            isVoided: action === 'void' || resolvesAsFail,
+            specialMoveType: action === 'return' && !resolvesAsFail ? q.specialMoveType : undefined,
           };
         })
       };

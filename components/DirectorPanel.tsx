@@ -1345,6 +1345,18 @@ export const DirectorPanel: React.FC<Props> = ({
         correlationId: crypto.randomUUID()
       });
 
+      onUpdateState({
+        ...gameState,
+        categories: gameState.categories.map((category) => ({
+          ...category,
+          questions: category.questions.map((question) => (
+            question.id === tileId
+              ? { ...question, specialMoveType: selectedMoveType }
+              : question
+          ))
+        }))
+      });
+
       logger.info('director_special_move_armed', { gameId, tileId, moveType: selectedMoveType });
       emitGameEvent('SPECIAL_MOVE_ARMED', {
         actor: { role: 'director' },
@@ -1385,6 +1397,17 @@ export const DirectorPanel: React.FC<Props> = ({
         actorId: 'director',
         idempotencyKey: crypto.randomUUID(),
         correlationId: crypto.randomUUID()
+      });
+
+      onUpdateState({
+        ...gameState,
+        categories: gameState.categories.map((category) => ({
+          ...category,
+          questions: category.questions.map((question) => {
+            if (!question.specialMoveType) return question;
+            return { ...question, specialMoveType: undefined };
+          })
+        }))
       });
 
       logger.info('director_special_move_armory_cleared', { gameId });

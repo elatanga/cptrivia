@@ -115,6 +115,43 @@ describe('Special Moves Feature Suite', () => {
     expect(await screen.findByText(/MOVE DEPLOYED/i)).toBeInTheDocument();
   });
 
+  it('A4) SYNC REGRESSION: Director arm writes to authoritative tile metadata used by board and question modal', async () => {
+    await setupAndPlay();
+
+    let armedTileId: string | null = null;
+    (specialMovesClient.requestArmTile as any).mockImplementationOnce(async (params: any) => {
+      armedTileId = params.tileId;
+      return { success: true, id: 'req-metadata-sync' };
+    });
+
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(await screen.findByRole('button', { name: /moves tab/i }));
+    fireEvent.click(await screen.findByText('DOUBLE OR LOSE'));
+
+    const clearBtn = await screen.findByRole('button', { name: /wipe all armed tiles/i });
+    const movesPanel = clearBtn.closest('div')?.parentElement?.parentElement ?? document.body;
+    const armTileBtn = within(movesPanel).getAllByRole('button').find((button) => button.textContent?.includes('100'));
+    expect(armTileBtn).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(armTileBtn!);
+    });
+
+    await waitFor(() => {
+      expect(specialMovesClient.requestArmTile).toHaveBeenCalled();
+      expect(armedTileId).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+
+    const boardTag = await screen.findByTestId(`special-move-tile-tag-${armedTileId}`);
+    expect(boardTag).toHaveTextContent('DOUBLE OR LOSE');
+
+    fireEvent.click(boardTag.closest('button')!);
+    const banner = await screen.findByTestId('special-move-banner');
+    expect(banner).toHaveTextContent('DOUBLE OR LOSE');
+  });
+
   it('A0) LABELS: Director tabs show SPECIAL MOVES and SPECIAL MOVES GUIDE', async () => {
     await setupAndPlay();
 

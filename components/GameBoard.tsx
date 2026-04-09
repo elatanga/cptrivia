@@ -88,8 +88,9 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
               const q = cat.questions[rowIdx];
               if (!q) return <div key={`empty-${cat.id}-${rowIdx}`} className="bg-transparent" />;
               const isPlayable = !q.isAnswered && !q.isVoided;
-              const isArmed = overlay?.deploymentsByTileId?.[q.id]?.status === 'ARMED';
-              const moveType = overlay?.deploymentsByTileId?.[q.id]?.moveType;
+              const overlayDeployment = overlay?.deploymentsByTileId?.[q.id];
+              const moveType = (overlayDeployment?.status === 'ARMED' ? overlayDeployment.moveType : undefined) || q.specialMoveType;
+              const isArmed = !!moveType;
               const isResolved = !!resolvedSpecialMoveTileIds?.has(q.id);
               const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, isResolved);
               const specialMoveTagText = getTileSpecialMoveTagText(moveType, specialMoveTagState, resolvedSpecialMoveLabelsByTileId?.[q.id]);
