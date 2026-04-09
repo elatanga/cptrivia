@@ -146,6 +146,67 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
     return initialList;
   });
 
+  const syncBuilderCategories = (nextCatCount: number, nextRowCount: number, nextPointScale: number) => {
+    if (step !== 'BUILDER') return;
+
+    setCategories((prev) => {
+      if (!Array.isArray(prev) || prev.length === 0) return prev;
+
+      const nextCategories: Category[] = Array.from({ length: nextCatCount }).map((_, cIdx) => {
+        const existingCategory = prev[cIdx];
+
+        if (!existingCategory) {
+          const luckyIndex = Math.floor(Math.random() * Math.max(1, nextRowCount));
+          return {
+            id: makeStableId(),
+            title: `Category ${cIdx + 1}`,
+            questions: Array.from({ length: nextRowCount }).map((__, qIdx) => ({
+              id: makeStableId(),
+              text: 'Enter question text...',
+              answer: 'Enter answer...',
+              points: (qIdx + 1) * nextPointScale,
+              isRevealed: false,
+              isAnswered: false,
+              isDoubleOrNothing: qIdx === luckyIndex,
+            })),
+          };
+        }
+
+        const resizedQuestions: Question[] = Array.from({ length: nextRowCount }).map((__, qIdx) => {
+          const existingQuestion = existingCategory.questions[qIdx];
+          if (existingQuestion) {
+            return {
+              ...existingQuestion,
+              points: (qIdx + 1) * nextPointScale,
+            };
+          }
+
+          return {
+            id: makeStableId(),
+            text: 'Enter question text...',
+            answer: 'Enter answer...',
+            points: (qIdx + 1) * nextPointScale,
+            isRevealed: false,
+            isAnswered: false,
+            isDoubleOrNothing: false,
+          };
+        });
+
+        if (!resizedQuestions.some((q) => q.isDoubleOrNothing) && resizedQuestions.length > 0) {
+          resizedQuestions[0] = { ...resizedQuestions[0], isDoubleOrNothing: true };
+        }
+
+        return {
+          ...existingCategory,
+          title: existingCategory.title || `Category ${cIdx + 1}`,
+          questions: resizedQuestions,
+        };
+      });
+
+      return nextCategories;
+    });
+  };
+
   const applyQuickGameMode = (mode: Exclude<QuickGameMode, null>) => {
     if (isLocked) return;
 
@@ -166,12 +227,18 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
       return next;
     });
 
+    const nextCatCount = mode === 'single_player' ? 1 : 2;
+    const nextRowCount = 10;
+    const nextPointScale = 10;
+
     setConfig((prev) => ({
       ...prev,
-      catCount: mode === 'single_player' ? 1 : 2,
-      rowCount: 10,
-      pointScale: 10,
+      catCount: nextCatCount,
+      rowCount: nextRowCount,
+      pointScale: nextPointScale,
     }));
+
+    syncBuilderCategories(nextCatCount, nextRowCount, nextPointScale);
 
     setQuickTimerMode('timed');
     setQuickTimerDurationSeconds(10);
@@ -580,6 +647,18 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
         points: (qIdx + 1) * val
       }))
     })));
+  };
+
+  const handleBuilderCategoryCountChange = (nextCatCount: number) => {
+    const safeCatCount = Math.max(1, Math.min(8, nextCatCount));
+    setConfig((prev) => ({ ...prev, catCount: safeCatCount }));
+    syncBuilderCategories(safeCatCount, config.rowCount, config.pointScale);
+  };
+
+  const handleBuilderRowCountChange = (nextRowCount: number) => {
+    const safeRowCount = Math.max(1, Math.min(10, nextRowCount));
+    setConfig((prev) => ({ ...prev, rowCount: safeRowCount }));
+    syncBuilderCategories(config.catCount, safeRowCount, config.pointScale);
   };
 
   const updateCell = (text: string, answer: string) => {
@@ -1091,8 +1170,26 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
               <button onClick={() => handleAiFillBoard(aiPrompt, aiDifficulty)} disabled={!aiPrompt || isLocked} className="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white font-roboto font-bold rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"><Wand2 className="w-4 h-4" /> Re-populate All</button>
            </div>
            
-           <div className="space-y-4">
+           <div className="space-y-4" data-testid="builder-parity-controls">
               <h4 className="text-[10px] text-zinc-500 uppercase tracking-widest border-b border-zinc-900 pb-1 font-roboto font-bold">Parameters</h4>
+              <div className="space-y-2">
+                 <div className="flex justify-between items-center text-xs text-zinc-400 font-bold">
+                    <span>Categories</span>
+                    <div className="flex items-center gap-2 bg-black p-1 rounded border border-zinc-800">
+                      <button disabled={isLocked} onClick={() => handleBuilderCategoryCountChange(config.catCount - 1)} className="p-1 hover:text-gold-500 transition-colors"><Minus className="w-3 h-3 text-gold-500" /></button>
+                      <span className="w-4 text-center text-white font-mono">{config.catCount}</span>
+                      <button disabled={isLocked} onClick={() => handleBuilderCategoryCountChange(config.catCount + 1)} className="p-1 hover:text-gold-500 transition-colors"><Plus className="w-3 h-3 text-gold-500" /></button>
+                    </div>
+                 </div>
+                 <div className="flex justify-between items-center text-xs text-zinc-400 font-bold">
+                    <span>Rows</span>
+                    <div className="flex items-center gap-2 bg-black p-1 rounded border border-zinc-800">
+                      <button disabled={isLocked} onClick={() => handleBuilderRowCountChange(config.rowCount - 1)} className="p-1 hover:text-gold-500 transition-colors"><Minus className="w-3 h-3 text-gold-500" /></button>
+                      <span className="w-4 text-center text-white font-mono">{config.rowCount}</span>
+                      <button disabled={isLocked} onClick={() => handleBuilderRowCountChange(config.rowCount + 1)} className="p-1 hover:text-gold-500 transition-colors"><Plus className="w-3 h-3 text-gold-500" /></button>
+                    </div>
+                 </div>
+              </div>
               <div className="flex justify-between items-center text-xs text-zinc-400 font-bold">
                  <span>Point Increment</span>
                  <select value={config.pointScale} onChange={e => handlePointScaleChange(parseInt(e.target.value))} className="bg-black border border-zinc-800 rounded p-1 text-gold-500 outline-none font-roboto font-bold">
@@ -1103,6 +1200,160 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
                  <span className="text-xs text-zinc-400 font-bold">Auto-fit Grid</span>
                  <button onClick={() => setIsAutoFit(!isAutoFit)} className={`p-1 rounded ${isAutoFit ? 'text-gold-500 bg-gold-950/30' : 'text-zinc-600 bg-zinc-900'}`}>{isAutoFit ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</button>
               </div>
+
+              <div className="space-y-2 border-t border-zinc-900 pt-3">
+                <h4 className="text-[10px] text-zinc-500 uppercase tracking-widest font-roboto font-bold">Play Mode</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={isLocked}
+                    onClick={() => handlePlayModeSelect('INDIVIDUALS')}
+                    className={`py-2 rounded text-[10px] font-bold border transition-all ${playMode === 'INDIVIDUALS' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                  >
+                    Individuals
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isLocked || quickGameMode !== null}
+                    onClick={() => handlePlayModeSelect('TEAMS')}
+                    className={`py-2 rounded text-[10px] font-bold border transition-all ${playMode === 'TEAMS' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
+                  >
+                    Teams
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 border-t border-zinc-900 pt-3">
+                <h4 className="text-[10px] text-zinc-500 uppercase tracking-widest font-roboto font-bold">Quick Game Setup</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={isLocked || playMode === 'TEAMS'}
+                    onClick={() => applyQuickGameMode('single_player')}
+                    className={`py-2 rounded text-[10px] font-bold border transition-all ${quickGameMode === 'single_player' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
+                  >
+                    1 Player
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isLocked || playMode === 'TEAMS'}
+                    onClick={() => applyQuickGameMode('two_player')}
+                    className={`py-2 rounded text-[10px] font-bold border transition-all ${quickGameMode === 'two_player' ? 'bg-gold-600 border-gold-500 text-black' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
+                  >
+                    2 Players
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 border-t border-zinc-900 pt-3" data-testid="builder-session-timer-section">
+                <h4 className="text-[10px] text-zinc-500 uppercase tracking-widest font-roboto font-bold">Session Timer</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={isLocked}
+                    onClick={() => handleQuickTimerModeSelect('timed')}
+                    className={`py-2 rounded text-[10px] font-bold border transition-all ${quickTimerMode === 'timed' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                  >
+                    Timed
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isLocked}
+                    onClick={() => handleQuickTimerModeSelect('untimed')}
+                    className={`py-2 rounded text-[10px] font-bold border transition-all ${quickTimerMode === 'untimed' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                  >
+                    No Timer
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {SESSION_TIMER_PRESET_SECONDS.map((secs) => (
+                    <button
+                      key={`builder-${secs}`}
+                      type="button"
+                      disabled={isLocked || quickTimerMode !== 'timed'}
+                      onClick={() => { setQuickTimerDurationSeconds(secs); setCustomTimerError(null); }}
+                      className={`px-2 py-1 rounded text-[9px] font-bold border transition-all ${quickTimerDurationSeconds === secs && quickTimerMode === 'timed' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'} disabled:opacity-40`}
+                    >
+                      {secs}s
+                    </button>
+                  ))}
+                </div>
+                <div className={`space-y-1 ${quickTimerMode !== 'timed' ? 'opacity-40 pointer-events-none' : ''}`}>
+                  <div className="flex flex-wrap gap-1 items-center">
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={customTimerValue}
+                      disabled={isLocked || quickTimerMode !== 'timed'}
+                      onChange={(e) => { setCustomTimerValue(e.target.value); setCustomTimerError(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleApplyCustomTimer(); }}
+                      placeholder="5"
+                      className="w-16 bg-black border border-zinc-700 text-white text-[10px] font-mono px-2 py-1 rounded outline-none focus:border-purple-500 disabled:opacity-40"
+                      data-testid="builder-custom-session-timer-input"
+                    />
+                    <select
+                      value={customTimerUnit}
+                      disabled={isLocked || quickTimerMode !== 'timed'}
+                      onChange={(e) => setCustomTimerUnit(e.target.value as SessionTimerUnit)}
+                      className="bg-black border border-zinc-700 text-zinc-300 text-[10px] px-2 py-1 rounded outline-none focus:border-purple-500 disabled:opacity-40"
+                      data-testid="builder-custom-session-timer-unit"
+                    >
+                      <option value="seconds">sec</option>
+                      <option value="minutes">min</option>
+                      <option value="hours">hr</option>
+                    </select>
+                    <button
+                      type="button"
+                      disabled={isLocked || quickTimerMode !== 'timed' || !customTimerValue}
+                      onClick={handleApplyCustomTimer}
+                      className="px-2 py-1 rounded text-[9px] font-black uppercase border border-purple-700 text-purple-300 hover:bg-purple-900/30 disabled:opacity-40 transition-all"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                  {customTimerError && <p className="text-[9px] text-red-400 font-bold">{customTimerError}</p>}
+                </div>
+                <p className="text-[9px] text-zinc-500 font-mono">
+                  {quickTimerMode === 'timed' ? `${quickTimerDurationSeconds}s` : 'off'}
+                </p>
+              </div>
+
+              {playMode === 'INDIVIDUALS' && (
+                <div className="space-y-2 border-t border-zinc-900 pt-3" data-testid="builder-contestants-section">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-[10px] text-zinc-500 uppercase tracking-widest font-roboto font-bold">Contestants</h4>
+                    <button
+                      type="button"
+                      disabled={playerConfigs.length >= MAX_PLAYERS || isLocked}
+                      onClick={handleAddPlayer}
+                      className="text-[9px] text-gold-500 hover:text-white font-black border border-zinc-700 rounded px-2 py-1 disabled:opacity-40"
+                    >
+                      + PLAYER
+                    </button>
+                  </div>
+                  <div className="space-y-1 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                    {playerConfigs.map((player) => (
+                      <div key={player.id} className="flex items-center gap-2">
+                        <input
+                          value={player.name}
+                          onChange={(e) => handlePlayerNameChange(player.id, e.target.value)}
+                          className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-white"
+                          placeholder="ENTER NAME"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePlayer(player.id)}
+                          disabled={isLocked}
+                          className="text-[9px] text-zinc-500 hover:text-red-400 px-1"
+                        >
+                          X
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
            </div>
 
            {playMode === 'TEAMS' && (

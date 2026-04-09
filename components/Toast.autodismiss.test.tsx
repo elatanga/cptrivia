@@ -2,7 +2,7 @@
  * Toast Auto-Dismiss Tests
  *
  * Phase 8 additive tests covering:
- *   A) Log popup appears and auto-dismisses within 1 second
+ *   A) Log popup appears and auto-dismisses in under 1 second
  *   B) Repeated toasts do not remain stuck
  *   C) Regression lock: popup lifetime is brief and non-disruptive
  */
@@ -28,10 +28,10 @@ const makeToast = (id: string, type: ToastMessage['type'] = 'info'): ToastMessag
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// A) AUTO-DISMISS WITHIN 1 SECOND
+// A) AUTO-DISMISS UNDER 1 SECOND
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('A) Toast auto-dismiss within 1 second', () => {
+describe('A) Toast auto-dismiss under 1 second', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -48,21 +48,21 @@ describe('A) Toast auto-dismiss within 1 second', () => {
     expect(screen.getByText('Test toast t1')).toBeInTheDocument();
   });
 
-  it('A2: removeToast is NOT called before 1 second', () => {
+  it('A2: removeToast is NOT called before 750ms', () => {
     const removeToast = vi.fn();
     render(
       <ToastContainer toasts={[makeToast('t2')]} removeToast={removeToast} />
     );
-    act(() => { vi.advanceTimersByTime(999); });
+    act(() => { vi.advanceTimersByTime(749); });
     expect(removeToast).not.toHaveBeenCalled();
   });
 
-  it('A3: removeToast IS called at exactly 1 second', () => {
+  it('A3: removeToast IS called at 750ms', () => {
     const removeToast = vi.fn();
     render(
       <ToastContainer toasts={[makeToast('t3')]} removeToast={removeToast} />
     );
-    act(() => { vi.advanceTimersByTime(1000); });
+    act(() => { vi.advanceTimersByTime(750); });
     expect(removeToast).toHaveBeenCalledWith('t3');
     expect(removeToast).toHaveBeenCalledTimes(1);
   });
@@ -90,7 +90,7 @@ describe('B) Multiple toasts dismiss independently', () => {
     vi.useRealTimers();
   });
 
-  it('B1: each toast fires its own removeToast callback at 1 second', () => {
+  it('B1: each toast fires its own removeToast callback at 750ms', () => {
     const removeToast = vi.fn();
     const toasts: ToastMessage[] = [
       makeToast('ta', 'success'),
@@ -99,9 +99,11 @@ describe('B) Multiple toasts dismiss independently', () => {
     ];
     render(<ToastContainer toasts={toasts} removeToast={removeToast} />);
 
-    expect(screen.getAllByRole('paragraph').length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText('Test toast ta')).toBeInTheDocument();
+    expect(screen.getByText('Test toast tb')).toBeInTheDocument();
+    expect(screen.getByText('Test toast tc')).toBeInTheDocument();
 
-    act(() => { vi.advanceTimersByTime(1000); });
+    act(() => { vi.advanceTimersByTime(750); });
 
     expect(removeToast).toHaveBeenCalledTimes(3);
     expect(removeToast).toHaveBeenCalledWith('ta');
@@ -135,32 +137,32 @@ describe('C) Regression locks — toast lifetime', () => {
     vi.useRealTimers();
   });
 
-  it('C1: toast does NOT auto-dismiss in under 900ms (brief visibility preserved)', () => {
+  it('C1: toast does NOT auto-dismiss in under 700ms (brief visibility preserved)', () => {
     const removeToast = vi.fn();
     render(
       <ToastContainer toasts={[makeToast('r1')]} removeToast={removeToast} />
     );
-    act(() => { vi.advanceTimersByTime(900); });
+    act(() => { vi.advanceTimersByTime(700); });
     expect(removeToast).not.toHaveBeenCalled();
   });
 
-  it('C2: toast DOES auto-dismiss at or after 1000ms', () => {
+  it('C2: toast DOES auto-dismiss at or after 750ms', () => {
     const removeToast = vi.fn();
     render(
       <ToastContainer toasts={[makeToast('r2')]} removeToast={removeToast} />
     );
-    act(() => { vi.advanceTimersByTime(1000); });
+    act(() => { vi.advanceTimersByTime(750); });
     expect(removeToast).toHaveBeenCalledWith('r2');
   });
 
-  it('C3: success/error/info toast types all auto-dismiss within 1 second', () => {
+  it('C3: success/error/info toast types all auto-dismiss in under 1 second', () => {
     const types: Array<ToastMessage['type']> = ['success', 'error', 'info'];
     types.forEach((type) => {
       const removeToast = vi.fn();
       const { unmount } = render(
         <ToastContainer toasts={[makeToast(`type-${type}`, type)]} removeToast={removeToast} />
       );
-      act(() => { vi.advanceTimersByTime(1000); });
+      act(() => { vi.advanceTimersByTime(750); });
       expect(removeToast).toHaveBeenCalledWith(`type-${type}`);
       unmount();
     });

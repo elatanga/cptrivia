@@ -109,10 +109,10 @@ describe('Quick game session timer expiry integration', () => {
     fireEvent.click(within(controls).getByRole('button', { name: 'Start' }));
 
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /End Show/i })).not.toBeInTheDocument();
+      expect(screen.getByTestId('endgame-celebration-modal')).toBeInTheDocument();
     }, { timeout: waitMs });
 
-    expect(screen.getByText(/Template Library/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Template Library/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Game time expired\. Continue or end the game\./i)).not.toBeInTheDocument();
   };
 
