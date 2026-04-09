@@ -266,6 +266,26 @@ describe('TemplateBuilder: Component Lock & Regression Suite', () => {
       expect(screen.getAllByText('50').length).toBeGreaterThanOrEqual(4);
       expect(screen.getAllByText('250').length).toBeGreaterThanOrEqual(4); // Last row (5 * 50)
     });
+
+    it('exposes live-builder parity controls and applies board dimension changes to preview', () => {
+      enterBuilder();
+
+      expect(screen.getByTestId('builder-parity-controls')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Individuals' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Teams' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '1 Player' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '2 Players' })).toBeInTheDocument();
+      expect(screen.getByTestId('builder-session-timer-section')).toBeInTheDocument();
+      expect(screen.getByTestId('builder-contestants-section')).toBeInTheDocument();
+
+      expect(screen.getAllByDisplayValue(/Category \d/)).toHaveLength(4);
+      const categoryIncrementButtons = Array.from(
+        screen.getByTestId('builder-parity-controls').querySelectorAll('button')
+      ).filter((btn) => btn.querySelector('.lucide-plus')) as HTMLButtonElement[];
+      fireEvent.click(categoryIncrementButtons[0]);
+
+      expect(screen.getAllByDisplayValue(/Category \d/)).toHaveLength(5);
+    });
   });
 
   describe('PHASE 3: Persistence Logic', () => {

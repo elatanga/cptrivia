@@ -226,6 +226,7 @@ const App: React.FC = () => {
     [sessionTimer.remainingSeconds]
   );
   const hasEmittedFinalMinuteWarningRef = useRef(false);
+  const hasHandledSessionExpiryRef = useRef(false);
   const questionTimerDurationRef = useRef(questionTimerDurationSeconds);
   const questionTimerEnabledRef = useRef(questionTimerEnabled);
   const sessionTimerEnabledRef = useRef(sessionTimerEnabled);
@@ -247,6 +248,12 @@ const App: React.FC = () => {
   useEffect(() => {
     activeQuickGameModeRef.current = activeQuickGameMode;
   }, [activeQuickGameMode]);
+
+  useEffect(() => {
+    if (!gameState.isGameStarted) {
+      hasHandledSessionExpiryRef.current = false;
+    }
+  }, [gameState.isGameStarted]);
 
   useEffect(() => {
     activeTileMoveTypeRef.current = activeTileMoveType;
@@ -392,7 +399,7 @@ const App: React.FC = () => {
     });
 
     if (shouldAutoEndOnSessionExpiry(activeQuickGameModeRef.current)) {
-      addToast('info', 'Session timer expired. Ending quick game.');
+      addToast('info', 'Session timer expired. Showing results.');
       handleEndGameAfterTimerExpired();
       return;
     }
@@ -420,7 +427,17 @@ const App: React.FC = () => {
   };
 
   const handleEndGameAfterTimerExpired = () => {
-    const voidedCategories = gameState.categories.map((cat) => ({
+    if (hasHandledSessionExpiryRef.current) {
+      return;
+    }
+
+    const current = gameStateRef.current;
+    if (!current.isGameStarted) {
+      return;
+    }
+    hasHandledSessionExpiryRef.current = true;
+
+    const voidedCategories = current.categories.map((cat) => ({
       ...cat,
       questions: cat.questions.map((q) =>
         !q.isAnswered && !q.isVoided ? { ...q, isVoided: true } : q
@@ -428,13 +445,11 @@ const App: React.FC = () => {
     }));
 
     saveGameState({
-      ...gameState,
+      ...current,
       categories: voidedCategories,
-      isGameStarted: false,
       activeQuestionId: null,
       activeCategoryId: null,
-      timer: { ...gameState.timer, endTime: null, isRunning: false },
-      lastPlays: []
+      timer: { ...current.timer, endTime: null, isRunning: false },
     });
 
     emitGameEvent('SESSION_ENDED', {
@@ -443,8 +458,6 @@ const App: React.FC = () => {
     });
 
     setShowTimerExpiredPrompt(false);
-    setIsEndGameCelebrationOpen(false);
-    setHasShownEndGameCelebration(false);
     setQuestionTimer({
       durationSeconds: resolveQuestionCountdownDuration(questionTimerDurationRef.current),
       remainingSeconds: 0,
@@ -455,16 +468,16 @@ const App: React.FC = () => {
       activeQuestionId: null,
     });
     setSessionTimer({
-      durationSeconds: 0,
+      durationSeconds: Math.max(0, Math.floor(sessionTimer.durationSeconds || 0)),
       remainingSeconds: 0,
       isRunning: false,
       isStopped: true,
       startedAt: null,
       endsAt: null,
-      selectedPreset: null,
+      selectedPreset: sessionTimer.selectedPreset || null,
     });
-    setActiveQuickGameMode(null);
-    setViewMode('BOARD');
+    setIsEndGameCelebrationOpen(true);
+    setHasShownEndGameCelebration(true);
   };
 
   const getSoundSnapshot = useCallback(() => {
@@ -1285,6 +1298,7 @@ const App: React.FC = () => {
   // --- GAME LOGIC ---
 
   const handlePlayTemplate = (template: GameTemplate) => {
+    hasHandledSessionExpiryRef.current = false;
     setIsEndGameCelebrationOpen(false);
     setHasShownEndGameCelebration(false);
 

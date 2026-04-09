@@ -51,7 +51,7 @@ export const EndGameCelebrationModal: React.FC<Props> = ({ isOpen, result, onClo
   );
 
   return (
-    <div className="fixed inset-0 z-[100000] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-300">
+    <div data-testid="endgame-celebration-modal" className="fixed inset-0 z-[100000] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-300">
       <div className="w-full max-w-2xl max-h-[calc(100vh-2rem)] relative overflow-hidden rounded-2xl border border-gold-500/40 bg-gradient-to-b from-zinc-950 via-zinc-900 to-black shadow-[0_0_50px_rgba(255,193,7,0.2)] animate-in zoom-in-95 duration-300">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,215,0,0.16),_transparent_55%)]" />
         <button
