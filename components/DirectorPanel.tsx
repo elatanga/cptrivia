@@ -16,6 +16,7 @@ import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
 import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState, getTileSpecialMoveTagText } from '../modules/specialMoves/tileTagState';
+import { normalizeHmsToSeconds, secondsToHms } from '../services/sessionTimerUtils';
 
 interface Props {
   gameState: GameState;
@@ -39,6 +40,7 @@ interface Props {
   sessionTimerEnabled?: boolean;
   onSessionTimerToggle?: (enabled: boolean) => void;
   onSessionTimerStart?: (preset: '15m' | '30m' | '1h' | '1h30m' | '2h') => void;
+  onSessionTimerStartWithDuration?: (durationSeconds: number) => void;
   onSessionTimerPause?: () => void;
   onSessionTimerReset?: () => void;
   timerAudio?: TimerAudioSettings;
@@ -70,6 +72,7 @@ export const DirectorPanel: React.FC<Props> = ({
   sessionTimerEnabled,
   onSessionTimerToggle,
   onSessionTimerStart,
+  onSessionTimerStartWithDuration,
   onSessionTimerPause,
   onSessionTimerReset,
   timerAudio,
@@ -733,6 +736,52 @@ export const DirectorPanel: React.FC<Props> = ({
   );
   const hasActiveTile = !!gameState.activeCategoryId && !!gameState.activeQuestionId;
   const isSessionTimerFeatureEnabled = sessionTimerEnabled ?? true;
+
+  const [questionManualHms, setQuestionManualHms] = useState(() => {
+    const initial = secondsToHms(questionTimerDurationSeconds || 0);
+    return {
+      hours: String(initial.hours),
+      minutes: String(initial.minutes),
+      seconds: String(initial.seconds),
+    };
+  });
+
+  const [sessionManualHms, setSessionManualHms] = useState(() => {
+    const initial = secondsToHms(sessionTimer?.durationSeconds || 0);
+    return {
+      hours: String(initial.hours),
+      minutes: String(initial.minutes),
+      seconds: String(initial.seconds),
+    };
+  });
+
+  useEffect(() => {
+    const next = secondsToHms(questionTimerDurationSeconds || 0);
+    setQuestionManualHms({
+      hours: String(next.hours),
+      minutes: String(next.minutes),
+      seconds: String(next.seconds),
+    });
+  }, [questionTimerDurationSeconds]);
+
+  useEffect(() => {
+    const next = secondsToHms(sessionTimer?.durationSeconds || 0);
+    setSessionManualHms({
+      hours: String(next.hours),
+      minutes: String(next.minutes),
+      seconds: String(next.seconds),
+    });
+  }, [sessionTimer?.durationSeconds]);
+
+  const updateHmsField = (
+    setter: React.Dispatch<React.SetStateAction<{ hours: string; minutes: string; seconds: string }>>,
+    key: 'hours' | 'minutes' | 'seconds',
+    raw: string,
+  ) => {
+    if (!/^\d*$/.test(raw)) return;
+    setter((prev) => ({ ...prev, [key]: raw }));
+  };
+
   const rankedPlayers = useMemo(
     () => [...gameState.players].sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
@@ -2063,6 +2112,54 @@ export const DirectorPanel: React.FC<Props> = ({
                       </button>
                     ))}
                   </div>
+                  <div className="bg-black/30 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="question-timer-manual-hms">
+                    <div className="text-[10px] uppercase tracking-widest font-black text-cyan-200">Manual Duration (H/M/S)</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        aria-label="Question timer hours"
+                        value={questionManualHms.hours}
+                        onChange={(e) => updateHmsField(setQuestionManualHms, 'hours', e.target.value)}
+                        inputMode="numeric"
+                        className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-cyan-500"
+                        placeholder="H"
+                      />
+                      <input
+                        aria-label="Question timer minutes"
+                        value={questionManualHms.minutes}
+                        onChange={(e) => updateHmsField(setQuestionManualHms, 'minutes', e.target.value)}
+                        inputMode="numeric"
+                        className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-cyan-500"
+                        placeholder="M"
+                      />
+                      <input
+                        aria-label="Question timer seconds"
+                        value={questionManualHms.seconds}
+                        onChange={(e) => updateHmsField(setQuestionManualHms, 'seconds', e.target.value)}
+                        inputMode="numeric"
+                        className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-cyan-500"
+                        placeholder="S"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const totalSeconds = normalizeHmsToSeconds(
+                          questionManualHms.hours,
+                          questionManualHms.minutes,
+                          questionManualHms.seconds,
+                        );
+                        if (!totalSeconds) {
+                          addToast('error', 'Enter a valid non-zero Question timer duration.');
+                          return;
+                        }
+                        onQuestionTimerDurationChange?.(totalSeconds);
+                        addToast('info', `Question timer set to ${totalSeconds}s`);
+                      }}
+                      className="w-full px-3 py-2 rounded-lg bg-cyan-700/80 hover:bg-cyan-600 text-white text-[10px] font-black uppercase tracking-widest"
+                    >
+                      Apply Question Timer
+                    </button>
+                  </div>
                   {questionTimer?.isRunning && (
                     <div className="bg-black/40 border border-cyan-500/30 rounded-lg p-3">
                       <div className="text-[12px] text-cyan-300 font-bold mb-2">
@@ -2106,20 +2203,77 @@ export const DirectorPanel: React.FC<Props> = ({
                   </div>
                   <p className="text-[10px] text-zinc-500 uppercase tracking-wide">Session timer controls stay idle while disabled.</p>
                   {!sessionTimer?.remainingSeconds ? (
-                    <div className="flex gap-2 flex-wrap">
-                      {(['15m', '30m', '1h', '1h30m', '2h'] as const).map((preset) => (
+                    <div className="space-y-3">
+                      <div className="flex gap-2 flex-wrap">
+                        {(['15m', '30m', '1h', '1h30m', '2h'] as const).map((preset) => (
+                          <button
+                            key={preset}
+                            onClick={() => {
+                              if (onSessionTimerStart) onSessionTimerStart(preset);
+                              addToast('success', `Game timer started: ${preset}`);
+                            }}
+                            disabled={!isSessionTimerFeatureEnabled}
+                            className="px-4 py-2 rounded-lg font-black text-[11px] uppercase tracking-widest transition-all bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="bg-black/30 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="session-timer-manual-hms">
+                        <div className="text-[10px] uppercase tracking-widest font-black text-purple-200">Manual Duration (H/M/S)</div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <input
+                            aria-label="Session timer hours"
+                            value={sessionManualHms.hours}
+                            onChange={(e) => updateHmsField(setSessionManualHms, 'hours', e.target.value)}
+                            inputMode="numeric"
+                            className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-purple-500"
+                            placeholder="H"
+                          />
+                          <input
+                            aria-label="Session timer minutes"
+                            value={sessionManualHms.minutes}
+                            onChange={(e) => updateHmsField(setSessionManualHms, 'minutes', e.target.value)}
+                            inputMode="numeric"
+                            className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-purple-500"
+                            placeholder="M"
+                          />
+                          <input
+                            aria-label="Session timer seconds"
+                            value={sessionManualHms.seconds}
+                            onChange={(e) => updateHmsField(setSessionManualHms, 'seconds', e.target.value)}
+                            inputMode="numeric"
+                            className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-purple-500"
+                            placeholder="S"
+                          />
+                        </div>
                         <button
-                          key={preset}
-                          onClick={() => {
-                            if (onSessionTimerStart) onSessionTimerStart(preset);
-                            addToast('success', `Game timer started: ${preset}`);
-                          }}
+                          type="button"
                           disabled={!isSessionTimerFeatureEnabled}
-                          className="px-4 py-2 rounded-lg font-black text-[11px] uppercase tracking-widest transition-all bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                          onClick={() => {
+                            const totalSeconds = normalizeHmsToSeconds(
+                              sessionManualHms.hours,
+                              sessionManualHms.minutes,
+                              sessionManualHms.seconds,
+                            );
+                            if (!totalSeconds) {
+                              addToast('error', 'Enter a valid non-zero Session timer duration.');
+                              return;
+                            }
+                            if (onSessionTimerStartWithDuration) {
+                              onSessionTimerStartWithDuration(totalSeconds);
+                            } else {
+                              addToast('error', 'Custom session timer start is unavailable.');
+                              return;
+                            }
+                            addToast('success', `Game timer started: ${totalSeconds}s`);
+                          }}
+                          className="w-full px-3 py-2 rounded-lg bg-purple-700/80 hover:bg-purple-600 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest"
                         >
-                          {preset}
+                          Apply Session Timer
                         </button>
-                      ))}
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-black/40 border border-purple-500/30 rounded-lg p-4">
