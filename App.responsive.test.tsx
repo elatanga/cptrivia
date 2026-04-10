@@ -86,9 +86,13 @@ describe('Responsive Layout Tests', () => {
     expect(screen.getByLabelText(/Champagne Flute/i)).toBeInTheDocument();
 
     const brandLockup = screen.getByTestId('brand-lockup');
-    const brandTitleStack = screen.getByTestId('brand-title-stack');
+    const brandWordmarkStack = screen.getByTestId('brand-wordmark-stack');
+    const brandSubtitle = screen.getByTestId('brand-subtitle');
+    const brandDivider = screen.getByTestId('brand-gold-divider');
     expect(brandLockup).toBeInTheDocument();
-    expect(brandTitleStack).toHaveClass('items-center');
-    expect(brandTitleStack).toHaveClass('text-center');
+    expect(brandWordmarkStack).toBeInTheDocument();
+    expect(brandSubtitle).toBeInTheDocument();
+    expect(brandDivider).toBeInTheDocument();
+    expect(screen.queryByTestId('brand-title-stack')).not.toBeInTheDocument();
   });
 });
