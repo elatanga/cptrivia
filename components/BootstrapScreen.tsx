@@ -2,6 +2,13 @@ import React, { useState } from 'react';
 import { Shield, Loader2, Copy, Check } from 'lucide-react';
 import { authService } from '../services/authService';
 import { soundService } from '../services/soundService';
+import {
+  premiumCreditsContainerClass,
+  premiumCreditsDividerClass,
+  premiumCreditsTextMutedClass,
+  premiumCreditsTextPrimaryClass,
+  premiumCreditsTextSecondaryClass,
+} from './premiumCreditsStyles';
 
 interface Props {
   onComplete: () => void;
@@ -111,7 +118,16 @@ export const BootstrapScreen: React.FC<Props> = ({ onComplete, addToast }) => {
         )}
 
         <div className="mt-12 pt-6 border-t border-gold-900/10 text-center">
-          <p className="text-zinc-700 text-[9px] font-mono uppercase tracking-[0.3em]">CPJS — CruzPham Jeopardy Studios • Security Layer v4.0</p>
+          <div
+            data-testid="bootstrap-footer-credits"
+            className={`mx-auto inline-flex max-w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 ${premiumCreditsContainerClass} px-3 py-1.5`}
+          >
+            <span className={premiumCreditsTextPrimaryClass}>CPJS</span>
+            <span className={premiumCreditsDividerClass} aria-hidden="true">•</span>
+            <span className={premiumCreditsTextSecondaryClass}>CruzPham Jeopardy Studios</span>
+            <span className={premiumCreditsDividerClass} aria-hidden="true">•</span>
+            <span className={premiumCreditsTextMutedClass}>Security Layer v4.0</span>
+          </div>
         </div>
       </div>
     </div>
