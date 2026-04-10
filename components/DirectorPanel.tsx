@@ -15,6 +15,7 @@ import { getTeamsValidationError as getTeamsModeValidationError, resetLiveScores
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
+import { BUILD_GATED_SPECIAL_MOVES, GIFT_SPECIAL_MOVE_TYPES, SPECIAL_MOVE_CATALOG, STANDARD_SPECIAL_MOVE_TYPES } from '../modules/specialMoves/catalog';
 import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState, getTileSpecialMoveTagText } from '../modules/specialMoves/tileTagState';
 import { normalizeHmsToSeconds, secondsToHms } from '../services/sessionTimerUtils';
 
@@ -154,46 +155,25 @@ export const DirectorPanel: React.FC<Props> = ({
   const [newPlayerName, setNewPlayerName] = useState('');
   const [confirmResetAll, setConfirmResetAll] = useState(false);
 
-  const moveLabels: Record<SpecialMoveType, string> = {
-    DOUBLE_TROUBLE: 'DOUBLE OR LOSE',
-    TRIPLE_THREAT: 'TRIPLE OR LOSE',
-    SABOTAGE: 'SAFE BET',
-    MEGA_STEAL: 'LOCKOUT',
-    DOUBLE_WINS_OR_NOTHING: 'DOUBLE YOUR WINS OR NOTHING',
-    TRIPLE_WINS_OR_NOTHING: 'TRIPLE YOUR WINS OR NOTHING',
-    SAFE_BET: 'SAFE BET',
-    LOCKOUT: 'LOCKOUT',
-    SUPER_SAVE: 'SUPER SAVE',
-    GOLDEN_GAMBLE: 'GOLDEN GAMBLE',
-    SHIELD_BOOST: 'SHIELD BOOST',
-    FINAL_SHOT: 'FINAL SHOT',
-  };
+  const moveLabels: Record<SpecialMoveType, string> = useMemo(
+    () => Object.fromEntries(
+      Object.entries(SPECIAL_MOVE_CATALOG).map(([moveType, details]) => [moveType, details.displayTitle])
+    ) as Record<SpecialMoveType, string>,
+    []
+  );
 
-  const standardMoveTypes: SpecialMoveType[] = [
-    'DOUBLE_TROUBLE',
-    'TRIPLE_THREAT',
-    'SAFE_BET',
-    'LOCKOUT',
-    'DOUBLE_WINS_OR_NOTHING',
-    'TRIPLE_WINS_OR_NOTHING',
-  ];
+  const standardMoveTypes: SpecialMoveType[] = STANDARD_SPECIAL_MOVE_TYPES;
 
-  const giftMoveTypes: SpecialMoveType[] = ['SUPER_SAVE', 'GOLDEN_GAMBLE', 'SHIELD_BOOST', 'FINAL_SHOT'];
+  const giftMoveTypes: SpecialMoveType[] = GIFT_SPECIAL_MOVE_TYPES;
 
-  const moveDescriptions: Record<SpecialMoveType, string> = {
-    DOUBLE_TROUBLE: 'Tile only. Correct = 2x. Fail/return = lose tile value. No steal.',
-    TRIPLE_THREAT: 'Tile only. Correct = 3x. Fail/return = lose 130% of tile value. No steal.',
-    SABOTAGE: 'Legacy alias for Safe Bet.',
-    MEGA_STEAL: 'Legacy alias for Lockout.',
-    SAFE_BET: 'Tile only. Correct = +50%. Wrong = no penalty. No steal.',
-    LOCKOUT: 'Tile only. No steal allowed. Normal award, no extra fail penalty.',
-    DOUBLE_WINS_OR_NOTHING: 'Endgame challenge. Top-2 only. Correct doubles total score, wrong resets to 0.',
-    TRIPLE_WINS_OR_NOTHING: 'Endgame challenge. Top-2 only. Correct triples total score, wrong resets to 0.',
-    SUPER_SAVE: 'Gift required. First 3 columns only. Correct = 3x. No steal.',
-    GOLDEN_GAMBLE: 'Gift required. Middle columns only. Correct = +125%. Wrong = -50%. No steal.',
-    SHIELD_BOOST: 'Gift required. Non-final column only. Correct = 2x. Wrong = no penalty. No steal.',
-    FINAL_SHOT: 'Gift required. Last 2 columns only. Correct = 3x. Wrong = lose tile value. No steal.',
-  };
+  const moveDescriptions: Record<SpecialMoveType, string> = useMemo(
+    () => Object.fromEntries(
+      Object.entries(SPECIAL_MOVE_CATALOG).map(([moveType, details]) => [moveType, details.description])
+    ) as Record<SpecialMoveType, string>,
+    []
+  );
+
+  const buildGatedMoveCards = BUILD_GATED_SPECIAL_MOVES;
 
   const backendModeLabels: Record<SMSBackendMode, string> = {
     FUNCTIONS: 'Functions',
@@ -1365,6 +1345,18 @@ export const DirectorPanel: React.FC<Props> = ({
         correlationId: crypto.randomUUID()
       });
 
+      onUpdateState({
+        ...gameState,
+        categories: gameState.categories.map((category) => ({
+          ...category,
+          questions: category.questions.map((question) => (
+            question.id === tileId
+              ? { ...question, specialMoveType: selectedMoveType }
+              : question
+          ))
+        }))
+      });
+
       logger.info('director_special_move_armed', { gameId, tileId, moveType: selectedMoveType });
       emitGameEvent('SPECIAL_MOVE_ARMED', {
         actor: { role: 'director' },
@@ -1405,6 +1397,17 @@ export const DirectorPanel: React.FC<Props> = ({
         actorId: 'director',
         idempotencyKey: crypto.randomUUID(),
         correlationId: crypto.randomUUID()
+      });
+
+      onUpdateState({
+        ...gameState,
+        categories: gameState.categories.map((category) => ({
+          ...category,
+          questions: category.questions.map((question) => {
+            if (!question.specialMoveType) return question;
+            return { ...question, specialMoveType: undefined };
+          })
+        }))
       });
 
       logger.info('director_special_move_armory_cleared', { gameId });
@@ -2429,6 +2432,33 @@ export const DirectorPanel: React.FC<Props> = ({
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-700/60 bg-zinc-900/20 p-4 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-200 font-black">Build-gated Guide Moves</div>
+                  <p className="text-[11px] text-zinc-400 mt-1">Visible for production parity with the reference guide. These remain disabled unless their gameplay systems are enabled.</p>
+                </div>
+                <span className="inline-flex items-center rounded-full border border-zinc-500/50 bg-zinc-800/50 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-zinc-200">Guide Listed</span>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {buildGatedMoveCards.map((move) => (
+                  <button
+                    key={move.id}
+                    type="button"
+                    disabled
+                    aria-label={`${move.displayTitle} build-gated`}
+                    className="rounded-2xl border border-zinc-800 bg-black/35 p-4 text-left opacity-60 cursor-not-allowed"
+                  >
+                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Guide Move</div>
+                    <div className="mt-2 text-sm font-black uppercase tracking-wide text-zinc-200">{move.displayTitle}</div>
+                    <div className="mt-2 text-[10px] text-zinc-400 leading-relaxed">{move.description}</div>
+                    <div className="mt-2 text-[10px] font-black text-amber-300">{move.disabledReason}</div>
+                  </button>
+                ))}
               </div>
             </div>
 

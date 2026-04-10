@@ -48,6 +48,9 @@ describe('BootstrapScreen Regression Suite', () => {
     expect(screen.getByText(/System Bootstrap/i)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/e.g. master_admin/i)).toHaveValue('admin');
     expect(screen.getByRole('button', { name: /Initialize Studio/i })).toBeInTheDocument();
+    expect(screen.getByTestId('bootstrap-footer-credits')).toBeInTheDocument();
+    expect(screen.getByText(/CruzPham Jeopardy Studios/i)).toBeInTheDocument();
+    expect(screen.getByText(/Security Layer v4.0/i)).toBeInTheDocument();
   });
 
   it('2) Trims input and calls bootstrap service exactly once', async () => {

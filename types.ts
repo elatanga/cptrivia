@@ -9,6 +9,7 @@ export interface Question {
   isAnswered: boolean;
   isVoided?: boolean;
   isDoubleOrNothing?: boolean;
+  specialMoveType?: SpecialMoveType;
 }
 
 export interface Category {
