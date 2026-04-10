@@ -3,6 +3,11 @@ import { LogOut, Volume2, VolumeX, HelpCircle, Keyboard, ChevronUp, ChevronDown 
 import { soundService } from '../services/soundService';
 import { ConnectionStatus } from './ConnectionStatus';
 import { HelpModal } from './HelpModal';
+import {
+  premiumCreditsContainerClass,
+  premiumCreditsDividerClass,
+  premiumCreditsTextPrimaryClass,
+} from './premiumCreditsStyles';
 
 // Ultra-realistic Champagne Bottle Icon (premium studio style)
 const ChampagneBottleIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -22,6 +27,10 @@ const ChampagneBottleIcon: React.FC<{ className?: string }> = ({ className }) =>
         <stop offset="35%" stopColor="#d8ad45" stopOpacity="0.85" />
         <stop offset="100%" stopColor="#5e4614" stopOpacity="0.95" />
       </linearGradient>
+      <radialGradient id="cpjsBottleSpec" cx="0.28" cy="0.26" r="0.9">
+        <stop offset="0%" stopColor="#fffef3" stopOpacity="0.8" />
+        <stop offset="100%" stopColor="#fffef3" stopOpacity="0" />
+      </radialGradient>
     </defs>
 
     <rect x="10" y="1.4" width="4" height="1.5" rx="0.35" fill="url(#cpjsBottleFoil)" />
@@ -30,6 +39,8 @@ const ChampagneBottleIcon: React.FC<{ className?: string }> = ({ className }) =>
     <path d="M9.4 6.7 Q7.8 8.8 8.35 12.2 L7.95 16.25 Q8.1 18.9 10.05 20.7 L13.95 20.7 Q15.9 18.9 16.05 16.25 L15.65 12.2 Q16.2 8.8 14.6 6.7 Z" fill="url(#cpjsBottleGlass)" stroke="#f8de8d" strokeWidth="0.45" />
     <path d="M9.55 10.1 Q11.1 9.4 12.2 9.95 Q13.7 10.65 15.45 9.8" stroke="#fff7d3" strokeOpacity="0.45" strokeWidth="0.45" fill="none" />
     <ellipse cx="10.45" cy="11.7" rx="0.95" ry="4.5" fill="#fffdf1" opacity="0.35" />
+    <path d="M8.65 8.3 Q9.9 7.6 11.55 7.75" stroke="url(#cpjsBottleSpec)" strokeWidth="0.7" strokeLinecap="round" fill="none" />
+    <circle cx="12.95" cy="3.25" r="0.23" fill="#fff6d8" opacity="0.9" />
     <ellipse cx="12" cy="20.65" rx="2.05" ry="0.55" fill="#452f08" opacity="0.75" />
   </svg>
 );
@@ -46,10 +57,15 @@ const ChampagneFlute: React.FC<{ className?: string }> = ({ className }) => (
         <stop offset="0%" stopColor="#fff4c7" stopOpacity="0.95" />
         <stop offset="100%" stopColor="#d79f2d" stopOpacity="0.9" />
       </linearGradient>
+      <linearGradient id="cpjsFluteGlass" x1="7" y1="2.6" x2="16.8" y2="12.2">
+        <stop offset="0%" stopColor="#fffbe8" stopOpacity="0.78" />
+        <stop offset="100%" stopColor="#f3d8a2" stopOpacity="0.25" />
+      </linearGradient>
     </defs>
 
     <path d="M7.35 3.1 L8.2 7.35 Q8.55 9.65 9.35 11.3 L14.65 11.3 Q15.45 9.65 15.8 7.35 L16.65 3.1" fill="url(#cpjsFluteChampagne)" stroke="#f4ddb0" strokeWidth="0.5" />
     <path d="M8.25 3.25 Q9.95 2.45 12 2.6 Q14.05 2.45 15.75 3.25" stroke="#fff9e2" strokeOpacity="0.55" strokeWidth="0.45" fill="none" />
+    <path d="M7.35 3.1 L8.2 7.35 Q8.55 9.65 9.35 11.3 L14.65 11.3 Q15.45 9.65 15.8 7.35 L16.65 3.1" fill="none" stroke="url(#cpjsFluteGlass)" strokeWidth="0.45" />
     <ellipse cx="9.65" cy="6.7" rx="1.05" ry="2.9" fill="#ffffff" opacity="0.38" />
     <line x1="11.9" y1="11.3" x2="11.9" y2="17.9" stroke="#eec770" strokeWidth="0.85" strokeLinecap="round" />
     <ellipse cx="11.9" cy="19.05" rx="2.65" ry="0.92" fill="#c9932a" opacity="0.9" stroke="#f4ddb0" strokeWidth="0.45" />
@@ -115,19 +131,19 @@ export const AppShell: React.FC<AppShellProps> = ({ children, activeShowTitle, u
        {/* HEADER: Sticky on Mobile, Fixed on Desktop */}
        <header className="sticky top-0 lg:static flex-none h-14 md:h-16 z-40 bg-black/95 backdrop-blur-sm lg:bg-gradient-to-b lg:from-black lg:via-black/95 lg:to-transparent px-4 md:px-6 flex items-center justify-between border-b border-gold-900/30">
            {/* Left: Branding */}
-           <div data-testid="brand-lockup" className="flex items-center gap-1.5 md:gap-2 min-w-0">
-             <div className="w-4 md:w-5 flex justify-center">
+           <div data-testid="brand-lockup" className="flex items-center gap-1 md:gap-1.5 min-w-0">
+             <div className="w-3.5 md:w-4 flex justify-center">
                <ChampagneBottleIcon className="w-4 h-4 md:w-5 md:h-5 drop-shadow-[0_0_10px_rgba(255,215,0,0.35)]" />
              </div>
              <div data-testid="brand-title-stack" className="flex flex-col items-center text-center leading-none cursor-pointer hover:opacity-85 transition-opacity" onClick={() => soundService.playClick()}>
-               <h1 className="text-xl md:text-2xl font-black tracking-[0.14em] text-gold-200 font-sans">
+               <h1 className="text-xl md:text-2xl font-black tracking-[0.11em] text-gold-200 font-sans">
                  CPJS
                </h1>
-               <p className="mt-0.5 inline-block origin-center whitespace-nowrap text-[8px] md:text-[9px] font-semibold tracking-[0.08em] text-gold-500/85 [transform:scaleX(0.58)] md:[transform:scaleX(0.62)]">
+               <p className="mt-0.5 inline-block origin-center whitespace-nowrap text-[8px] md:text-[9px] font-semibold tracking-[0.09em] text-gold-500/90 [transform:scaleX(0.6)] md:[transform:scaleX(0.64)]">
                  CruzPham Jeopardy Studios
                </p>
              </div>
-             <div className="w-4 md:w-5 flex justify-center">
+             <div className="w-3.5 md:w-4 flex justify-center">
                <ChampagneFlute className="w-4 h-4 md:w-5 md:h-5 drop-shadow-[0_0_10px_rgba(255,215,0,0.35)]" />
              </div>
            </div>
@@ -181,18 +197,18 @@ export const AppShell: React.FC<AppShellProps> = ({ children, activeShowTitle, u
       </main>
 
       {/* FOOTER: Sticky on Mobile, Fixed on Desktop */}
-      <footer className="sticky bottom-0 lg:static flex-none bg-black/95 backdrop-blur-sm lg:bg-black z-40 border-t border-gold-900/30 flex flex-col lg:row items-center justify-between px-4 py-2 gap-3 min-h-[40px] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <div className="flex flex-col lg:flex-row items-center justify-between w-full gap-2">
+      <footer data-testid="app-footer" className="sticky bottom-0 lg:static flex-none bg-black/95 backdrop-blur-sm lg:bg-black z-40 border-t border-gold-900/30 flex flex-col lg:flex-row items-center justify-between px-4 py-2 gap-3 min-h-[40px] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <div data-testid="footer-content-row" className="flex flex-col lg:flex-row lg:flex-wrap items-center lg:items-start justify-between w-full gap-2 md:gap-3 min-w-0">
             {/* Credits */}
-            <div className="text-[9px] font-mono tracking-widest text-gray-600 uppercase flex flex-col md:flex-row items-center gap-1 md:gap-4 text-center md:text-left">
-              <span>CREATED BY EL CRUZPHAM</span>
-              <span className="hidden md:inline text-zinc-800">|</span>
-              <span>POWERED BY CRUZPHAM AGENCY</span>
+            <div data-testid="footer-credits" className={`w-full lg:flex-1 min-w-0 ${premiumCreditsContainerClass} px-3 py-1.5 ${premiumCreditsTextPrimaryClass} flex flex-wrap items-center justify-center lg:justify-start gap-x-3 gap-y-1 text-center lg:text-left`}>
+              <span data-testid="credit-created-by" className="whitespace-nowrap">Created by El CruzPham</span>
+              <span className={premiumCreditsDividerClass} aria-hidden="true">•</span>
+              <span data-testid="credit-powered-by" className="whitespace-nowrap">Powered by CruzPham Agency</span>
             </div>
             
             {/* Shortcuts Panel (Dynamic & Collapsible on Mobile) */}
             {shortcuts && (
-              <div className="w-full lg:w-auto flex flex-col items-center">
+              <div className="w-full lg:w-auto flex flex-col items-center shrink-0">
                 {/* Mobile Toggle */}
                 <button 
                   onClick={() => setShowShortcutsMobile(!showShortcutsMobile)}
@@ -211,8 +227,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children, activeShowTitle, u
             )}
 
             {/* Sound Controls */}
-            <div className="relative" ref={sliderRef}>
-               <div 
+            <div className="relative shrink-0" ref={sliderRef}>
+               <div
                  className="flex items-center gap-2 text-zinc-500 hover:text-gold-500 transition-colors text-[10px] uppercase font-bold tracking-wider cursor-pointer select-none bg-zinc-900/50 px-2 py-1 rounded"
                  onClick={() => setShowVolSlider(!showVolSlider)}
                >
