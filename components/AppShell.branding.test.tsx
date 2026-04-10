@@ -42,10 +42,14 @@ describe('AppShell branding and credits', () => {
 
     const lockup = screen.getByTestId('brand-lockup');
     const titleStack = screen.getByTestId('brand-wordmark-stack');
+    const subtitle = screen.getByTestId('brand-subtitle');
 
-    expect(lockup.className).toContain('gap-1');
+    expect(lockup.className).toContain('gap-0');
     expect(titleStack.className).toContain('flex-col');
     expect(titleStack.className).toContain('text-center');
+    expect(titleStack.className).toContain('w-fit');
+    expect(subtitle.className).toContain('w-full');
+    expect(subtitle.className).toContain('overflow-hidden');
   });
 
   it('renders footer credits as wrapped premium groups with no overlap-prone row class', () => {
