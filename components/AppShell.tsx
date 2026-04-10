@@ -136,15 +136,15 @@ export const AppShell: React.FC<AppShellProps> = ({ children, activeShowTitle, u
        {/* HEADER: Sticky on Mobile, Fixed on Desktop */}
        <header className="sticky top-0 lg:static flex-none h-14 md:h-16 z-40 bg-black/95 backdrop-blur-sm lg:bg-gradient-to-b lg:from-black lg:via-black/95 lg:to-transparent px-4 md:px-6 flex items-center justify-between border-b border-gold-900/30">
            {/* Left: Branding */}
-           <div data-testid="brand-lockup" className="flex items-center gap-0.5 md:gap-1 min-w-0 rounded-lg border border-[#4a67db]/45 px-1.5 py-0.5 bg-[radial-gradient(circle_at_50%_35%,rgba(75,129,255,0.34),rgba(10,20,64,0.82)_70%)] shadow-[inset_0_0_18px_rgba(85,129,255,0.35),0_0_22px_rgba(18,51,140,0.35)]">
-             <div className="w-5 md:w-6 flex justify-center shrink-0">
+           <div data-testid="brand-lockup" className="flex items-center gap-0 min-w-0 rounded-lg border border-[#4a67db]/45 px-1.5 py-0.5 bg-[radial-gradient(circle_at_50%_35%,rgba(75,129,255,0.34),rgba(10,20,64,0.82)_70%)] shadow-[inset_0_0_18px_rgba(85,129,255,0.35),0_0_22px_rgba(18,51,140,0.35)]">
+             <div className="flex justify-center shrink-0">
                <ChampagneBottleIcon className="w-4 h-5 md:w-5 md:h-6 drop-shadow-[0_0_10px_rgba(255,214,118,0.5)]" />
              </div>
              <button
                type="button"
                data-testid="brand-wordmark-stack"
                aria-label="CPJS logo"
-                className="group min-w-0 flex flex-col items-center text-center leading-none hover:opacity-90 transition-opacity"
+                className="group relative min-w-0 inline-flex w-fit flex-col items-center text-center leading-none pb-[0.72rem] md:pb-[0.9rem] hover:opacity-90 transition-opacity"
                onClick={() => soundService.playClick()}
              >
                <h1
@@ -154,17 +154,17 @@ export const AppShell: React.FC<AppShellProps> = ({ children, activeShowTitle, u
                </h1>
                <span
                  data-testid="brand-gold-divider"
-                  className="mt-0.5 h-px w-[128px] md:w-[166px] bg-gradient-to-r from-transparent via-[#f1c14f] to-transparent"
+                  className="absolute bottom-[0.45rem] md:bottom-[0.58rem] left-1/2 -translate-x-1/2 h-px w-full max-w-full bg-gradient-to-r from-transparent via-[#f1c14f] to-transparent"
                  aria-hidden="true"
                />
                <p
                  data-testid="brand-subtitle"
-                  className="mt-0.5 whitespace-nowrap text-[8px] md:text-[10px] font-semibold italic tracking-[0.02em] text-[#f0cb74] [text-shadow:0_1px_8px_rgba(244,196,87,0.24)]"
+                   className="absolute bottom-0 left-1/2 -translate-x-1/2 w-full max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[7px] md:text-[8px] font-semibold italic tracking-[0.01em] text-[#f0cb74] [text-shadow:0_1px_8px_rgba(244,196,87,0.24)]"
                >
                  CruzPham Jeopardy Studios
                </p>
              </button>
-             <div className="w-5 md:w-6 flex justify-center shrink-0">
+             <div className="flex justify-center shrink-0">
                <ChampagneFlute className="w-4 h-5 md:w-5 md:h-6 drop-shadow-[0_0_10px_rgba(255,214,118,0.5)]" />
              </div>
            </div>
