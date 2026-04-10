@@ -23,11 +23,14 @@ describe('AppShell branding and credits', () => {
     );
 
     expect(screen.getByTestId('brand-lockup')).toBeInTheDocument();
-    expect(screen.getByTestId('brand-title-stack')).toBeInTheDocument();
+    expect(screen.getByTestId('brand-wordmark-stack')).toBeInTheDocument();
+    expect(screen.getByTestId('brand-gold-divider')).toBeInTheDocument();
+    expect(screen.getByTestId('brand-subtitle')).toBeInTheDocument();
     expect(screen.getByLabelText(/champagne bottle/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/champagne flute/i)).toBeInTheDocument();
     expect(screen.getByText('CPJS')).toBeInTheDocument();
     expect(screen.getByText(/CruzPham Jeopardy Studios/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('brand-title-stack')).not.toBeInTheDocument();
   });
 
   it('uses tightened lockup spacing and stable centered brand stack classes', () => {
@@ -38,10 +41,10 @@ describe('AppShell branding and credits', () => {
     );
 
     const lockup = screen.getByTestId('brand-lockup');
-    const titleStack = screen.getByTestId('brand-title-stack');
+    const titleStack = screen.getByTestId('brand-wordmark-stack');
 
     expect(lockup.className).toContain('gap-1');
-    expect(titleStack.className).toContain('items-center');
+    expect(titleStack.className).toContain('flex-col');
     expect(titleStack.className).toContain('text-center');
   });
 
