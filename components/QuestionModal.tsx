@@ -495,27 +495,48 @@ export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalI
 
       {/* STEAL SELECTION OVERLAY */}
       {showStealSelect && (
-        <div className="fixed inset-0 bg-black/98 z-[10000] flex flex-col items-center justify-center p-6 animate-in fade-in duration-300">
-          <h3 className="text-purple-500 font-black text-2xl md:text-6xl mb-8 md:mb-16 uppercase tracking-[0.2em] text-center drop-shadow-2xl">Who is stealing?</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-8 w-full max-w-7xl px-4">
-            {players.filter(p => p.id !== selectedPlayerId).map(p => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onClose('steal', p.id); }}
-                className="bg-zinc-900 border-2 md:border-4 border-zinc-800 hover:border-purple-500 hover:bg-purple-900/30 p-8 md:p-14 rounded-[2rem] text-xl md:text-5xl font-black text-white transition-all transform active:scale-95 shadow-2xl uppercase tracking-tighter"
-              >
-                {p.name}
-              </button>
-            ))}
-          </div>
-          <button 
-            type="button" 
-            onClick={(e) => { e.stopPropagation(); setShowStealSelect(false); }} 
-            className="mt-12 md:mt-24 text-zinc-500 hover:text-white uppercase text-sm md:text-2xl font-black tracking-widest transition-colors border-b border-zinc-800 hover:border-white pb-2"
+        <div
+          data-testid="steal-overlay"
+          className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[10000] flex items-center justify-center p-4 md:p-8 animate-in fade-in duration-300"
+        >
+          {/* Inner luxury panel */}
+          <div
+            data-testid="steal-panel"
+            className="relative w-full max-w-5xl bg-zinc-900 border border-purple-500/40 rounded-[2.5rem] shadow-[0_0_80px_rgba(168,85,247,0.25),0_32px_80px_rgba(0,0,0,0.9)] p-8 md:p-14 flex flex-col items-center gap-8 md:gap-12 overflow-hidden"
           >
-            Cancel Steal
-          </button>
+            {/* Luxury top glow accent line */}
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2/3 h-px bg-gradient-to-r from-transparent via-purple-400/70 to-transparent pointer-events-none" aria-hidden="true" />
+            {/* Inner ambient gradient overlay */}
+            <div className="absolute inset-0 bg-gradient-to-b from-purple-950/20 via-transparent to-transparent pointer-events-none rounded-[2.5rem]" aria-hidden="true" />
+
+            {/* Title */}
+            <h3 className="relative z-10 text-purple-300 font-black text-3xl md:text-6xl uppercase tracking-[0.2em] text-center drop-shadow-[0_0_28px_rgba(168,85,247,0.65)]">
+              Who is stealing?
+            </h3>
+
+            {/* Player selection grid */}
+            <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 w-full">
+              {players.filter(p => p.id !== selectedPlayerId).map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onClose('steal', p.id); }}
+                  className="bg-zinc-800 border-2 border-purple-500/50 hover:border-purple-400 hover:bg-purple-900/40 p-8 md:p-12 rounded-2xl text-xl md:text-4xl font-black text-white transition-all transform hover:scale-105 active:scale-95 shadow-[0_4px_24px_rgba(0,0,0,0.6)] hover:shadow-[0_4px_40px_rgba(168,85,247,0.4)] uppercase tracking-tighter"
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+
+            {/* Cancel button */}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setShowStealSelect(false); }}
+              className="relative z-10 text-zinc-400 hover:text-white uppercase text-sm md:text-lg font-black tracking-widest transition-all border border-zinc-700 hover:border-zinc-400 rounded-full px-8 py-3 hover:bg-zinc-800/60"
+            >
+              Cancel Steal
+            </button>
+          </div>
         </div>
       )}
     </div>
