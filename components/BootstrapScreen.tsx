@@ -31,6 +31,11 @@ export const BootstrapScreen: React.FC<Props> = ({ onComplete, addToast }) => {
       setMasterToken(token);
       addToast('success', 'Master Admin Created Successfully');
     } catch (err: any) {
+      if (err?.code === 'ERR_BOOTSTRAP_COMPLETE') {
+        addToast('info', err.message || 'System already bootstrapped. Proceeding to login.');
+        onComplete();
+        return;
+      }
       addToast('error', err.message || 'Bootstrap failed');
     } finally {
       setIsLoading(false);
