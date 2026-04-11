@@ -25,6 +25,7 @@ import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecora
 import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specialMoves/logic';
 import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
 import { getSpecialMoveCatalogEntry, getSpecialMoveDisplayTitle } from './modules/specialMoves/catalog';
+import { resolveQuestionActionPoints } from './modules/gameplay/resolveQuestionActionPoints';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
 import { getNextPlayerSelection, getInitialAutoSelectedPlayer } from './services/playerSelectionCycler';
@@ -1554,13 +1555,14 @@ const App: React.FC = () => {
       return;
     }
 
-    const points = (action === 'award' || action === 'steal' || resolvesAsFail)
-      ? applySpecialMovesDecorator(basePoints, {
-          tileId: activeQ.id,
-          moveType: tileMoveType,
-          outcome: action === 'award' ? 'AWARD' : action === 'steal' ? 'STEAL' : 'FAIL'
-        })
-      : basePoints;
+    const points = resolveQuestionActionPoints({
+      action,
+      resolvesAsFail,
+      basePoints,
+      tileId: activeQ.id,
+      moveType: tileMoveType,
+      applyDecorator: applySpecialMovesDecorator,
+    });
     const specialMoveName = getSpecialMoveDisplayName(tileMoveType);
     const shouldTrackSpecialMoveUsage = Boolean(tileMoveType) && (action === 'award' || action === 'steal' || resolvesAsFail);
 
