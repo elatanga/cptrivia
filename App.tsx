@@ -1795,8 +1795,8 @@ const App: React.FC = () => {
     }
 
     // AUTO-ADVANCE PLAYER SELECTION AFTER PLAY COMPLETION
-    // Only advance if this was a scored play (award, steal, or fail resolution)
-    const shouldAutoAdvance = action === 'award' || action === 'steal' || resolvesAsFail;
+    // Authoritative rule: VOID advances turn; RETURN never advances turn.
+    const shouldAutoAdvance = action === 'award' || action === 'steal' || action === 'void';
     if (shouldAutoAdvance && newPlayers.length > 0) {
       const autoAdvanceFromTeamId = scoringTargetId || current.selectedPlayerId;
       const nextSelectedPlayerId =
