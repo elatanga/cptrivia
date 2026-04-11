@@ -56,7 +56,7 @@ describe('Settings Integration: Visual Propagation', () => {
 
     // 2. Adjust to XL
     const clickScale = (groupLabel: string, option: string) => {
-      const group = screen.getByText(groupLabel).closest('.space-y-3');
+      const group = screen.getByText(groupLabel).closest('.space-y-3') as HTMLElement | null;
       if (!group) throw new Error(`Missing settings group: ${groupLabel}`);
       fireEvent.click(within(group).getByRole('button', { name: option }));
     };

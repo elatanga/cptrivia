@@ -10,33 +10,35 @@ service cloud.firestore {
     // Writes are primarily handled via Cloud Functions (Admin SDK).
 
     // 1. TOKEN REQUESTS
-    // Allow read for Admins (in this context, we allow read to support the Admin Panel UI).
-    // Writes are strictly restricted to Cloud Functions (Server Authoritative) to ensure ID generation and notification triggers.
+    // All reads/writes must flow through Cloud Functions so request review and notification state stay authoritative.
     match /token_requests/{requestId} {
-      allow read: if true; 
-      allow create, update, delete: if false; // Must use Cloud Functions
+      allow read, create, update, delete: if false;
     }
 
     // 2. USERS
-    // Required: 'read' must be true so the LoginScreen can query `where("username", "==", input)`
-    // Writes are strictly forbidden from client; must use `authService` (Cloud Functions).
+    // Client access is blocked; login and admin reads must use authoritative backend callables.
     match /users/{userId} {
-      allow read: if true;
-      allow write: if false; 
+      allow read, write: if false;
     }
 
     // 3. SYSTEM BOOTSTRAP
-    // Required: App must check this on load to decide whether to show Login or Bootstrap screen.
+    // Bootstrap status is resolved via backend callable only so cache clearing cannot influence setup visibility.
     match /system_bootstrap/config {
-      allow read: if true;
-      allow write: if false; // Only via Cloud Function bootstrapSystem
+      allow read, write: if false;
+    }
+
+    match /system_bootstrap/recovery {
+      allow read, write: if false;
     }
     
     // 4. AUDIT LOGS
-    // Allow client to write logs (e.g. login attempts)
+    // Audit writes/reads must be server-side to preserve integrity.
     match /audit_logs/{logId} {
-      allow create: if true;
-      allow read: if true;
+      allow read, create, update, delete: if false;
+    }
+
+    match /studio_sessions/{sessionId} {
+      allow read, write: if false;
     }
   }
 }

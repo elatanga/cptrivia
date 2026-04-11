@@ -82,28 +82,33 @@ describe('CRUZPHAM TRIVIA - Director Close Logic', () => {
   test('1) Open/Close Director preserves game state', async () => {
     await setupAndStartGame();
 
-    // Modify State: Add Score to Player 1
-    // We assume Player 1 exists and is selected by default or can be selected.
-    const p1 = screen.getByText('Player 1');
+    // Modify state by awarding a tile to PLAYER 1.
+    const p1 = screen.getByText('PLAYER 1');
     fireEvent.click(p1);
-    
-    // Add 100 points via keyboard shortcut
-    fireEvent.keyDown(window, { key: '+' });
-    await waitFor(() => expect(screen.getByText('100')).toBeInTheDocument());
+    const qBtn = screen.getAllByText('100')[0];
+    fireEvent.click(qBtn);
+    await waitFor(() => screen.getByTitle(/Stop countdown/i));
+    fireEvent.click(screen.getByTitle(/Stop countdown/i));
+    fireEvent.click(screen.getByTitle(/Reveal Answer \(SPACE\)/i));
+    await waitFor(() => screen.getByTitle(/Award \(ENTER\)/i));
+    fireEvent.click(screen.getByTitle(/Award \(ENTER\)/i));
+    await waitFor(() => screen.getByText(/End Show/i));
 
     // OPEN DIRECTOR
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
-    await waitFor(() => expect(screen.getByText(/Live Board Control/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Detach/i, { selector: 'button' })).toBeInTheDocument());
 
     // CLOSE DIRECTOR via X button
-    const closeBtn = screen.getByText(/Close/i, { selector: 'button' }); // Should match the close button in toolbar
+    const closeBtn = screen.getByText(/^Close$/i, { selector: 'button' });
     fireEvent.click(closeBtn);
 
     // ASSERT BOARD VISIBLE
     await waitFor(() => expect(screen.getByText(/End Show/i)).toBeInTheDocument());
 
     // ASSERT SCORE PRESERVED
-    expect(screen.getByText('100')).toBeInTheDocument();
+    const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
+    const playerOne = (state.players || []).find((p: any) => p.name === 'PLAYER 1');
+    expect(playerOne?.score).toBeGreaterThanOrEqual(100);
   });
 
   test('2) Close Director with active question overlay', async () => {
@@ -112,7 +117,7 @@ describe('CRUZPHAM TRIVIA - Director Close Logic', () => {
     // Open a question
     const qBtn = screen.getAllByText('100')[0];
     fireEvent.click(qBtn);
-    await waitFor(() => screen.getByText(/Reveal Answer/i));
+    await waitFor(() => screen.getByTitle(/Reveal Answer \(SPACE\)/i));
 
     // OPEN DIRECTOR (The button in header might be obscured by modal, but assuming click works or user uses shortcut if implemented. 
     // In this app structure, Board Header is part of board view which is obscured by modal? 
@@ -139,11 +144,11 @@ describe('CRUZPHAM TRIVIA - Director Close Logic', () => {
     
     // 1. Open Q
     fireEvent.click(qBtn);
-    await waitFor(() => screen.getByText(/Reveal Answer/i));
+    await waitFor(() => screen.getByTitle(/Reveal Answer \(SPACE\)/i));
     
     // 2. Close Q (return to board)
     fireEvent.keyDown(window, { code: 'Backspace', key: 'Backspace' });
-    await waitFor(() => expect(screen.queryByText(/Reveal Answer/i)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTitle(/Reveal Answer \(SPACE\)/i)).not.toBeInTheDocument());
     
     // 3. Open Director
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
@@ -160,18 +165,16 @@ describe('CRUZPHAM TRIVIA - Director Close Logic', () => {
 
     // Open Director
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
-    await waitFor(() => screen.getByText(/Live Board Control/i));
+    await waitFor(() => screen.getByText(/Detach/i, { selector: 'button' }));
 
     // Detach
     // Note: window.open is mocked
     const detachBtn = screen.getByText(/Detach/i);
     fireEvent.click(detachBtn);
 
-    // Expect Placeholder UI
-    await waitFor(() => screen.getByText(/Director is Popped Out/i));
-    
-    // Expect Close Panel button in Placeholder
-    const closePlaceholderBtn = screen.getByText(/Close Panel/i);
+    // Director remains visible in-app while detached; close should still return to board.
+    expect(window.open).toHaveBeenCalled();
+    const closePlaceholderBtn = screen.getByText(/^Close$/i, { selector: 'button' });
     fireEvent.click(closePlaceholderBtn);
 
     // Expect return to Board

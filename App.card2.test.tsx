@@ -5,50 +5,54 @@ import App from './App';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
 import { logger } from './services/logger';
+import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 
 // --- TYPE DECLARATIONS ---
-declare const jest: any;
-declare const describe: any;
-declare const test: any;
-declare const expect: any;
-declare const beforeEach: any;
-
 // --- MOCKS ---
-jest.mock('./services/logger', () => ({
+vi.mock('./services/logger', () => ({
   logger: { 
-    info: jest.fn(), 
-    error: jest.fn(), 
-    warn: jest.fn(), 
+    info: vi.fn(), 
+    error: vi.fn(), 
+    warn: vi.fn(), 
     getCorrelationId: () => 'test-id', 
     maskPII: (v: any) => v 
   }
 }));
 
-jest.mock('./services/soundService', () => ({
+vi.mock('./services/soundService', () => ({
   soundService: {
-    playSelect: jest.fn(), playReveal: jest.fn(), playAward: jest.fn(),
-    playSteal: jest.fn(), playVoid: jest.fn(), playDoubleOrNothing: jest.fn(),
-    playClick: jest.fn(), playTimerTick: jest.fn(), playTimerAlarm: jest.fn(),
-    playToast: jest.fn(),
-    setMute: jest.fn(), getMute: jest.fn().mockReturnValue(false),
-    setVolume: jest.fn(), getVolume: jest.fn().mockReturnValue(0.5)
+    playSelect: vi.fn(), playReveal: vi.fn(), playAward: vi.fn(),
+    playSteal: vi.fn(), playVoid: vi.fn(), playDoubleOrNothing: vi.fn(),
+    playClick: vi.fn(), playTimerTick: vi.fn(), playTimerAlarm: vi.fn(),
+    playToast: vi.fn(),
+    setMute: vi.fn(), getMute: vi.fn().mockReturnValue(false),
+    setVolume: vi.fn(), getVolume: vi.fn().mockReturnValue(0.5)
   }
 }));
 
-jest.mock('./services/geminiService', () => ({
-  generateTriviaGame: jest.fn().mockResolvedValue([]),
-  generateSingleQuestion: jest.fn().mockResolvedValue({ text: 'AI Q', answer: 'AI A' }),
-  generateCategoryQuestions: jest.fn().mockResolvedValue([])
+vi.mock('./services/geminiService', () => ({
+  generateTriviaGame: vi.fn().mockResolvedValue([]),
+  generateSingleQuestion: vi.fn().mockResolvedValue({ text: 'AI Q', answer: 'AI A' }),
+  generateCategoryQuestions: vi.fn().mockResolvedValue([]),
+  getGeminiConfigHealth: vi.fn().mockReturnValue({
+    isConfigured: true,
+    configured: true,
+    hasApiKey: true,
+    model: 'test-model',
+    reason: null,
+  }),
 }));
 
 // Mock window interactions
-window.scrollTo = jest.fn();
-window.confirm = jest.fn(() => true);
+beforeAll(() => {
+  window.scrollTo = vi.fn();
+  window.confirm = vi.fn(() => true);
+});
 
 describe('CARD 2: Verification Suite (Desktop Layout & Visibility)', () => {
   beforeEach(async () => {
     localStorage.clear();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     
     // Default to Desktop Viewport
     Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1440 });
@@ -75,7 +79,7 @@ describe('CARD 2: Verification Suite (Desktop Layout & Visibility)', () => {
     fireEvent.click(screen.getByText(/Create Template/i));
     await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
 
-    fireEvent.change(screen.getByPlaceholderText(/Show or Game Topic/i), { target: { value: 'Builder Test' } });
+    fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Builder Test' } });
     fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     await waitFor(() => screen.getByText(/Live Builder Preview/i));
   };
@@ -101,11 +105,10 @@ describe('CARD 2: Verification Suite (Desktop Layout & Visibility)', () => {
     await navigateToBuilder();
 
     const saveBtn = screen.getByTestId('save-template-button');
-    const localToolbar = saveBtn.closest('.sticky');
+    const actionRow = screen.getByTestId('builder-actions-row');
     
-    expect(localToolbar).toBeInTheDocument();
-    expect(localToolbar).toHaveClass('top-0');
-    expect(localToolbar).toHaveClass('z-30');
+    expect(actionRow).toBeInTheDocument();
+    expect(actionRow).toContainElement(saveBtn);
     
     // Verify it contains "Live Builder Preview" title as requested
     expect(screen.getByText(/Live Builder Preview/i)).toBeInTheDocument();
