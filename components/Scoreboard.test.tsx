@@ -272,4 +272,24 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
     expect(onRestart).toHaveBeenCalledTimes(1);
     expect(onStop).toHaveBeenCalledTimes(1);
   });
+
+  it('I) MANUAL SELECT: clicking a scoreboard player row calls onSelectPlayer with that id', () => {
+    const players = generatePlayers(3);
+    const onSelectPlayer = vi.fn();
+
+    render(
+      <Scoreboard
+        players={players}
+        selectedPlayerId={players[0].id}
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={onSelectPlayer}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    fireEvent.click(screen.getByText('PLAYER 2'));
+    expect(onSelectPlayer).toHaveBeenCalledWith(players[1].id);
+  });
 });
