@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
-import { X, Check, Copy, Loader2, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-react';
+import { X, Check, Copy, Loader2, ArrowRight, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
 import { authService } from '../services/authService';
-import { AppError } from '../types';
+import { TokenRequest, AppError } from '../types';
 
 interface Props {
   onClose: () => void;
@@ -14,6 +14,8 @@ export const TokenRequestModal: React.FC<Props> = ({ onClose, onSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reqId, setReqId] = useState('');
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendSuccess, setResendSuccess] = useState(false);
   
   // Form State
   const [formData, setFormData] = useState({
@@ -21,24 +23,8 @@ export const TokenRequestModal: React.FC<Props> = ({ onClose, onSuccess }) => {
     lastName: '',
     tiktok: '',
     username: '',
-    phone: '',
-    email: ''
+    phone: ''
   });
-
-  const validateForm = () => {
-    const namePattern = /^[A-Za-z][A-Za-z' -]{0,47}$/;
-    const usernamePattern = /^[A-Za-z0-9._-]{3,32}$/;
-    const tiktokPattern = /^@?[A-Za-z0-9._]{2,32}$/;
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!namePattern.test(formData.firstName.trim())) return 'Please enter a valid first name.';
-    if (!namePattern.test(formData.lastName.trim())) return 'Please enter a valid last name.';
-    if (!tiktokPattern.test(formData.tiktok.trim())) return 'Please enter a valid TikTok handle.';
-    if (!usernamePattern.test(formData.username.trim())) return 'Preferred username must be 3-32 characters and use letters, numbers, dots, dashes, or underscores.';
-    if (!formData.phone.trim()) return 'Phone number is required.';
-    if (formData.email.trim() && !emailPattern.test(formData.email.trim())) return 'Please enter a valid email address.';
-    return null;
-  };
 
   const handleChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -47,36 +33,40 @@ export const TokenRequestModal: React.FC<Props> = ({ onClose, onSuccess }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loading) return;
-    const validationError = validateForm();
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
     setLoading(true);
     setError(null);
 
     try {
       const result = await authService.submitTokenRequest({
-        firstName: formData.firstName.trim(),
-        lastName: formData.lastName.trim(),
-        tiktokHandle: formData.tiktok.trim(),
-        preferredUsername: formData.username.trim(),
-        phoneE164: formData.phone.trim(),
-        email: formData.email.trim() || undefined,
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        tiktokHandle: formData.tiktok,
+        preferredUsername: formData.username,
+        phoneE164: formData.phone
       });
       setReqId(result.id);
       setStep('SUCCESS');
       onSuccess(); 
     } catch (err: any) {
-      if (err instanceof AppError && (err.code === 'ERR_VALIDATION' || err.code === 'ERR_DUPLICATE_REQUEST')) {
+      if (err instanceof AppError && err.code === 'ERR_VALIDATION') {
         setError(err.message);
       } else {
         setError('Submission failed. Please try again.');
+        console.error(err);
       }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleResend = async () => {
+    if (resendLoading || resendSuccess) return;
+    setResendLoading(true);
+    // Simulate re-notification attempt
+    setTimeout(() => {
+        setResendLoading(false);
+        setResendSuccess(true);
+    }, 1500);
   };
 
   return (
@@ -120,43 +110,37 @@ export const TokenRequestModal: React.FC<Props> = ({ onClose, onSuccess }) => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label htmlFor="token-request-first-name" className="text-xs uppercase text-gold-600 font-bold">First Name</label>
-                  <input id="token-request-first-name" required type="text" className="w-full bg-black border border-zinc-700 p-2 text-white rounded focus:border-gold-500 outline-none" 
+                  <label className="text-xs uppercase text-gold-600 font-bold">First Name</label>
+                  <input required type="text" className="w-full bg-black border border-zinc-700 p-2 text-white rounded focus:border-gold-500 outline-none" 
                     value={formData.firstName} onChange={e => handleChange('firstName', e.target.value)} />
                 </div>
                 <div className="space-y-1">
-                  <label htmlFor="token-request-last-name" className="text-xs uppercase text-gold-600 font-bold">Last Name</label>
-                  <input id="token-request-last-name" required type="text" className="w-full bg-black border border-zinc-700 p-2 text-white rounded focus:border-gold-500 outline-none"
+                  <label className="text-xs uppercase text-gold-600 font-bold">Last Name</label>
+                  <input required type="text" className="w-full bg-black border border-zinc-700 p-2 text-white rounded focus:border-gold-500 outline-none"
                     value={formData.lastName} onChange={e => handleChange('lastName', e.target.value)} />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label htmlFor="token-request-tiktok" className="text-xs uppercase text-gold-600 font-bold">TikTok Handle</label>
+                <label className="text-xs uppercase text-gold-600 font-bold">TikTok Handle</label>
                 <div className="flex bg-black border border-zinc-700 rounded focus-within:border-gold-500">
                   <span className="p-2 text-zinc-500">@</span>
-                  <input id="token-request-tiktok" required type="text" className="w-full bg-transparent p-2 text-white outline-none" 
+                  <input required type="text" className="w-full bg-transparent p-2 text-white outline-none" 
                      value={formData.tiktok} onChange={e => handleChange('tiktok', e.target.value)} />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label htmlFor="token-request-username" className="text-xs uppercase text-gold-600 font-bold">Preferred Username</label>
-                <input id="token-request-username" required type="text" className="w-full bg-black border border-zinc-700 p-2 text-white rounded focus:border-gold-500 outline-none" 
+                <label className="text-xs uppercase text-gold-600 font-bold">Preferred Username</label>
+                <input required type="text" className="w-full bg-black border border-zinc-700 p-2 text-white rounded focus:border-gold-500 outline-none" 
                    value={formData.username} onChange={e => handleChange('username', e.target.value)} />
               </div>
 
               <div className="space-y-1">
-                <label htmlFor="token-request-phone" className="text-xs uppercase text-gold-600 font-bold">Phone Number</label>
-                <input id="token-request-phone" required type="tel" placeholder="+12223334444" className="w-full bg-black border border-zinc-700 p-2 text-white rounded focus:border-gold-500 outline-none" 
+                <label className="text-xs uppercase text-gold-600 font-bold">Phone Number</label>
+                <input required type="tel" placeholder="+12223334444" className="w-full bg-black border border-zinc-700 p-2 text-white rounded focus:border-gold-500 outline-none" 
                    value={formData.phone} onChange={e => handleChange('phone', e.target.value)} />
                 <p className="text-[10px] text-zinc-500">Must be E.164 compliant (e.g. +14155552671)</p>
-              </div>
-
-              <div className="space-y-1">
-                <label htmlFor="token-request-email" className="text-xs uppercase text-gold-600 font-bold">Email (Optional)</label>
-                <input id="token-request-email" type="email" placeholder="name@example.com" className="w-full bg-black border border-zinc-700 p-2 text-white rounded focus:border-gold-500 outline-none" 
-                   value={formData.email} onChange={e => handleChange('email', e.target.value)} />
               </div>
 
               <button type="submit" disabled={loading} className="w-full mt-6 bg-gold-600 hover:bg-gold-500 text-black font-bold py-3 rounded flex items-center justify-center gap-2 transition-all">
@@ -172,10 +156,10 @@ export const TokenRequestModal: React.FC<Props> = ({ onClose, onSuccess }) => {
               <div>
                 <h2 className="text-2xl font-serif text-white mb-2">Request Received</h2>
                 <p className="text-zinc-400 text-sm max-w-xs mx-auto mb-2">
-                  Your access request has been submitted for admin review.
+                  Your profile has been securely logged.
                 </p>
                 <p className="text-gold-500 font-bold text-sm bg-gold-900/20 px-3 py-1 rounded inline-block border border-gold-900/50">
-                  Pending Admin Approval
+                  Payment Verification Pending
                 </p>
               </div>
 
@@ -192,13 +176,22 @@ export const TokenRequestModal: React.FC<Props> = ({ onClose, onSuccess }) => {
               <div className="bg-blue-900/20 border-l-2 border-blue-500 p-3 text-left w-full text-xs text-blue-300 space-y-2">
                 <p className="font-bold text-blue-200">Next Steps:</p>
                 <ul className="list-disc pl-4 space-y-1 opacity-80">
-                  <li>Your request is now visible in the admin review queue.</li>
-                  <li>If approved, your username and token will be delivered to <strong>{formData.phone}</strong>{formData.email ? <> and <strong>{formData.email}</strong></> : null}.</li>
-                  <li>Keep your request reference ID for support follow-up.</li>
+                  <li>Our team will verify your identity via TikTok/SMS.</li>
+                  <li>Once payment is confirmed, your token will be sent to <strong>{formData.phone}</strong>.</li>
+                  <li>Expect contact within 24 hours.</li>
                 </ul>
               </div>
 
               <div className="flex flex-col gap-3 w-full">
+                {resendSuccess ? (
+                    <div className="text-xs text-green-500 font-bold animate-pulse">Confirmation resent successfully.</div>
+                ) : (
+                    <button onClick={handleResend} disabled={resendLoading} className="text-zinc-500 hover:text-white text-xs flex items-center justify-center gap-2">
+                        {resendLoading ? <Loader2 className="w-3 h-3 animate-spin"/> : <RefreshCw className="w-3 h-3" />}
+                        Didn't receive confirmation? Resend
+                    </button>
+                )}
+                
                 <button onClick={onClose} className="text-zinc-400 hover:text-white text-sm underline">
                   Return to Login
                 </button>

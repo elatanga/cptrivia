@@ -74,31 +74,31 @@ describe('Director Panel: Add Player Feature', () => {
     await setupAndStartGame(2); // Start with some players
 
     // 1. Open Director & Players Tab
-    fireEvent.click(screen.getByRole('button', { name: /^Director$/i }));
-    await waitFor(() => screen.getByRole('button', { name: /^Players$/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^Players$/i }));
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    await waitFor(() => screen.getByText(/Players/i, { selector: 'button' }));
+    fireEvent.click(screen.getByText(/Players/i, { selector: 'button' }));
 
     // 2. Click Add Player
-    fireEvent.click(screen.getByRole('button', { name: /^Add Player$/i }));
+    const addBtn = screen.getByText(/Add Player/i);
+    fireEvent.click(addBtn);
 
     // 3. Fill Name
-    const input = screen.getByPlaceholderText(/ENTER PLAYER NAME/i);
+    const input = screen.getByPlaceholderText(/PLAYER NAME/i);
     fireEvent.change(input, { target: { value: 'New Contestant' } });
     
-    // 4. Submit via the green check action in add-player row
-    const confirmBtn = input.parentElement?.querySelector('.check-icon')?.closest('button');
-    expect(confirmBtn).toBeTruthy();
-    fireEvent.click(confirmBtn!);
+    // 4. Submit
+    const confirmBtn = screen.getByRole('button', { name: /check/i }); // Using icon name or better selector
+    fireEvent.click(confirmBtn);
 
-    // 5. Verify UI (names are normalized to uppercase)
+    // 5. Verify UI
     await waitFor(() => {
-      expect(screen.getByDisplayValue('NEW CONTESTANT')).toBeInTheDocument();
+        expect(screen.getByDisplayValue('New Contestant')).toBeInTheDocument();
     });
 
     // 6. Verify Scoreboard
-    fireEvent.click(screen.getByRole('button', { name: /^Close$/i }));
+    fireEvent.click(screen.getByText(/Close/i, { selector: 'button' }));
     await waitFor(() => {
-      expect(screen.getByText('NEW CONTESTANT')).toBeInTheDocument();
+        expect(screen.getByText('New Contestant')).toBeInTheDocument();
     });
   });
 
@@ -107,19 +107,16 @@ describe('Director Panel: Add Player Feature', () => {
     // (Simulated by starting game and adding manually)
     await setupAndStartGame();
     
-    fireEvent.click(screen.getByRole('button', { name: /^Director$/i }));
-    await waitFor(() => screen.getByRole('button', { name: /^Players$/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^Players$/i }));
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    await waitFor(() => screen.getByText(/Players/i, { selector: 'button' }));
+    fireEvent.click(screen.getByText(/Players/i, { selector: 'button' }));
 
     // Add until 8
     const addPlayerToLimit = async (name: string) => {
-        fireEvent.click(screen.getByRole('button', { name: /^Add Player$/i }));
-        const input = screen.getByPlaceholderText(/ENTER PLAYER NAME/i);
-        fireEvent.change(input, { target: { value: name } });
-        const confirmBtn = input.parentElement?.querySelector('.check-icon')?.closest('button');
-        expect(confirmBtn).toBeTruthy();
-        fireEvent.click(confirmBtn!);
-        await waitFor(() => expect(screen.queryByPlaceholderText(/ENTER PLAYER NAME/i)).not.toBeInTheDocument());
+        fireEvent.click(screen.getByText(/Add Player/i));
+        fireEvent.change(screen.getByPlaceholderText(/PLAYER NAME/i), { target: { value: name } });
+        fireEvent.click(screen.getByRole('button', { name: /check/i }));
+        await waitFor(() => expect(screen.queryByPlaceholderText(/PLAYER NAME/i)).not.toBeInTheDocument());
     };
 
     // Assuming 4 default players from setupAndStartGame
@@ -129,29 +126,27 @@ describe('Director Panel: Add Player Feature', () => {
     await addPlayerToLimit('P8');
 
     // Button should be disabled now
-    const addBtn = screen.getByRole('button', { name: /^Add Player$/i });
+    const addBtn = screen.getByText(/Add Player/i);
     expect(addBtn).toBeDisabled();
   });
 
-  test('Adding duplicate names preserves normalized values in state', async () => {
+  test('Adding player handles duplicate names with auto-suffix', async () => {
     await setupAndStartGame();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Director$/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^Players$/i }));
+    fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
+    fireEvent.click(screen.getByText(/Players/i, { selector: 'button' }));
 
-    // PLAYER 1 already exists
-    fireEvent.click(screen.getByRole('button', { name: /^Add Player$/i }));
-    const input = screen.getByPlaceholderText(/ENTER PLAYER NAME/i);
-    fireEvent.change(input, { target: { value: 'Player 1' } });
-    const confirmBtn = input.parentElement?.querySelector('.check-icon')?.closest('button');
-    expect(confirmBtn).toBeTruthy();
-    fireEvent.click(confirmBtn!);
+    // Player 1 already exists
+    fireEvent.click(screen.getByText(/Add Player/i));
+    fireEvent.change(screen.getByPlaceholderText(/PLAYER NAME/i), { target: { value: 'Player 1' } });
+    fireEvent.click(screen.getByRole('button', { name: /check/i }));
 
+    // Should result in "Player 1 2"
     await waitFor(() => {
-      const state = JSON.parse(localStorage.getItem('cruzpham_gamestate') || '{}');
-      const matchingPlayers = (state.players || []).filter((p: any) => p.name === 'PLAYER 1');
-      expect(matchingPlayers.length).toBeGreaterThanOrEqual(2);
+        expect(screen.getByDisplayValue('Player 1 2')).toBeInTheDocument();
     });
   });
 });
+
+
 

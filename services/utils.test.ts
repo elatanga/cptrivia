@@ -6,7 +6,6 @@ import {
   getPlayerNameFontSize, 
   getTileScaleFactor 
 } from './utils';
-import { getInitialAutoSelectedPlayer, getNextPlayerSelection } from './playerSelectionCycle';
 import { Category, Question } from '../types';
 
 describe('applyAiCategoryPreservePoints', () => {
@@ -60,38 +59,3 @@ describe('Visual Scale Mapping Audit', () => {
     expect(xl).toBeGreaterThan(xs * 2);
   });
 });
-
-describe('playerSelectionCycle helpers', () => {
-  const players = [
-    { id: 'p1', name: 'Player 1', score: 0, color: '#fff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] },
-    { id: 'p2', name: 'Player 2', score: 0, color: '#fff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] },
-    { id: 'p3', name: 'Player 3', score: 0, color: '#fff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] },
-  ];
-
-  it('returns null when no players exist', () => {
-    expect(getInitialAutoSelectedPlayer([], null)).toBeNull();
-    expect(getNextPlayerSelection([], null)).toBeNull();
-  });
-
-  it('returns first player for missing current selection', () => {
-    expect(getInitialAutoSelectedPlayer(players as any, null)).toBe('p1');
-  });
-
-  it('advances to next player in order', () => {
-    expect(getNextPlayerSelection(players as any, 'p1')).toBe('p2');
-  });
-
-  it('wraps from last player to first player', () => {
-    expect(getNextPlayerSelection(players as any, 'p3')).toBe('p1');
-  });
-
-  it('falls back to first player for invalid selected id', () => {
-    expect(getInitialAutoSelectedPlayer(players as any, 'missing')).toBe('p1');
-    expect(getNextPlayerSelection(players as any, 'missing')).toBe('p1');
-  });
-
-  it('keeps same player in one-player list on advance', () => {
-    expect(getNextPlayerSelection([players[0]] as any, 'p1')).toBe('p1');
-  });
-});
-

@@ -3,7 +3,6 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import App from './App';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
-import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 
 // --- MOCKS ---
 
@@ -14,48 +13,39 @@ declare const expect: any;
 declare const beforeEach: any;
 
 // Mock Logger
-vi.mock('./services/logger', () => ({
-  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), getCorrelationId: () => 'test-id', maskPII: (v:any) => v }
+jest.mock('./services/logger', () => ({
+  logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn(), getCorrelationId: () => 'test-id', maskPII: (v:any) => v }
 }));
 
 // Mock SoundService
-vi.mock('./services/soundService', () => ({
+jest.mock('./services/soundService', () => ({
   soundService: {
-    playSelect: vi.fn(), playReveal: vi.fn(), playAward: vi.fn(),
-    playSteal: vi.fn(), playVoid: vi.fn(), playDoubleOrNothing: vi.fn(),
-    playClick: vi.fn(), playTimerTick: vi.fn(), playTimerAlarm: vi.fn(),
-    playToast: vi.fn(),
-    setMute: vi.fn(), getMute: vi.fn().mockReturnValue(false),
-    setVolume: vi.fn(), getVolume: vi.fn().mockReturnValue(0.5)
+    playSelect: jest.fn(), playReveal: jest.fn(), playAward: jest.fn(),
+    playSteal: jest.fn(), playVoid: jest.fn(), playDoubleOrNothing: jest.fn(),
+    playClick: jest.fn(), playTimerTick: jest.fn(), playTimerAlarm: jest.fn(),
+    playToast: jest.fn(),
+    setMute: jest.fn(), getMute: jest.fn().mockReturnValue(false),
+    setVolume: jest.fn(), getVolume: jest.fn().mockReturnValue(0.5)
   }
 }));
 
 // Mock Gemini
-vi.mock('./services/geminiService', () => ({
-  generateTriviaGame: vi.fn().mockResolvedValue([]),
-  generateSingleQuestion: vi.fn().mockResolvedValue({ text: 'AI Q', answer: 'AI A' }),
-  getGeminiConfigHealth: vi.fn().mockReturnValue({
-    isConfigured: true,
-    configured: true,
-    hasApiKey: true,
-    model: 'test-model',
-    reason: null,
-  }),
+jest.mock('./services/geminiService', () => ({
+  generateTriviaGame: jest.fn().mockResolvedValue([]),
+  generateSingleQuestion: jest.fn().mockResolvedValue({ text: 'AI Q', answer: 'AI A' })
 }));
 
 // Mock Window features
-beforeAll(() => {
-  window.scrollTo = vi.fn();
-  window.confirm = vi.fn(() => true);
-  window.alert = vi.fn();
-  window.URL.createObjectURL = vi.fn(() => 'blob:mock-url');
-  window.URL.revokeObjectURL = vi.fn();
-});
+window.scrollTo = jest.fn();
+window.confirm = jest.fn(() => true);
+window.alert = jest.fn();
+window.URL.createObjectURL = jest.fn(() => 'blob:mock-url');
+window.URL.revokeObjectURL = jest.fn();
 
 describe('CRUZPHAM TRIVIA - Point Scale Tests', () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.clearAllMocks();
+    jest.clearAllMocks();
   });
 
   const setupAuthenticatedApp = async () => {

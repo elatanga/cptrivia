@@ -117,7 +117,7 @@ export const GameBoard: React.FC<Props> = ({ categories, onSelectQuestion, viewS
                     padding: 'var(--tile-inner-padding-px)'
                   }}
                 >
-                    {specialMoveBadge.showTag && (
+                    {specialMoveTagState !== 'none' && (
                       <span
                         data-testid={`special-move-tile-tag-${q.id}`}
                         data-state={specialMoveTagState}

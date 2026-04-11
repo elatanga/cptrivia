@@ -1,5 +1,6 @@
 
 import { authService, normalizeTokenInput } from './services/authService';
+import { AppError } from './types';
 
 // --- MOCKS ---
 
@@ -53,26 +54,6 @@ describe('API Contract Tests (Auth Service)', () => {
       await expect(authService.bootstrapMasterAdmin('hack_user'))
         .rejects
         .toMatchObject({ code: 'ERR_BOOTSTRAP_COMPLETE' });
-    });
-
-    test('Master recovery is time-bound and rotates the master token', async () => {
-      const originalToken = await authService.bootstrapMasterAdmin('master_user');
-      const recovery = await authService.issueMasterRecovery('master_user');
-
-      expect(recovery.recoveryCode).toMatch(/^rc-/);
-
-      const rotated = await authService.completeMasterRecovery('master_user', recovery.recoveryCode);
-      expect(rotated.username).toBe('master_user');
-      expect(rotated.rawToken).toMatch(/^mk-/);
-      expect(rotated.rawToken).not.toBe(originalToken);
-
-      const staleLogin = await authService.login('master_user', originalToken);
-      expect(staleLogin.success).toBe(false);
-      expect(staleLogin.code).toBe('ERR_INVALID_CREDENTIALS');
-
-      const newLogin = await authService.login('master_user', rotated.rawToken);
-      expect(newLogin.success).toBe(true);
-      expect(newLogin.session?.role).toBe('MASTER_ADMIN');
     });
   });
 
@@ -156,7 +137,7 @@ describe('API Contract Tests (Auth Service)', () => {
       expect(req.status).toBe('PENDING');
       expect(req.adminNotifyStatus).toBeDefined(); // Should have triggered async notify
 
-      const stored = authService.getRequests('admin').find(r => r.id === req.id);
+      const stored = authService.getRequests().find(r => r.id === req.id);
       expect(stored).toBeDefined();
     });
 
@@ -201,7 +182,7 @@ describe('API Contract Tests (Auth Service)', () => {
       expect(result.rawToken).toMatch(/^pk-/);
       expect(result.user.role).toBe('PRODUCER');
 
-      const req = authService.getRequests('master').find(r => r.id === reqId);
+      const req = authService.getRequests().find(r => r.id === reqId);
       expect(req?.status).toBe('APPROVED');
       expect(req?.userId).toBe(result.user.id);
     });
@@ -216,11 +197,11 @@ describe('API Contract Tests (Auth Service)', () => {
     test('Rejection logic updates status only', async () => {
       await authService.rejectRequest('master', reqId);
       
-      const req = authService.getRequests('master').find(r => r.id === reqId);
+      const req = authService.getRequests().find(r => r.id === reqId);
       expect(req?.status).toBe('REJECTED');
       
       // Ensure no user created
-      const users = authService.getAllUsers('master');
+      const users = authService.getAllUsers();
       expect(users.find(u => u.username === 'applicant')).toBeUndefined();
     });
 

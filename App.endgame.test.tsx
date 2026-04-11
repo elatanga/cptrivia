@@ -110,12 +110,12 @@ describe('CRUZPHAM TRIVIA - End Game Reliability Tests', () => {
     // 1. Open Question
     const qBtn = screen.getAllByText('100')[0];
     fireEvent.click(qBtn);
-    await waitFor(() => screen.getByTitle(/Reveal Answer \(SPACE\)/i));
+    await waitFor(() => screen.getByText(/Reveal Answer/i));
 
     // 2. Ensure "End Show" is NOT clickable (covered by modal z-index) or just test the flow
     // We close the modal first
     fireEvent.keyDown(window, { code: 'Backspace' });
-    await waitFor(() => expect(screen.queryByTitle(/Reveal Answer \(SPACE\)/i)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/Reveal Answer/i)).not.toBeInTheDocument());
 
     // 3. Now End Game
     fireEvent.click(screen.getByText(/End Show/i));
@@ -132,7 +132,7 @@ describe('CRUZPHAM TRIVIA - End Game Reliability Tests', () => {
     // 1. Open Director & Detach
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' })); // Toggle to Director view logic
     // Wait for Director UI
-    await waitFor(() => screen.getByText(/Detach/i, { selector: 'button' }));
+    await waitFor(() => screen.getByText(/Live Board Control/i));
     
     // Detach
     const detachBtn = screen.getByText(/Detach/i);
@@ -141,8 +141,10 @@ describe('CRUZPHAM TRIVIA - End Game Reliability Tests', () => {
     // Verify window.open called
     expect(window.open).toHaveBeenCalled();
     
-    // 2. Return to Board from Director header close button
-    fireEvent.click(screen.getByText(/^Close$/i, { selector: 'button' }));
+    // 2. Return to Board (UI Logic: Detach shows placeholder "Director is Popped Out")
+    // User switches tab back to Board to see "End Show" button
+    const boardTab = screen.getByText(/Board/i, { selector: 'button' });
+    fireEvent.click(boardTab);
 
     // 3. Click End Show
     fireEvent.click(screen.getByText(/End Show/i));
@@ -163,7 +165,7 @@ describe('CRUZPHAM TRIVIA - End Game Reliability Tests', () => {
 
     // 1. Go to Director to Start Timer (simplest way in UI)
     fireEvent.click(screen.getByText(/Director/i, { selector: 'button' }));
-    await waitFor(() => screen.getByText(/Detach/i, { selector: 'button' }));
+    await waitFor(() => screen.getByText(/Live Board Control/i));
     
     // Start Timer
     const playBtn = screen.getByRole('button', { name: '' }); // Play button has no text, finding by class or icon difficult in standard query.
@@ -172,13 +174,12 @@ describe('CRUZPHAM TRIVIA - End Game Reliability Tests', () => {
     // We can assume the Play icon button is present.
     // Alternate: Trigger via keyboard shortcut if exists, or finding the button by class structure.
     // Best effort: Find the timer control section buttons.
-    const startBtn = document.querySelector('button.bg-green-600');
-    if (startBtn) {
-      fireEvent.click(startBtn);
-    }
+    const timerControls = screen.getByText(/Timer Control/i).closest('div')?.parentElement;
+    const startBtn = timerControls?.querySelector('button.bg-green-600');
+    if (startBtn) fireEvent.click(startBtn);
 
     // 2. Switch back to Board
-    fireEvent.click(screen.getByText(/^Close$/i, { selector: 'button' }));
+    fireEvent.click(screen.getByText(/Board/i, { selector: 'button' }));
 
     // 3. End Game
     fireEvent.click(screen.getByText(/End Show/i));

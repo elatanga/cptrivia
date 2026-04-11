@@ -1,5 +1,5 @@
 
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode } from 'react';
 import { logger } from '../services/logger';
 
 interface Props {
@@ -15,11 +15,15 @@ interface State {
  * ErrorBoundary component to catch and handle uncaught errors in the React component tree.
  */
 // Fix: Use React.Component explicitly to ensure inherited properties like 'state' and 'props' are recognized by the TypeScript compiler.
-export class ErrorBoundary extends Component<Props, State> {
-  public state: State = {
-    hasError: false,
-    error: null
-  };
+export class ErrorBoundary extends React.Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    // Fix: Initialize state as an instance property during construction.
+    this.state = {
+      hasError: false,
+      error: null
+    };
+  }
 
   public static getDerivedStateFromError(error: Error): State {
     // Update state so the next render shows the fallback UI.

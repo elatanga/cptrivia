@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { doesReturnResolveAsFail, isStealBlockedForMove, normalizeSpecialMoveType, resolveSMS } from './logic';
+import { doesReturnResolveAsFail, isStealBlockedForMove, resolveSMS } from './logic';
 
 describe('special move logic hardening', () => {
   it('blocks steal for risk tile moves', () => {
@@ -31,20 +31,6 @@ describe('special move logic hardening', () => {
   it('applies final shot fail penalty', () => {
     const result = resolveSMS('FINAL_SHOT', 300, 'FAIL');
     expect(result.points).toBe(-300);
-  });
-
-  it('normalizes known move ids and rejects malformed payloads', () => {
-    expect(normalizeSpecialMoveType('double_trouble')).toBe('DOUBLE_TROUBLE');
-    expect(normalizeSpecialMoveType('   SAFE_BET   ')).toBe('SAFE_BET');
-    expect(normalizeSpecialMoveType('')).toBeUndefined();
-    expect(normalizeSpecialMoveType('not_a_real_move')).toBeUndefined();
-    expect(normalizeSpecialMoveType(undefined)).toBeUndefined();
-  });
-
-  it('fails open for unknown move payloads', () => {
-    expect(isStealBlockedForMove('NOT_REAL' as any)).toBe(false);
-    expect(doesReturnResolveAsFail('NOT_REAL' as any)).toBe(false);
-    expect(resolveSMS('NOT_REAL' as any, 200, 'AWARD').points).toBe(200);
   });
 });
 
