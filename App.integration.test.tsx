@@ -92,7 +92,8 @@ describe('CRUZPHAM TRIVIA - Network Integration Tests', () => {
     // 1. Initial Render
     const { unmount } = render(<App />);
     
-    // 2. Perform Login
+    // 2. Wait for login screen, then Perform Login
+    await waitFor(() => screen.getByPlaceholderText(/e.g. producer_one/i));
     fireEvent.change(screen.getByPlaceholderText(/e.g. producer_one/i), { target: { value: 'admin' } });
     fireEvent.change(screen.getByPlaceholderText(/Paste your token here/i), { target: { value: token } });
     
@@ -122,7 +123,8 @@ describe('CRUZPHAM TRIVIA - Network Integration Tests', () => {
     await authService.bootstrapMasterAdmin('admin');
     render(<App />);
 
-    // 1. Open Request Modal
+    // 1. Wait for login screen, then Open Request Modal
+    await waitFor(() => screen.getByText(/Get Token/i));
     fireEvent.click(screen.getByText(/Get Token/i));
 
     // 2. Fill Form
@@ -150,7 +152,7 @@ describe('CRUZPHAM TRIVIA - Network Integration Tests', () => {
     });
 
     // 5. Assert Backend State
-    const storedRequests = authService.getRequests();
+    const storedRequests = authService.getRequests('admin');
     expect(storedRequests).toHaveLength(1);
     expect(storedRequests[0].preferredUsername).toBe('requester_1');
     expect(storedRequests[0].status).toBe('PENDING');
@@ -186,7 +188,7 @@ describe('CRUZPHAM TRIVIA - Network Integration Tests', () => {
     
     // Confirm in modal
     await waitFor(() => screen.getByText(/Confirm Approval/i));
-    fireEvent.click(screen.getByText(/Create User & Send Token/i));
+    fireEvent.click(screen.getByText(/Approve & Provision/i));
 
     // 5. Extract Token from Credentials Modal
     await waitFor(() => screen.getByText(/Credentials Generated/i));

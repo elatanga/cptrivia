@@ -2,41 +2,43 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 import { authService } from './services/authService';
-
-declare const jest: any;
-declare const describe: any;
-declare const test: any;
-declare const expect: any;
-declare const beforeEach: any;
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // Mock sound service
-jest.mock('./services/soundService', () => ({
+vi.mock('./services/soundService', () => ({
   soundService: {
-    playClick: jest.fn(),
-    playSelect: jest.fn(),
-    playReveal: jest.fn(),
-    playAward: jest.fn(),
-    playSteal: jest.fn(),
-    playVoid: jest.fn(),
-    playDoubleOrNothing: jest.fn(),
-    playTimerTick: jest.fn(),
-    playTimerAlarm: jest.fn(),
-    playToast: jest.fn(),
-    setMute: jest.fn(), getMute: jest.fn().mockReturnValue(false),
-    setVolume: jest.fn(), getVolume: jest.fn().mockReturnValue(0.5)
+    playClick: vi.fn(),
+    playSelect: vi.fn(),
+    playReveal: vi.fn(),
+    playAward: vi.fn(),
+    playSteal: vi.fn(),
+    playVoid: vi.fn(),
+    playDoubleOrNothing: vi.fn(),
+    playTimerTick: vi.fn(),
+    playTimerAlarm: vi.fn(),
+    playToast: vi.fn(),
+    setMute: vi.fn(), getMute: vi.fn().mockReturnValue(false),
+    setVolume: vi.fn(), getVolume: vi.fn().mockReturnValue(0.5)
   }
 }));
 
 // Mock Gemini
-jest.mock('./services/geminiService', () => ({
-  generateTriviaGame: jest.fn().mockResolvedValue([]),
-  generateSingleQuestion: jest.fn().mockResolvedValue({ text: 'AI Q', answer: 'AI A' })
+vi.mock('./services/geminiService', () => ({
+  generateTriviaGame: vi.fn().mockResolvedValue([]),
+  generateSingleQuestion: vi.fn().mockResolvedValue({ text: 'AI Q', answer: 'AI A' }),
+  getGeminiConfigHealth: vi.fn().mockReturnValue({
+    isConfigured: true,
+    configured: true,
+    hasApiKey: true,
+    model: 'test-model',
+    reason: null,
+  }),
 }));
 
 describe('Responsive Layout Tests', () => {
   beforeEach(() => {
     localStorage.clear();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   const setViewport = (width: number) => {
@@ -86,9 +88,13 @@ describe('Responsive Layout Tests', () => {
     expect(screen.getByLabelText(/Champagne Flute/i)).toBeInTheDocument();
 
     const brandLockup = screen.getByTestId('brand-lockup');
-    const brandTitleStack = screen.getByTestId('brand-title-stack');
+    const brandWordmarkStack = screen.getByTestId('brand-wordmark-stack');
+    const brandSubtitle = screen.getByTestId('brand-subtitle');
+    const brandDivider = screen.getByTestId('brand-gold-divider');
     expect(brandLockup).toBeInTheDocument();
-    expect(brandTitleStack).toHaveClass('items-center');
-    expect(brandTitleStack).toHaveClass('text-center');
+    expect(brandWordmarkStack).toBeInTheDocument();
+    expect(brandSubtitle).toBeInTheDocument();
+    expect(brandDivider).toBeInTheDocument();
+    expect(screen.queryByTestId('brand-title-stack')).not.toBeInTheDocument();
   });
 });

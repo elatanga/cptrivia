@@ -48,6 +48,9 @@ describe('BootstrapScreen Regression Suite', () => {
     expect(screen.getByText(/System Bootstrap/i)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/e.g. master_admin/i)).toHaveValue('admin');
     expect(screen.getByRole('button', { name: /Initialize Studio/i })).toBeInTheDocument();
+    expect(screen.getByTestId('bootstrap-footer-credits')).toBeInTheDocument();
+    expect(screen.getByText(/CruzPham Jeopardy Studios/i)).toBeInTheDocument();
+    expect(screen.getByText(/Security Layer v4.0/i)).toBeInTheDocument();
   });
 
   it('2) Trims input and calls bootstrap service exactly once', async () => {
@@ -105,9 +108,41 @@ describe('BootstrapScreen Regression Suite', () => {
       // Ensure we are still on the first step
       expect(screen.getByRole('button', { name: /Initialize Studio/i })).toBeInTheDocument();
     });
+    expect(mockOnComplete).not.toHaveBeenCalled();
   });
 
-  it('5) No Regression: Ensures the generated token is never leaked to console logs', async () => {
+  it('5) Already bootstrapped response exits bootstrap mode', async () => {
+    vi.mocked(authService.bootstrapMasterAdmin).mockRejectedValue({
+      code: 'ERR_BOOTSTRAP_COMPLETE',
+      message: 'System already bootstrapped.',
+    });
+
+    render(<BootstrapScreen addToast={mockAddToast} onComplete={mockOnComplete} />);
+    fireEvent.click(screen.getByRole('button', { name: /Initialize Studio/i }));
+
+    await waitFor(() => {
+      expect(mockAddToast).toHaveBeenCalledWith('info', 'System already bootstrapped.');
+      expect(mockOnComplete).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('6) Transport/network failure keeps bootstrap form visible', async () => {
+    vi.mocked(authService.bootstrapMasterAdmin).mockRejectedValue({
+      code: 'ERR_NETWORK',
+      message: 'Cannot reach the system backend. Check your connection and try again.',
+    });
+
+    render(<BootstrapScreen addToast={mockAddToast} onComplete={mockOnComplete} />);
+    fireEvent.click(screen.getByRole('button', { name: /Initialize Studio/i }));
+
+    await waitFor(() => {
+      expect(mockAddToast).toHaveBeenCalledWith('error', 'Cannot reach the system backend. Check your connection and try again.');
+      expect(screen.getByRole('button', { name: /Initialize Studio/i })).toBeInTheDocument();
+    });
+    expect(mockOnComplete).not.toHaveBeenCalled();
+  });
+
+  it('7) No Regression: Ensures the generated token is never leaked to console logs', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const SENSITIVE_TOKEN = 'mk-leak-test-token-safe';
     vi.mocked(authService.bootstrapMasterAdmin).mockResolvedValue(SENSITIVE_TOKEN);
@@ -124,7 +159,7 @@ describe('BootstrapScreen Regression Suite', () => {
       args.some(arg => typeof arg === 'string' && arg.includes(SENSITIVE_TOKEN))
     );
     
-    expect(leaked).toBe(false, "SENSITIVE_TOKEN was leaked to console.log!");
+    expect(leaked).toBe(false);
     consoleSpy.mockRestore();
   });
 });
