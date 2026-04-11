@@ -70,13 +70,13 @@ describe('Mobile UX Enhancements', () => {
     // Create Show
     await waitFor(() => screen.getByPlaceholderText(/New Show Title/i));
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'UX Test' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     
     // Create Template -> Play
     await waitFor(() => screen.getByText(/Create Template/i));
     fireEvent.click(screen.getByText(/Create Template/i));
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'UX Game' } });
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     fireEvent.click(screen.getByText('Save'));
     await waitFor(() => screen.getByText('Play Show'));
     fireEvent.click(screen.getByText('Play Show'));
@@ -92,3 +92,4 @@ describe('Mobile UX Enhancements', () => {
     expect(screen.queryByRole('button', { name: /lucide-minus/i })).not.toBeInTheDocument();
   });
 });
+

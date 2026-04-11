@@ -26,9 +26,12 @@ describe('DirectorPanel: Settings & Category Regen', () => {
   const mockAddToast = vi.fn();
   const mockStartQuestionCountdown = vi.fn();
   const mockStopQuestionCountdown = vi.fn();
+  const mockToggleQuestionTimer = vi.fn();
   const mockStartSessionTimer = vi.fn();
+  const mockStartSessionTimerWithDuration = vi.fn();
   const mockPauseSessionTimer = vi.fn();
   const mockResetSessionTimer = vi.fn();
+  const mockToggleSessionTimer = vi.fn();
 
   const baseGameState: GameState = {
     showTitle: 'Studio Show',
@@ -51,6 +54,11 @@ describe('DirectorPanel: Settings & Category Regen', () => {
       tileScale: 'M',
       scoreboardScale: 1.0,
       tilePaddingScale: 1.0,
+      questionModalSize: 'Large',
+      questionMaxWidthPercent: 86,
+      questionFontScale: 1,
+      questionContentPadding: 16,
+      multipleChoiceColumns: '2',
       updatedAt: ''
     },
     lastPlays: [],
@@ -74,11 +82,33 @@ describe('DirectorPanel: Settings & Category Regen', () => {
         onUpdateState={mockOnUpdateState}
         emitGameEvent={mockEmitGameEvent}
         addToast={mockAddToast}
-        questionCountdown={{ duration: 0, isActive: false, startedAt: null, timeRemaining: 0 }}
-        onQuestionCountdownStart={mockStartQuestionCountdown}
-        onQuestionCountdownStop={mockStopQuestionCountdown}
-        sessionTimer={{ preset: null, isActive: false, startedAt: null, timeRemaining: 0, paused: false }}
+        questionTimer={{
+          durationSeconds: 10,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          activeQuestionId: null,
+        }}
+        questionTimerEnabled={true}
+        questionTimerDurationSeconds={10}
+        onQuestionTimerToggle={mockToggleQuestionTimer}
+        onQuestionTimerDurationChange={mockStartQuestionCountdown}
+        onQuestionTimerStop={mockStopQuestionCountdown}
+        sessionTimerEnabled={false}
+        onSessionTimerToggle={mockToggleSessionTimer}
+        sessionTimer={{
+          durationSeconds: 0,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          selectedPreset: null,
+        }}
         onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerStartWithDuration={mockStartSessionTimerWithDuration}
         onSessionTimerPause={mockPauseSessionTimer}
         onSessionTimerReset={mockResetSessionTimer}
       />
@@ -94,6 +124,8 @@ describe('DirectorPanel: Settings & Category Regen', () => {
     // Trigger rewrite on first category
     const regenBtn = screen.getByTitle(/Regenerate this category/i);
     fireEvent.click(regenBtn);
+    fireEvent.click(screen.getByText('Regenerate active tiles only'));
+    fireEvent.click(screen.getByText('Run Regeneration'));
 
     await waitFor(() => {
       const updatedCat = mockOnUpdateState.mock.calls[0][0].categories[0];
@@ -112,7 +144,9 @@ describe('DirectorPanel: Settings & Category Regen', () => {
     fireEvent.click(xsBtn);
 
     expect(mockEmitGameEvent).toHaveBeenCalledWith('VIEW_SETTINGS_CHANGED', expect.objectContaining({
-      context: { after: { categoryTitleScale: 'XS' } }
+      context: expect.objectContaining({
+        after: expect.objectContaining({ categoryTitleScale: 'XS' })
+      })
     }));
   });
 
@@ -134,7 +168,7 @@ describe('DirectorPanel: Settings & Category Regen', () => {
         ts: eventTs + i,
         iso: new Date(eventTs + i).toISOString(),
         type: 'POINTS_AWARDED' as AnalyticsEventType,
-        actor: { role: 'director' },
+        actor: { role: 'director' as const },
         context: { playerName: `Player ${i + 1}`, points: 100, delta: 100, categoryName: 'Art' }
         }))
       ]
@@ -153,10 +187,15 @@ describe('DirectorPanel: Settings & Category Regen', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /logs & audit/i }));
 
-    expect(screen.getAllByText(/Player 13 was awarded 100 points in Art\./i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Player 13 answered Art for 100 points and was awarded 100 points\./i).length).toBeGreaterThan(0);
 
     const auditList = screen.getByTestId('audit-log-list');
     expect(auditList.children.length).toBe(12);
+
+    fireEvent.click(screen.getAllByRole('button', { name: /open play details/i })[0]);
+    expect(screen.getByTestId('audit-detail-modal')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /close play details/i }));
+    expect(screen.queryByTestId('audit-detail-modal')).not.toBeInTheDocument();
 
     // Search filter narrows results
     fireEvent.change(screen.getByLabelText(/log search/i), { target: { value: 'player 13' } });
@@ -188,14 +227,197 @@ describe('DirectorPanel: Settings & Category Regen', () => {
   });
 
   it('D) COUNTER STUDIO: triggers question countdown and session timer controls', () => {
-    renderPanel();
+    const { rerender } = renderPanel();
 
     fireEvent.click(screen.getByRole('button', { name: /counter studio/i }));
 
     fireEvent.click(screen.getByRole('button', { name: '10s' }));
     expect(mockStartQuestionCountdown).toHaveBeenCalledWith(10);
 
+    // Session timer starts only after explicit enable toggle.
+    fireEvent.click(screen.getByTestId('session-game-timer-toggle'));
+    expect(mockToggleSessionTimer).toHaveBeenCalledWith(true);
+
+    fireEvent.click(screen.getByRole('button', { name: '30m' }));
+    expect(mockStartSessionTimer).not.toHaveBeenCalled();
+
+    rerender(
+      <DirectorPanel
+        gameState={baseGameState as any}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+        questionTimer={{
+          durationSeconds: 10,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          activeQuestionId: null,
+        }}
+        questionTimerEnabled={true}
+        questionTimerDurationSeconds={10}
+        onQuestionTimerToggle={mockToggleQuestionTimer}
+        onQuestionTimerDurationChange={mockStartQuestionCountdown}
+        onQuestionTimerStop={mockStopQuestionCountdown}
+        sessionTimerEnabled={true}
+        onSessionTimerToggle={mockToggleSessionTimer}
+        sessionTimer={{
+          durationSeconds: 0,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          selectedPreset: null,
+        }}
+        onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerStartWithDuration={mockStartSessionTimerWithDuration}
+        onSessionTimerPause={mockPauseSessionTimer}
+        onSessionTimerReset={mockResetSessionTimer}
+      />
+    );
+
     fireEvent.click(screen.getByRole('button', { name: '30m' }));
     expect(mockStartSessionTimer).toHaveBeenCalledWith('30m');
+  });
+
+  it('D2) COUNTER STUDIO: applies manual H/M/S for both timer types', () => {
+    const { rerender } = renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: /counter studio/i }));
+
+    fireEvent.change(screen.getByLabelText(/Question timer hours/i), { target: { value: '0' } });
+    fireEvent.change(screen.getByLabelText(/Question timer minutes/i), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText(/Question timer seconds/i), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: /Apply Question Timer/i }));
+    expect(mockStartQuestionCountdown).toHaveBeenCalledWith(65);
+
+    fireEvent.change(screen.getByLabelText(/Session timer hours/i), { target: { value: '0' } });
+    fireEvent.change(screen.getByLabelText(/Session timer minutes/i), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText(/Session timer seconds/i), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /Apply Session Timer/i }));
+    expect(mockStartSessionTimerWithDuration).not.toHaveBeenCalled();
+
+    rerender(
+      <DirectorPanel
+        gameState={baseGameState as any}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+        questionTimer={{
+          durationSeconds: 10,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          activeQuestionId: null,
+        }}
+        questionTimerEnabled={true}
+        questionTimerDurationSeconds={10}
+        onQuestionTimerToggle={mockToggleQuestionTimer}
+        onQuestionTimerDurationChange={mockStartQuestionCountdown}
+        onQuestionTimerStop={mockStopQuestionCountdown}
+        sessionTimerEnabled={true}
+        onSessionTimerToggle={mockToggleSessionTimer}
+        sessionTimer={{
+          durationSeconds: 0,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          selectedPreset: null,
+        }}
+        onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerStartWithDuration={mockStartSessionTimerWithDuration}
+        onSessionTimerPause={mockPauseSessionTimer}
+        onSessionTimerReset={mockResetSessionTimer}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(/Session timer hours/i), { target: { value: '0' } });
+    fireEvent.change(screen.getByLabelText(/Session timer minutes/i), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText(/Session timer seconds/i), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /Apply Session Timer/i }));
+    expect(mockStartSessionTimerWithDuration).toHaveBeenCalledWith(150);
+  });
+
+  it('E) AUDIT REALTIME: refreshes highlights and keeps only newest 12 gameplay events', () => {
+    const baseTs = Date.now();
+    const initial: GameState = {
+      ...baseGameState,
+      events: Array.from({ length: 12 }, (_, i) => ({
+        id: `evt-initial-${i}`,
+        ts: baseTs + i,
+        iso: new Date(baseTs + i).toISOString(),
+        type: 'POINTS_AWARDED' as AnalyticsEventType,
+        actor: { role: 'director' as const },
+        context: { playerName: `Player ${i}`, points: 100, delta: 100, categoryName: 'Art' }
+      }))
+    };
+
+    const { rerender } = renderPanel(initial);
+    fireEvent.click(screen.getByRole('button', { name: /logs & audit/i }));
+
+    const before = screen.getByTestId('audit-log-list').textContent || '';
+    expect(before).toContain('Player 11');
+
+    const withNewEvent: GameState = {
+      ...initial,
+      events: [
+        ...initial.events,
+        {
+          id: 'evt-newest',
+          ts: baseTs + 100,
+          iso: new Date(baseTs + 100).toISOString(),
+          type: 'POINTS_STOLEN' as AnalyticsEventType,
+          actor: { role: 'director' as const },
+          context: { playerName: 'Closer', points: 200, delta: 200, categoryName: 'Science' }
+        }
+      ]
+    };
+
+    rerender(
+      <DirectorPanel
+        gameState={withNewEvent}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+        questionTimer={{
+          durationSeconds: 10,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          activeQuestionId: null,
+        }}
+        questionTimerEnabled={true}
+        questionTimerDurationSeconds={10}
+        onQuestionTimerDurationChange={mockStartQuestionCountdown}
+        onQuestionTimerStop={mockStopQuestionCountdown}
+        sessionTimer={{
+          durationSeconds: 0,
+          remainingSeconds: 0,
+          isRunning: false,
+          isStopped: true,
+          startedAt: null,
+          endsAt: null,
+          selectedPreset: null,
+        }}
+        onSessionTimerStart={mockStartSessionTimer}
+        onSessionTimerStartWithDuration={mockStartSessionTimerWithDuration}
+        onSessionTimerPause={mockPauseSessionTimer}
+        onSessionTimerReset={mockResetSessionTimer}
+      />
+    );
+
+    const auditList = screen.getByTestId('audit-log-list');
+    expect(auditList.children.length).toBe(12);
+    expect(auditList.textContent).toContain('Closer');
+    expect(auditList.textContent).not.toContain('Player 0');
   });
 });

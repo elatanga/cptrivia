@@ -1,6 +1,7 @@
 
 import { Show, GameTemplate, Category, TemplateConfig } from '../types';
 import { logger } from './logger';
+import { normalizeTemplateConfigForTeams } from './teamsMode';
 
 const STORAGE_KEYS = {
   SHOWS: 'cruzpham_db_shows',
@@ -56,9 +57,12 @@ class DataService {
 
   getTemplatesForShow(showId: string): GameTemplate[] {
     const all = this.getTemplatesDB();
-    return all.filter(t => t.showId === showId).sort((a, b) => 
+    return all
+      .filter(t => t.showId === showId)
+      .map((template) => ({ ...template, config: normalizeTemplateConfigForTeams(template.config) }))
+      .sort((a, b) =>
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+      );
   }
 
   createTemplate(showId: string, topic: string, config: TemplateConfig, categories: Category[]): GameTemplate {
@@ -71,7 +75,7 @@ class DataService {
       id: crypto.randomUUID(),
       showId,
       topic,
-      config,
+      config: normalizeTemplateConfigForTeams(config),
       categories,
       createdAt: new Date().toISOString()
     };
@@ -87,7 +91,11 @@ class DataService {
     let all = this.getTemplatesDB();
     const idx = all.findIndex(t => t.id === template.id);
     if (idx !== -1) {
-      all[idx] = { ...template, lastModified: new Date().toISOString() };
+      all[idx] = {
+        ...template,
+        config: normalizeTemplateConfigForTeams(template.config),
+        lastModified: new Date().toISOString(),
+      };
       this.saveTemplatesDB(all);
       logger.info(`[DataService] Updated template: ${template.id}`);
     }
@@ -126,7 +134,7 @@ class DataService {
       id: crypto.randomUUID(),
       showId, // Force to current show
       topic: parsed.topic + ' (Imported)',
-      config: parsed.config,
+      config: normalizeTemplateConfigForTeams(parsed.config),
       categories: parsed.categories.map((c: any) => ({
         ...c,
         id: crypto.randomUUID(),

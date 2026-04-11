@@ -4,10 +4,12 @@ export interface Question {
   text: string;
   points: number;
   answer: string;
+  options?: string[];
   isRevealed: boolean;
   isAnswered: boolean;
   isVoided?: boolean;
   isDoubleOrNothing?: boolean;
+  specialMoveType?: SpecialMoveType;
 }
 
 export interface Category {
@@ -26,6 +28,38 @@ export interface Player {
   wildcardsUsed?: number; 
   wildcardActive?: boolean; 
   stealsCount?: number; 
+  questionsAnswered?: number;
+  lostOrVoidedCount?: number;
+  specialMovesUsedCount?: number;
+  specialMovesUsedNames?: string[];
+}
+
+export type PlayMode = 'INDIVIDUALS' | 'TEAMS';
+export type TeamPlayStyle = 'TEAM_PLAYS_AS_ONE' | 'TEAM_MEMBERS_TAKE_TURNS';
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  score?: number;
+  orderIndex?: number;
+  stealsCount?: number;
+  questionsAnswered?: number;
+  lostOrVoidedCount?: number;
+  specialMovesUsedCount?: number;
+  specialMovesUsedNames?: string[];
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  members: TeamMember[];
+  score: number;
+  activeMemberId?: string;
+}
+
+export interface TeamModeConfig {
+  enabled: boolean;
+  teamPlayStyle: TeamPlayStyle;
 }
 
 export interface GameTimer {
@@ -43,6 +77,13 @@ export interface BoardViewSettings {
   // Layout Controls
   scoreboardScale: number; // Width multiplier (0.8 - 1.4)
   tilePaddingScale: number; // Spacing multiplier (0.5 - 1.5)
+  
+  // Question Modal Display Settings
+  questionModalSize: 'Small' | 'Medium' | 'Large' | 'ExtraLarge'; // Modal size preset
+  questionMaxWidthPercent: number; // Max content width (60-100% of modal)
+  questionFontScale: number; // Font size multiplier (0.8 - 1.5)
+  questionContentPadding: number; // Padding around question (4-24px)
+  multipleChoiceColumns: 'auto' | '1' | '2'; // Grid column mode
   
   // Metadata
   updatedAt: string;
@@ -135,6 +176,10 @@ export interface GameAnalyticsEvent {
     after?: any;
     message?: string;
     note?: string;
+    specialMoveType?: SpecialMoveType;
+    specialMoveName?: string;
+    teamMemberId?: string;
+    teamMemberName?: string;
   };
 }
 
@@ -143,6 +188,9 @@ export interface GameState {
   isGameStarted: boolean;
   categories: Category[];
   players: Player[];
+  playMode?: PlayMode;
+  teamPlayStyle?: TeamPlayStyle;
+  teams?: Team[];
   activeQuestionId: null | string;
   activeCategoryId: null | string;
   selectedPlayerId: null | string;
@@ -154,18 +202,72 @@ export interface GameState {
 }
 
 export interface QuestionCountdownTimer {
-  duration: number;
-  isActive: boolean;
+  durationSeconds: number;
+  remainingSeconds: number;
+  isRunning: boolean;
+  isStopped: boolean;
   startedAt: number | null;
-  timeRemaining: number;
+  endsAt: number | null;
+  activeQuestionId: string | null;
 }
 
 export interface SessionGameTimer {
-  preset: '15m' | '30m' | '1h' | '1h30m' | '2h' | null;
-  isActive: boolean;
+  durationSeconds: number;
+  remainingSeconds: number;
+  isRunning: boolean;
+  isStopped: boolean;
   startedAt: number | null;
-  timeRemaining: number;
-  paused: boolean;
+  endsAt: number | null;
+  selectedPreset: '15m' | '30m' | '1h' | '1h30m' | '2h' | null;
+}
+
+export interface TimerAudioSettings {
+  enabled: boolean;
+  muted: boolean;
+  volume: number;
+  tickSoundEnabled: boolean;
+  endSoundEnabled: boolean;
+}
+
+export type SoundCategory = 'TIMERS' | 'GAMEPLAY' | 'UI' | 'SYSTEM';
+
+export type SoundKey =
+  | 'timerTick'
+  | 'timerEnd'
+  | 'sessionCue'
+  | 'steal'
+  | 'award'
+  | 'void'
+  | 'reveal'
+  | 'correct'
+  | 'wrong'
+  | 'buzzer'
+  | 'doubleOrNothing'
+  | 'click'
+  | 'select'
+  | 'tileOpen'
+  | 'modalOpen'
+  | 'toastSuccess'
+  | 'toastError'
+  | 'toastInfo';
+
+export interface SoundControlState {
+  enabled: boolean;
+  muted: boolean;
+  volume: number;
+}
+
+export interface SoundBoardState {
+  masterEnabled: boolean;
+  masterMuted: boolean;
+  masterVolume: number;
+  sounds: Record<SoundKey, SoundControlState>;
+}
+
+export interface SoundDefinition {
+  key: SoundKey;
+  label: string;
+  category: SoundCategory;
 }
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug';
@@ -325,9 +427,15 @@ export type Difficulty = 'easy' | 'medium' | 'hard' | 'mixed';
 export interface TemplateConfig {
   playerCount: number;
   playerNames?: string[];
+  playMode?: PlayMode;
+  teamPlayStyle?: TeamPlayStyle;
+  teams?: Team[];
   categoryCount: number;
   rowCount: number;
   pointScale?: number;
+  quickGameMode?: 'single_player' | 'two_player' | null;
+  quickTimerMode?: 'timed' | 'untimed' | null;
+  quickTimerDurationSeconds?: number | null;
 }
 
 export interface GameTemplate {
@@ -340,7 +448,19 @@ export interface GameTemplate {
   lastModified?: string;
 }
 
-export type SpecialMoveType = 'DOUBLE_TROUBLE' | 'TRIPLE_THREAT' | 'SABOTAGE' | 'MEGA_STEAL';
+export type SpecialMoveType =
+  | 'DOUBLE_TROUBLE'
+  | 'TRIPLE_THREAT'
+  | 'SABOTAGE'
+  | 'MEGA_STEAL'
+  | 'DOUBLE_WINS_OR_NOTHING'
+  | 'TRIPLE_WINS_OR_NOTHING'
+  | 'SAFE_BET'
+  | 'LOCKOUT'
+  | 'SUPER_SAVE'
+  | 'GOLDEN_GAMBLE'
+  | 'SHIELD_BOOST'
+  | 'FINAL_SHOT';
 
 export interface SMSDeployment {
   moveType: SpecialMoveType;

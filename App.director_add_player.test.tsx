@@ -50,19 +50,19 @@ describe('Director Panel: Add Player Feature', () => {
     // Create Show
     await waitFor(() => screen.getByText(/Select Production/i));
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Add Player Test' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     
     // Create Template
     await waitFor(() => screen.getByText(/Template Library/i));
-    fireEvent.click(screen.getByText(/New Template/i));
-    await waitFor(() => screen.getByText(/New Template Configuration/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Add Game' } });
     
     // Adjust player count if needed (default is 4)
     // Rows and columns logic...
     
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     await waitFor(() => screen.getByText(/Save/i));
     fireEvent.click(screen.getByText(/Save/i));
     await waitFor(() => screen.getByText(/Play Show/i));
@@ -147,3 +147,6 @@ describe('Director Panel: Add Player Feature', () => {
     });
   });
 });
+
+
+

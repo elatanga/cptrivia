@@ -62,13 +62,13 @@ describe('Director Panel: Live Game Analytics (Verification Suite)', () => {
     await waitFor(() => screen.getByText(/Select Production/i));
     
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'Analytics Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Template Library/i));
     
     fireEvent.click(screen.getByText(/Create Template/i));
-    await waitFor(() => screen.getByText(/New Template Configuration/i));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
     fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Analytics Test' } });
-    fireEvent.click(screen.getByText('Start Building'));
+    fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
     await waitFor(() => screen.getByText(/Save Template/i));
     fireEvent.click(screen.getByText(/Save Template/i));
     await waitFor(() => screen.getByText(/Play Show/i));
@@ -186,9 +186,12 @@ describe('Director Panel: Live Game Analytics (Verification Suite)', () => {
     
     // Verify file naming pattern
     const link = (document.createElement as any).mock.results.find((r: any) => r.value.tagName === 'A').value;
-    expect(link.download).toMatch(/^cruzpham-trivia-logs-\d{8}-\d{4}\.txt$/);
+    expect(link.download).toMatch(/^cruzpham-trivia-logs-\d{8}T\d{6}\.csv$/);
 
     // Cleanup mock
     document.createElement = originalCreateElement;
   });
 });
+
+
+

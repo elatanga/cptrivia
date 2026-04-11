@@ -3,6 +3,8 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { QuestionModal } from './QuestionModal';
 import { Question, Player, GameTimer } from '../types';
+import { logger } from '../services/logger';
+import { DEFAULT_BOARD_VIEW_SETTINGS } from '../services/boardViewSettings';
 
 // Mock types for tests
 declare const jest: any;
@@ -10,8 +12,6 @@ declare const describe: any;
 declare const test: any;
 declare const expect: any;
 declare const beforeEach: any;
-// Fix: Declare require for dynamic module loading in tests to fix "Cannot find name 'require'"
-declare const require: any;
 
 // Mock sound service
 jest.mock('../services/soundService', () => ({
@@ -47,7 +47,7 @@ const mockTimer: GameTimer = {
   isRunning: false,
 };
 
-const setupModal = (questionOverrides: Partial<Question> = {}) => {
+const setupModal = (questionOverrides: Partial<Question> = {}, viewSettingsOverrides: any = null) => {
   const mockQuestion: Question = {
     id: 'q1',
     text: 'Standard Question?',
@@ -66,6 +66,7 @@ const setupModal = (questionOverrides: Partial<Question> = {}) => {
       players={mockPlayers}
       selectedPlayerId="p1"
       timer={mockTimer}
+      viewSettings={viewSettingsOverrides}
       onClose={jest.fn()}
       onReveal={jest.fn()}
     />
@@ -93,7 +94,7 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
     expect(container).toBeInTheDocument();
     expect(container).toHaveClass('max-w-7xl');
     expect(container).toHaveClass('backdrop-blur-2xl');
-    expect(container).toHaveClass('rounded-[2.5rem]');
+    expect(container).toHaveClass('md:rounded-[2.5rem]');
     expect(container).toHaveClass('grid');
   });
 
@@ -101,7 +102,7 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
     setupModal();
     const qText = screen.getByTestId('question-text');
     expect(qText).toHaveClass('font-roboto-bold');
-    expect(qText.getAttribute('style')).toContain('clamp(30px, 4.5vw, 86px)');
+    expect(qText.getAttribute('style')).toContain('line-height');
   });
 
   test('D) VISIBILITY: Question viewport and actions rail are separated inside container', () => {
@@ -125,16 +126,51 @@ describe('QuestionModal: Layout & Reveal UI Health (Card 1)', () => {
     expect(container).toHaveClass('overflow-hidden');
 
     const qText = screen.getByTestId('question-text');
-    expect(qText.getAttribute('style')).toContain('clamp(24px, 3vw, 48px)');
+    expect(qText).toHaveClass('break-words');
   });
 
   test('F) LOGGING: Logs reveal UI render event', () => {
+    const infoSpy = jest.spyOn(logger, 'info');
     setupModal();
-    // Fix: Using the declared require to access logger from the mock context
-    const { logger } = require('../services/logger');
-    expect(logger.info).toHaveBeenCalledWith(
+    expect(infoSpy).toHaveBeenCalledWith(
       "reveal_ui_rendered",
       expect.objectContaining({ tileId: 'q1', ts: expect.any(String) })
     );
+  });
+
+  test('G) SETTINGS FLOW: Applies dynamic modal size and content width from live settings', () => {
+    setupModal({}, {
+      ...DEFAULT_BOARD_VIEW_SETTINGS,
+      questionModalSize: 'Small',
+      questionMaxWidthPercent: 70,
+    });
+
+    const container = screen.getByTestId('luxury-container') as HTMLElement;
+    const viewport = screen.getByTestId('question-viewport') as HTMLElement;
+    expect(container.style.maxWidth).toBe('920px');
+    expect(viewport.style.maxWidth).toBe('70%');
+  });
+
+  test('H) HARDENING: Falls back safely when malformed display settings are supplied', () => {
+    setupModal(
+      {
+        options: ['Alpha', 'Beta', 'Gamma', 'Delta'],
+      },
+      {
+        questionModalSize: 'MASSIVE',
+        questionMaxWidthPercent: 500,
+        questionFontScale: -4,
+        questionContentPadding: -10,
+        multipleChoiceColumns: 'wat',
+      }
+    );
+
+    const container = screen.getByTestId('luxury-container') as HTMLElement;
+    const viewport = screen.getByTestId('question-viewport') as HTMLElement;
+    const grid = screen.getByTestId('answer-options-grid');
+    expect(container.style.maxWidth).toBe('1280px');
+    expect(viewport.style.maxWidth).toBe('100%');
+    expect(viewport.style.paddingLeft).toBe('4px');
+    expect(grid.className).toContain('sm:grid-cols-2');
   });
 });

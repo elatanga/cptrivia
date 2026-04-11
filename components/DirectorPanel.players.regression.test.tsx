@@ -4,9 +4,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DirectorPanel } from './DirectorPanel';
 import { GameState, Player } from '../types';
-
-// Fix: Declare require to avoid TypeScript error when dynamically loading modules in tests.
-declare const require: any;
+import { logger } from '../services/logger';
 
 /**
  * MOCKS
@@ -58,6 +56,11 @@ describe('DirectorPanel: Players Tab Regression Lock', () => {
       tileScale: 'M',
       scoreboardScale: 1.0,
       tilePaddingScale: 1.0,
+      questionModalSize: 'Medium',
+      questionMaxWidthPercent: 80,
+      questionFontScale: 1,
+      questionContentPadding: 12,
+      multipleChoiceColumns: 'auto',
       updatedAt: '',
     },
     lastPlays: [],
@@ -148,8 +151,6 @@ describe('DirectorPanel: Players Tab Regression Lock', () => {
   });
 
   it('4) DEFENSIVE: Handles missing players gracefully and logs warning', () => {
-    // Fix: Using the declared require to access logger from the mock context
-    const { logger } = require('../services/logger');
     const emptyState = { ...baseState, players: [] };
     
     render(
@@ -171,7 +172,7 @@ describe('DirectorPanel: Players Tab Regression Lock', () => {
   });
 
   it('5) LOCK: Snapshot verification of the Players Tab structure', () => {
-    const { asFragment } = render(
+    render(
       <DirectorPanel 
         gameState={baseState} 
         onUpdateState={mockOnUpdateState} 
@@ -186,5 +187,135 @@ describe('DirectorPanel: Players Tab Regression Lock', () => {
     // In our implementation, this is the scrollable container after the tab bar.
     const content = screen.getByText(/Contestant Management/i).closest('.animate-in');
     expect(content).toMatchSnapshot();
+  });
+
+  it('6) TEAMS MODE: Players tab renders team cards, members, and active turn details', () => {
+    const teamState: GameState = {
+      ...baseState,
+      playMode: 'TEAMS',
+      teamPlayStyle: 'TEAM_MEMBERS_TAKE_TURNS',
+      players: [
+        { id: 't1', name: 'TEAM ALPHA', score: 700, color: '#fff' },
+        { id: 't2', name: 'TEAM BETA', score: 400, color: '#fff' },
+      ],
+      teams: [
+        {
+          id: 't1',
+          name: 'TEAM ALPHA',
+          score: 700,
+          activeMemberId: 'm2',
+          members: [
+            { id: 'm1', name: 'ALICE', score: 300, orderIndex: 0 },
+            { id: 'm2', name: 'AARON', score: 400, orderIndex: 1 },
+          ],
+        },
+        {
+          id: 't2',
+          name: 'TEAM BETA',
+          score: 400,
+          activeMemberId: 'm3',
+          members: [
+            { id: 'm3', name: 'BOB', score: 250, orderIndex: 0 },
+            { id: 'm4', name: 'BILL', score: 150, orderIndex: 1 },
+          ],
+        },
+      ],
+      selectedPlayerId: 't1',
+    };
+
+    render(
+      <DirectorPanel
+        gameState={teamState}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    switchToPlayersTab();
+
+    expect(screen.getByText(/Teams Mode/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Take Turns/i).length).toBeGreaterThan(0);
+    expect(screen.getByText('TEAM ALPHA')).toBeInTheDocument();
+    expect(screen.getByText('TEAM BETA')).toBeInTheDocument();
+    expect(screen.getByText('AARON')).toBeInTheDocument();
+    expect(screen.getAllByText(/Active/i).length).toBeGreaterThan(0);
+  });
+
+  it('7) LIVE SCORE RESET: confirms and resets individual scores only', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <DirectorPanel
+        gameState={baseState}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    switchToPlayersTab();
+    fireEvent.click(screen.getByRole('button', { name: /Reset Live Scores/i }));
+
+    expect(window.confirm).toHaveBeenCalledWith('Reset all live scores to zero?');
+    const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
+    expect(nextState.players.map((player) => player.score)).toEqual([0, 0]);
+  });
+
+  it('8) LIVE SCORE RESET: teams mode reset clears team totals and member scores', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const teamState: GameState = {
+      ...baseState,
+      playMode: 'TEAMS',
+      teamPlayStyle: 'TEAM_MEMBERS_TAKE_TURNS',
+      players: [{ id: 't1', name: 'TEAM ALPHA', score: 500, color: '#fff' }],
+      teams: [{
+        id: 't1',
+        name: 'TEAM ALPHA',
+        score: 500,
+        activeMemberId: 'm1',
+        members: [
+          { id: 'm1', name: 'ALICE', score: 200, orderIndex: 0 },
+          { id: 'm2', name: 'AARON', score: 300, orderIndex: 1 },
+        ],
+      }],
+      selectedPlayerId: 't1',
+    };
+
+    render(
+      <DirectorPanel
+        gameState={teamState}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    switchToPlayersTab();
+    fireEvent.click(screen.getByRole('button', { name: /Reset Live Scores/i }));
+
+    const nextState = mockOnUpdateState.mock.calls[0][0] as GameState;
+    expect(nextState.players[0].score).toBe(0);
+    expect(nextState.teams?.[0].score).toBe(0);
+    expect(nextState.teams?.[0].members.map((member) => member.score)).toEqual([0, 0]);
+    expect(nextState.teams?.[0].activeMemberId).toBe('m1');
+  });
+
+  it('9) LIVE SCORE RESET: cancel confirmation keeps scores unchanged', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    render(
+      <DirectorPanel
+        gameState={baseState}
+        onUpdateState={mockOnUpdateState}
+        emitGameEvent={mockEmitGameEvent}
+        addToast={mockAddToast}
+      />
+    );
+
+    switchToPlayersTab();
+    fireEvent.click(screen.getByRole('button', { name: /Reset Live Scores/i }));
+
+    expect(mockOnUpdateState).not.toHaveBeenCalled();
   });
 });

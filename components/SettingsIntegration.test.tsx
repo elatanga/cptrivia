@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
 import { GameBoard } from './GameBoard';
@@ -55,10 +55,15 @@ describe('Settings Integration: Visual Propagation', () => {
     expect(scoreboard.style.getPropertyValue('--name-font-px')).toBe('16px');
 
     // 2. Adjust to XL
-    const xlBtns = screen.getAllByText('XL');
-    fireEvent.click(xlBtns[0]); // Category Title XL
-    fireEvent.click(xlBtns[1]); // Tile Dim XL
-    fireEvent.click(xlBtns[2]); // Player Name XL
+    const clickScale = (groupLabel: string, option: string) => {
+      const group = screen.getByText(groupLabel).closest('.space-y-3');
+      if (!group) throw new Error(`Missing settings group: ${groupLabel}`);
+      fireEvent.click(within(group).getByRole('button', { name: option }));
+    };
+
+    clickScale('Category Title Size', 'XL');
+    clickScale('Tile Dimensions', 'XL');
+    clickScale('Player Name Size', 'XL');
 
     // 3. Assert Propagated Values
     expect(board.style.getPropertyValue('--cat-font-px')).toBe('24px');

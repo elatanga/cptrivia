@@ -1,33 +1,29 @@
-
 import React from 'react';
 import { Sliders, RotateCcw, Type, Layout, User } from 'lucide-react';
-import { BoardViewSettings, SizeScale } from '../types';
+import { BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
+import { BOARD_VIEW_SETTINGS_OPTIONS, DEFAULT_BOARD_VIEW_SETTINGS, sanitizeBoardViewSettings, sanitizeBoardViewSettingsPatch } from '../services/boardViewSettings';
+import { QuestionDisplaySettings } from './QuestionDisplaySettings';
 
 interface Props {
   settings: BoardViewSettings;
   onUpdateSettings: (updates: Partial<BoardViewSettings>) => void;
 }
 
-const SCALE_LABELS: SizeScale[] = ['XS', 'S', 'M', 'L', 'XL'];
+const SCALE_LABELS = BOARD_VIEW_SETTINGS_OPTIONS.sizeScales;
 
 export const DirectorSettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings }) => {
+  const safeSettings = sanitizeBoardViewSettings(settings);
   
   const handleScaleChange = (key: keyof BoardViewSettings, value: string | number) => {
     soundService.playClick();
-    onUpdateSettings({ [key]: value });
+    onUpdateSettings(sanitizeBoardViewSettingsPatch({ [key]: value } as Partial<BoardViewSettings>));
   };
 
   const handleReset = () => {
     if (confirm('Reset all studio visual settings to production defaults?')) {
       soundService.playClick();
-      onUpdateSettings({
-        categoryTitleScale: 'M',
-        tileScale: 'M',
-        playerNameScale: 'M',
-        scoreboardScale: 1.0,
-        tilePaddingScale: 1.0
-      });
+      onUpdateSettings(sanitizeBoardViewSettingsPatch({ ...DEFAULT_BOARD_VIEW_SETTINGS }));
     }
   };
 
@@ -40,7 +36,7 @@ export const DirectorSettingsPanel: React.FC<Props> = ({ settings, onUpdateSetti
     settingKey: keyof BoardViewSettings, 
     icon: any 
   }) => {
-    const currentValue = settings[settingKey];
+    const currentValue = safeSettings[settingKey];
     
     return (
       <div className="space-y-3 bg-zinc-900/40 p-4 rounded-xl border border-zinc-800/50">
@@ -100,12 +96,12 @@ export const DirectorSettingsPanel: React.FC<Props> = ({ settings, onUpdateSetti
           <div className="space-y-3 bg-zinc-900/40 p-4 rounded-xl border border-zinc-800/50">
             <label className="text-[10px] uppercase font-black text-zinc-400 tracking-[0.15em] block">Tile Grid Density</label>
             <div className="flex gap-1 bg-black/40 p-1 rounded-lg border border-zinc-800">
-              {[0.5, 0.75, 1.0, 1.25, 1.5].map((scale) => (
+              {BOARD_VIEW_SETTINGS_OPTIONS.tileDensity.map((scale) => (
                 <button
                   key={scale}
                   onClick={() => handleScaleChange('tilePaddingScale', scale)}
                   className={`flex-1 py-2 text-[9px] font-black rounded-md transition-all ${
-                    settings.tilePaddingScale === scale ? 'bg-gold-600 text-black' : 'text-zinc-600'
+                    safeSettings.tilePaddingScale === scale ? 'bg-gold-600 text-black' : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800'
                   }`}
                 >
                   {Math.round(scale * 100)}%
@@ -125,20 +121,25 @@ export const DirectorSettingsPanel: React.FC<Props> = ({ settings, onUpdateSetti
           <div className="space-y-3 bg-zinc-900/40 p-4 rounded-xl border border-zinc-800/50">
             <label className="text-[10px] uppercase font-black text-zinc-400 tracking-[0.15em] block">Panel Width</label>
             <div className="flex gap-1 bg-black/40 p-1 rounded-lg border border-zinc-800">
-              {[0.8, 1.0, 1.2, 1.4].map((scale) => (
+              {BOARD_VIEW_SETTINGS_OPTIONS.panelWidth.map((scale) => (
                 <button
                   key={scale}
                   onClick={() => handleScaleChange('scoreboardScale', scale)}
                   className={`flex-1 py-2 text-[9px] font-black rounded-md transition-all ${
-                    settings.scoreboardScale === scale ? 'bg-gold-600 text-black' : 'text-zinc-600'
+                    safeSettings.scoreboardScale === scale ? 'bg-gold-600 text-black' : 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800'
                   }`}
                 >
-                  {['Slim', 'Normal', 'Wide', 'Ultra'][Math.floor((scale-0.8)/0.2 + 0.1)]}
+                  {BOARD_VIEW_SETTINGS_OPTIONS.panelWidthLabels[scale]}
                 </button>
               ))}
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Question Display Settings Section */}
+      <div className="mt-12 pt-8 border-t border-zinc-800">
+        <QuestionDisplaySettings settings={safeSettings} onUpdateSettings={onUpdateSettings} />
       </div>
     </div>
   );

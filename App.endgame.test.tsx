@@ -61,15 +61,15 @@ describe('CRUZPHAM TRIVIA - End Game Reliability Tests', () => {
     
     // 3. Create Show
     fireEvent.change(screen.getByPlaceholderText(/New Show Title/i), { target: { value: 'EndGame Test Show' } });
-    fireEvent.click(screen.getByText(/Create/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Template Library/i));
     
     // 4. Create Template & Play
     // We assume dataService works, so we use UI to create
-    fireEvent.click(screen.getByText(/New Template/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
     await waitFor(() => screen.getByText(/Configuration/i));
-    fireEvent.change(screen.getByPlaceholderText(/Template Title/i), { target: { value: 'Game 1' } });
-    fireEvent.click(screen.getByText('Create Template', { selector: 'button' }));
+    fireEvent.change(screen.getByPlaceholderText(/e.g. Science Night 2024/i), { target: { value: 'Game 1' } });
+    fireEvent.click(screen.getByRole('button', { name: /Start Manual Studio Building/i }));
     
     await waitFor(() => screen.getByText(/Save/i));
     fireEvent.click(screen.getByText(/Save/i));
@@ -204,3 +204,6 @@ describe('CRUZPHAM TRIVIA - End Game Reliability Tests', () => {
     expect(localStorage.getItem('cruzpham_active_session_id')).toBeTruthy();
   });
 });
+
+
+

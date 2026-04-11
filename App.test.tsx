@@ -103,10 +103,10 @@ describe('CRUZPHAM STUDIOS Core Logic', () => {
       render(<App />);
       
       await waitFor(() => screen.getByText(/Alice/i));
-      
+
       // Modal should be open due to activeQuestionId
       await waitFor(() => screen.getByText(/Award/i));
-      
+
       // Award to Alice
       const awardBtn = screen.getByText(/Award/i).closest('button');
       fireEvent.click(awardBtn!);
@@ -146,7 +146,7 @@ describe('CRUZPHAM STUDIOS Core Logic', () => {
         
         await waitFor(() => screen.getByText(/Award/i));
         fireEvent.click(screen.getByText(/Award/i).closest('button')!);
-        
+
         await waitFor(() => {
           expect(screen.getByText('100')).toBeInTheDocument();
           expect(screen.queryByText('200')).not.toBeInTheDocument();

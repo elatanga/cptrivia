@@ -115,6 +115,7 @@ describe('QuestionModal Component Logic', () => {
     );
 
     const qText = screen.getByTestId('question-text');
-    expect(qText.getAttribute('style')).toContain('clamp(24px, 3vw, 48px)');
+    expect(qText).toHaveClass('break-words');
+    expect(qText.getAttribute('style')).toContain('line-height');
   });
 });

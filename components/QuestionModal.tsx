@@ -1,10 +1,65 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ShieldAlert, ArrowLeft, Trash2, Trophy, Eye } from 'lucide-react';
-import { Question, Player, GameTimer } from '../types';
+import { Question, Player, GameTimer, BoardViewSettings } from '../types';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { CountdownOverlay } from './CountdownOverlay';
+import { AutoFitText } from './AutoFitText';
+import { getQuestionDisplayLayoutTokens } from '../services/boardViewSettings';
+
+const LegacyQuestionTimerBadge: React.FC<{ timer: GameTimer; onTimerEnd?: () => void }> = React.memo(({ timer, onTimerEnd }) => {
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const prevTimeLeft = useRef<number | null>(null);
+  // Ref tracks current timeLeft so the paused-state branch can read it
+  // without `timeLeft` being a useEffect dependency (which caused the
+  // interval to be torn-down and re-created on every tick).
+  const timeLeftRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let interval: number;
+    const updateTimer = () => {
+      if (timer.endTime && timer.isRunning) {
+        const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
+        setTimeLeft(remaining);
+        timeLeftRef.current = remaining;
+        if (remaining > 0 && remaining <= 5 && remaining !== prevTimeLeft.current) {
+          soundService.playTimerTick();
+        }
+        if (remaining === 0 && prevTimeLeft.current !== 0 && prevTimeLeft.current !== null) {
+          soundService.playTimerAlarm();
+          if (onTimerEnd) onTimerEnd();
+        }
+        prevTimeLeft.current = remaining;
+      } else if (timer.endTime && !timer.isRunning && timeLeftRef.current === null) {
+        // Paused with an endTime set but no value yet — show the snapshot.
+        const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
+        setTimeLeft(remaining);
+        timeLeftRef.current = remaining;
+      } else if (!timer.endTime) {
+        setTimeLeft(null);
+        timeLeftRef.current = null;
+        prevTimeLeft.current = null;
+      }
+    };
+
+    updateTimer();
+    interval = window.setInterval(updateTimer, 200);
+    return () => clearInterval(interval);
+  // Removed `timeLeft` from deps: it was causing the interval to restart on
+  // every tick. `timeLeftRef` provides the current value without the dep.
+  }, [timer, onTimerEnd]);
+
+  if (timeLeft === null) return null;
+
+  return (
+    <div
+      className={`absolute top-6 right-6 md:top-10 md:right-10 p-2 md:p-4 rounded-full border-2 md:border-4 font-mono text-xl md:text-4xl font-black flex items-center justify-center w-12 h-12 md:w-24 md:h-24 transition-colors duration-300 bg-black/60 z-30 shadow-xl ${timeLeft <= 5 ? 'border-red-500 text-red-500 animate-pulse' : 'border-gold-500 text-gold-500'}`}
+    >
+      {timeLeft}
+    </div>
+  );
+});
 
 interface Props {
   question: Question;
@@ -12,40 +67,88 @@ interface Props {
   players: Player[];
   selectedPlayerId: string | null;
   timer: GameTimer;
-  questionCountdownActive?: boolean;
-  questionCountdownDuration?: number;
-  onQuestionCountdownComplete?: () => void;
+  viewSettings?: Partial<BoardViewSettings> | null;
+  specialMoveSummary?: {
+    moveType: string;
+    displayTitle: string;
+    pointsEffect: string;
+    penaltyEffect?: string;
+    stealPolicy: 'NO STEAL' | 'STEAL ALLOWED';
+  } | null;
+  allowSteal?: boolean;
+  stealDisabledReason?: string;
+  questionCountdownRemainingSeconds?: number;
+  questionCountdownDurationSeconds?: number;
+  isQuestionCountdownRunning?: boolean;
+  onQuestionCountdownRestart?: () => void;
+  onQuestionCountdownStop?: () => void;
   onClose: (action: 'return' | 'void' | 'award' | 'steal', playerId?: string) => void;
   onReveal: () => void;
   onTimerEnd?: () => void;
 }
 
-export const QuestionModal: React.FC<Props> = ({ 
-  question, categoryTitle, players, selectedPlayerId, timer, questionCountdownActive, questionCountdownDuration, onQuestionCountdownComplete, onClose, onReveal, onTimerEnd 
-}) => {
+export const QuestionModal: React.FC<Props> = React.memo(function QuestionModalInner({ 
+  question,
+  categoryTitle,
+  players,
+  selectedPlayerId,
+  timer,
+  viewSettings,
+  specialMoveSummary,
+  allowSteal = true,
+  stealDisabledReason,
+  questionCountdownRemainingSeconds,
+  questionCountdownDurationSeconds,
+  isQuestionCountdownRunning,
+  onQuestionCountdownRestart,
+  onQuestionCountdownStop,
+  onClose,
+  onReveal,
+  onTimerEnd
+}) {
   const [showStealSelect, setShowStealSelect] = useState(false);
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
-  const [countdownStopped, setCountdownStopped] = useState(false);
-  
+  const loggedQuestionIdRef = useRef<string | null>(null);
+  const loggedDoubleQuestionIdRef = useRef<string | null>(null);
+  const playedDoubleQuestionIdRef = useRef<string | null>(null);
+
   const isRevealed = question.isRevealed;
   const isDouble = question.isDoubleOrNothing || false;
+  const bannerTitles = useMemo(() => {
+    const titles = [specialMoveSummary?.displayTitle, isDouble ? 'DOUBLE OR NOTHING' : null]
+      .filter((title): title is string => Boolean(title));
+    return Array.from(new Set(titles));
+  }, [specialMoveSummary?.displayTitle, isDouble]);
 
-  const getQuestionFontSize = useCallback((text: string) => {
-    const length = (text || '').trim().length;
-    if (length > 320) return 'clamp(24px, 3vw, 48px)';
-    if (length > 220) return 'clamp(26px, 3.4vw, 56px)';
-    if (length > 140) return 'clamp(28px, 3.8vw, 64px)';
-    return 'clamp(30px, 4.5vw, 86px)';
-  }, []);
+  const answerOptions = useMemo(() => {
+    const q = question as Question & { options?: string[] };
+    if (!Array.isArray(q.options)) return [];
+    return q.options.filter((option) => typeof option === 'string' && option.trim().length > 0).slice(0, 4);
+  }, [question]);
 
-  const questionFontSize = getQuestionFontSize(question.text);
+  const displayTokens = useMemo(
+    () => getQuestionDisplayLayoutTokens(viewSettings, answerOptions.length),
+    [viewSettings, answerOptions.length]
+  );
+
+  const contentRegionStyle = useMemo(
+    () => ({
+      maxWidth: `${displayTokens.contentMaxWidthPercent}%`,
+      paddingLeft: `${displayTokens.contentPaddingPx}px`,
+      paddingRight: `${displayTokens.contentPaddingPx}px`,
+    }),
+    [displayTokens.contentMaxWidthPercent, displayTokens.contentPaddingPx]
+  );
 
   // LOGGING & SCROLL LOCK
   useEffect(() => {
-    const ts = new Date().toISOString();
-    logger.info("reveal_ui_rendered", { tileId: question.id, isDoubleOrNothing: isDouble, ts });
-    if (isDouble) {
-      logger.info("double_or_nothing_displayed", { tileId: question.id, ts });
+    if (loggedQuestionIdRef.current !== question.id) {
+      logger.info("reveal_ui_rendered", { tileId: question.id, isDoubleOrNothing: isDouble, ts: new Date().toISOString() });
+      loggedQuestionIdRef.current = question.id;
+    }
+
+    if (isDouble && loggedDoubleQuestionIdRef.current !== question.id) {
+      logger.info("double_or_nothing_displayed", { tileId: question.id, ts: new Date().toISOString() });
+      loggedDoubleQuestionIdRef.current = question.id;
     }
 
     const originalStyle = {
@@ -61,38 +164,86 @@ export const QuestionModal: React.FC<Props> = ({
     };
   }, [question.id, isDouble]);
 
-  // Timer Logic (Unchanged)
-  const prevTimeLeft = useRef<number | null>(null);
   useEffect(() => {
-    let interval: number;
-    const updateTimer = () => {
-       if (timer.endTime && timer.isRunning) {
-         const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
-         setTimeLeft(remaining);
-         if (remaining > 0 && remaining <= 5 && remaining !== prevTimeLeft.current) {
-            soundService.playTimerTick();
-         }
-         if (remaining === 0 && prevTimeLeft.current !== 0 && prevTimeLeft.current !== null) {
-            soundService.playTimerAlarm();
-            if (onTimerEnd) onTimerEnd();
-         }
-         prevTimeLeft.current = remaining;
-       } else if (timer.endTime && !timer.isRunning && timeLeft === null) {
-         const remaining = Math.max(0, Math.ceil((timer.endTime - Date.now()) / 1000));
-         setTimeLeft(remaining);
-       } else if (!timer.endTime) {
-         setTimeLeft(null);
-         prevTimeLeft.current = null;
-       }
-    };
-    updateTimer();
-    interval = window.setInterval(updateTimer, 200);
-    return () => clearInterval(interval);
-  }, [timer, timeLeft, onTimerEnd]);
-
-  useEffect(() => {
-    if (isDouble && !isRevealed) soundService.playDoubleOrNothing();
+    if (isDouble && !isRevealed && playedDoubleQuestionIdRef.current !== question.id) {
+      soundService.playDoubleOrNothing();
+      playedDoubleQuestionIdRef.current = question.id;
+    }
   }, [isDouble, isRevealed]);
+
+  const questionContent = useMemo(() => (
+    <div
+      data-testid="question-viewport"
+      className="w-full overflow-hidden min-h-0 flex items-center justify-center mx-auto"
+      style={contentRegionStyle}
+    >
+      <AutoFitText
+        testId="question-text"
+        text={question.text}
+        minFontSizePx={displayTokens.questionMinFontPx}
+        maxFontSizePx={displayTokens.questionMaxFontPx}
+        clampVw={displayTokens.questionClampVw}
+        className={`font-roboto-bold text-center transition-[opacity,transform,filter] duration-500 max-h-full ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
+        containerClassName="w-full h-full flex items-center justify-center"
+      />
+    </div>
+  ), [question.text, isRevealed, contentRegionStyle, displayTokens.questionMinFontPx, displayTokens.questionMaxFontPx, displayTokens.questionClampVw]);
+
+  const answerContent = useMemo(() => (
+    <div className="w-full flex flex-col items-center gap-2 md:gap-4 min-h-[3.5rem] md:min-h-[5rem] mx-auto" style={contentRegionStyle}>
+      {!isRevealed && answerOptions.length > 0 && (
+        <div data-testid="answer-options-grid" className={`w-full grid ${displayTokens.optionGridClass} gap-2 md:gap-3`}>
+          {answerOptions.map((option, idx) => (
+            <div
+              key={`${option}-${idx}`}
+              className="min-h-[56px] md:min-h-[74px] rounded-xl border border-zinc-700/70 bg-black/35 px-3 py-2 md:px-4 md:py-3 shadow-lg"
+            >
+              <AutoFitText
+                testId={`answer-option-${idx}`}
+                text={option}
+                minFontSizePx={displayTokens.optionMinFontPx}
+                maxFontSizePx={displayTokens.optionMaxFontPx}
+                clampVw={displayTokens.optionClampVw}
+                className="font-roboto-bold text-zinc-100 text-left"
+                containerClassName="w-full h-full flex items-center"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isRevealed ? (
+        <div 
+          data-testid="answer-text"
+          className="w-full text-center py-3 md:py-6 bg-gold-950/20 border-y border-gold-500/20 animate-in zoom-in slide-in-from-bottom duration-500 min-h-0"
+        >
+          <AutoFitText
+            testId="answer-text-value"
+            text={question.answer}
+            minFontSizePx={displayTokens.answerMinFontPx}
+            maxFontSizePx={displayTokens.answerMaxFontPx}
+            clampVw={displayTokens.answerClampVw}
+            className="text-gold-400 font-roboto-bold text-center drop-shadow-2xl"
+            containerClassName="w-full"
+          />
+        </div>
+      ) : (
+        <div className="h-2 w-32 bg-zinc-800/50 rounded-full flex-none" />
+      )}
+    </div>
+  ), [
+    isRevealed,
+    answerOptions,
+    question.answer,
+    contentRegionStyle,
+    displayTokens.optionGridClass,
+    displayTokens.optionMinFontPx,
+    displayTokens.optionMaxFontPx,
+    displayTokens.optionClampVw,
+    displayTokens.answerMinFontPx,
+    displayTokens.answerMaxFontPx,
+    displayTokens.answerClampVw,
+  ]);
 
   const handleAction = useCallback((action: 'reveal' | 'award' | 'steal' | 'void' | 'return', event?: React.MouseEvent | React.KeyboardEvent) => {
     if (event) {
@@ -100,7 +251,7 @@ export const QuestionModal: React.FC<Props> = ({
       if ('stopPropagation' in event) event.stopPropagation();
     }
 
-    if (questionCountdownActive && !countdownStopped && action !== 'return') {
+    if (isQuestionCountdownRunning && action !== 'return') {
       return;
     }
 
@@ -121,7 +272,7 @@ export const QuestionModal: React.FC<Props> = ({
         }
         break;
       case 'steal':
-        if (isRevealed) {
+        if (isRevealed && allowSteal) {
           soundService.playSteal();
           setShowStealSelect(true);
         }
@@ -142,7 +293,7 @@ export const QuestionModal: React.FC<Props> = ({
         }
         break;
     }
-  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, questionCountdownActive, countdownStopped]);
+  }, [isRevealed, selectedPlayerId, showStealSelect, onClose, onReveal, isQuestionCountdownRunning, allowSteal]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -180,20 +331,17 @@ export const QuestionModal: React.FC<Props> = ({
   return (
     <div 
       data-testid="reveal-root"
-      className="fixed inset-0 z-[9999] bg-black text-white font-roboto overflow-hidden flex flex-col items-center justify-center p-4 md:p-8"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      className="fixed inset-0 z-[9999] bg-black text-white font-roboto overflow-hidden flex flex-col items-center justify-center p-2 md:p-4"
+      style={{ height: '100dvh', maxHeight: '100dvh', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* QUESTION COUNTDOWN OVERLAY */}
-      {questionCountdownActive && !countdownStopped && questionCountdownDuration && (
+      {isQuestionCountdownRunning && questionCountdownDurationSeconds && questionCountdownRemainingSeconds !== undefined && (
         <CountdownOverlay
-          duration={questionCountdownDuration}
-          onComplete={() => {
-            setCountdownStopped(true);
-            if (onQuestionCountdownComplete) onQuestionCountdownComplete();
-          }}
-          onStop={() => {
-            setCountdownStopped(true);
-          }}
+          durationSeconds={questionCountdownDurationSeconds}
+          remainingSeconds={questionCountdownRemainingSeconds}
+          isRunning={isQuestionCountdownRunning}
+          onRestart={() => onQuestionCountdownRestart && onQuestionCountdownRestart()}
+          onStop={() => onQuestionCountdownStop && onQuestionCountdownStop()}
         />
       )}
 
@@ -215,60 +363,57 @@ export const QuestionModal: React.FC<Props> = ({
       {/* SINGLE LUXURY CENTERED CONTAINER */}
       <div 
         data-testid="luxury-container"
-        className="relative z-10 w-full max-w-7xl max-h-[85vh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-4 md:p-10 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden grid grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-3 md:gap-6"
+        className="relative z-10 w-full max-w-7xl h-[min(94dvh,920px)] max-h-[94dvh] bg-zinc-900/40 backdrop-blur-2xl border border-white/10 rounded-[2rem] md:rounded-[2.5rem] p-3 md:p-8 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden grid grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-2 md:gap-4"
+        style={{
+          maxWidth: `${displayTokens.modalMaxWidthPx}px`,
+          height: `min(94dvh, ${displayTokens.modalMaxHeightPx}px)`,
+          maxHeight: '94dvh',
+        }}
       >
-        {/* TIMER OVERLAY (Floating in container corner) */}
-        {timeLeft !== null && (
-           <div className={`absolute top-6 right-6 md:top-10 md:right-10 p-2 md:p-4 rounded-full border-2 md:border-4 font-mono text-xl md:text-4xl font-black flex items-center justify-center w-12 h-12 md:w-24 md:h-24 transition-colors duration-300 bg-black/60 z-30 shadow-xl ${timeLeft <= 5 ? 'border-red-500 text-red-500 animate-pulse' : 'border-gold-500 text-gold-500'}`}>
-             {timeLeft}
-           </div>
+        {/* Legacy per-question timer badge isolated from modal rendering flow */}
+        <LegacyQuestionTimerBadge timer={timer} onTimerEnd={onTimerEnd} />
+
+        {/* 1. TOP RISK/MODIFIER LABELS */}
+        {bannerTitles.length > 0 && (
+          <div className="flex flex-col items-center justify-center gap-2 md:gap-3 pb-1 md:pb-2">
+            <div
+              data-testid="special-move-banner"
+              className="w-full max-w-5xl rounded-2xl border border-red-500/45 bg-gradient-to-r from-red-950/45 via-black/35 to-red-950/45 px-4 py-3 md:px-6 md:py-4 text-center shadow-[0_0_30px_rgba(239,68,68,0.18)] backdrop-blur-sm"
+            >
+              <div className="flex flex-col items-center justify-center gap-1.5 md:gap-2">
+                {bannerTitles.map((title) => (
+                  <div
+                    key={title}
+                    data-testid={title === 'DOUBLE OR NOTHING' ? 'double-label' : undefined}
+                    className="font-black uppercase text-red-400 tracking-[0.22em] drop-shadow-[0_0_14px_rgba(248,113,113,0.55)]"
+                    style={{ fontSize: 'clamp(20px, 2.6vw, 34px)', lineHeight: 1.05 }}
+                  >
+                    {title}
+                  </div>
+                ))}
+
+                {specialMoveSummary && (
+                  <div className="mt-1 flex flex-wrap justify-center gap-1.5 text-[9px] md:text-[10px] uppercase tracking-[0.18em] font-black text-zinc-100">
+                    <span className="rounded-full border border-red-400/25 bg-black/45 px-2.5 py-1">{specialMoveSummary.pointsEffect}</span>
+                    {specialMoveSummary.penaltyEffect && (
+                      <span className="rounded-full border border-red-400/25 bg-black/45 px-2.5 py-1">{specialMoveSummary.penaltyEffect}</span>
+                    )}
+                    <span className="rounded-full border border-red-400/25 bg-black/45 px-2.5 py-1">{specialMoveSummary.stealPolicy}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         )}
 
-        {/* 1. DOUBLE OR NOTHING LABEL */}
-        <div className="h-12 flex items-center justify-center">
-          {isDouble && (
-            <span 
-              data-testid="double-label"
-              className="text-red-500 font-black uppercase tracking-[0.3em] drop-shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-in fade-in slide-in-from-top-2 duration-700"
-              style={{ fontSize: 'clamp(18px, 2vw, 32px)' }}
-            >
-              DOUBLE OR NOTHING
-            </span>
-          )}
-        </div>
-
         {/* 2. QUESTION AREA */}
-        <div data-testid="question-viewport" className="w-full px-2 md:px-6 overflow-hidden min-h-0 flex items-center justify-center">
-          <h2 
-            data-testid="question-text"
-            className={`font-roboto-bold text-center leading-[1.08] transition-all duration-700 max-h-full overflow-hidden break-words px-1 ${isRevealed ? 'opacity-40 scale-90 blur-[1px]' : 'opacity-100 scale-100'}`}
-            style={{ fontSize: questionFontSize, overflowWrap: 'anywhere' }}
-          >
-            {question.text}
-          </h2>
-        </div>
+        {questionContent}
 
         {/* 3. ANSWER AREA */}
-        <div className="w-full flex flex-col items-center gap-4 md:gap-8">
-          {isRevealed ? (
-            <div 
-              data-testid="answer-text"
-              className="w-full text-center py-6 md:py-10 bg-gold-950/20 border-y border-gold-500/20 animate-in zoom-in slide-in-from-bottom duration-500"
-            >
-              <p 
-                className="text-gold-400 font-roboto-bold leading-tight drop-shadow-2xl"
-                style={{ fontSize: 'clamp(24px, 3.5vw, 64px)' }}
-              >
-                {question.answer}
-              </p>
-            </div>
-          ) : (
-            <div className="h-2 w-32 bg-zinc-800/50 rounded-full" />
-          )}
-        </div>
+        {answerContent}
 
         {/* 4. ACTION ICONS ROW */}
-        <div data-testid="reveal-actions-rail" className="w-full border-t border-zinc-800/60 pt-3 md:pt-5">
+        <div data-testid="reveal-actions-rail" className="w-full border-t border-zinc-800/60 pt-2 md:pt-3 flex-none">
           <div 
             data-testid="reveal-actions"
             className="flex flex-wrap items-center justify-center gap-3 md:gap-8 w-full"
@@ -291,7 +436,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed}
               onClick={(e) => handleAction('void', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && (!questionCountdownActive || countdownStopped) ? 'text-zinc-500 hover:text-red-500' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && !isQuestionCountdownRunning ? 'text-zinc-500 hover:text-red-500' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Void (ESC)"
             >
               <div className="p-3 md:p-5 bg-zinc-900/80 rounded-full border border-zinc-700 shadow-lg group-hover:border-red-900/30 transition-all">
@@ -305,8 +450,9 @@ export const QuestionModal: React.FC<Props> = ({
               {!isRevealed ? (
                 <button 
                   type="button"
+                  disabled={!!isQuestionCountdownRunning}
                   onClick={(e) => handleAction('reveal', e)}
-                  className="bg-gold-600 hover:bg-gold-500 text-black p-4 md:p-8 rounded-full shadow-[0_0_50px_rgba(255,215,0,0.3)] hover:scale-110 transition-all active:scale-95 flex items-center justify-center border-4 border-black/20"
+                  className={`text-black p-4 md:p-8 rounded-full shadow-[0_0_50px_rgba(255,215,0,0.3)] transition-all flex items-center justify-center border-4 border-black/20 ${isQuestionCountdownRunning ? 'bg-zinc-700 cursor-not-allowed opacity-50' : 'bg-gold-600 hover:bg-gold-500 hover:scale-110 active:scale-95'}`}
                   title="Reveal Answer (SPACE)"
                 >
                   <Eye className="w-8 h-8 md:w-14 md:h-14" />
@@ -319,10 +465,10 @@ export const QuestionModal: React.FC<Props> = ({
             {/* STEAL */}
             <button 
               type="button"
-              disabled={!isRevealed}
+              disabled={!isRevealed || !allowSteal}
               onClick={(e) => handleAction('steal', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && (!questionCountdownActive || countdownStopped) ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
-              title="Steal (S)"
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && allowSteal && !isQuestionCountdownRunning ? 'text-purple-500 hover:text-purple-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              title={stealDisabledReason || 'Steal (S)'}
             >
               <div className="p-3 md:p-5 bg-purple-950/20 border-2 border-purple-500/50 rounded-full shadow-xl group-hover:bg-purple-900/40 transition-all">
                 <ShieldAlert className="w-5 h-5 md:w-8 md:h-8" />
@@ -335,7 +481,7 @@ export const QuestionModal: React.FC<Props> = ({
               type="button"
               disabled={!isRevealed || !selectedPlayerId}
               onClick={(e) => handleAction('award', e)}
-              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && selectedPlayerId && (!questionCountdownActive || countdownStopped) ? 'text-green-500 hover:text-green-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
+              className={`flex flex-col items-center gap-2 transition-all group min-w-[64px] ${isRevealed && selectedPlayerId && !isQuestionCountdownRunning ? 'text-green-500 hover:text-green-300' : 'opacity-10 cursor-not-allowed grayscale'}`}
               title="Award (ENTER)"
             >
               <div className="p-3 md:p-5 bg-green-950/20 border-2 border-green-500/50 rounded-full shadow-xl group-hover:bg-green-900/40 transition-all">
@@ -374,4 +520,6 @@ export const QuestionModal: React.FC<Props> = ({
       )}
     </div>
   );
-};
+// React.memo: prevents re-renders driven purely by countdown ticks in the parent.
+// question/answer content is further stabilised internally by useMemo.
+});
