@@ -1,3 +1,4 @@
+
 import { logger } from './logger';
 
 declare const describe: any;
@@ -13,8 +14,8 @@ describe('Logger PII Masking', () => {
 
   test('Masks Phone', () => {
     const output = logger.maskPII('Call +15551234567');
-    expect(output).toContain('+15****67');
-    expect(output).not.toContain('12345');
+    expect(output).toContain('+1555****67');
+    expect(output).not.toContain('1234');
   });
 
   test('Masks App Tokens (pk-)', () => {
@@ -23,12 +24,13 @@ describe('Logger PII Masking', () => {
     expect(output).not.toContain('12345');
   });
 
-  test('Google API-looking strings are unchanged by current token masks', () => {
+  test('Masks Google API Keys (AIza)', () => {
     const output = logger.maskPII('Config: AIzaSyTestKey123456');
-    expect(output).toContain('AIzaSyTestKey123456');
+    expect(output).toContain('AIzaSyTes********');
+    expect(output).not.toContain('tKey123');
   });
 
-  test('Masks Nested Object Keys using secret/token key names', () => {
+  test('Masks Nested Object Keys', () => {
     const obj = {
       user: {
         email: 'test@test.com',
@@ -38,7 +40,7 @@ describe('Logger PII Masking', () => {
     };
     const output = logger.maskPII(obj);
     expect(output.user.email).toContain('te***@test.com');
-    expect(output.user.apiKey).toBe('AIzaSecret'); // "apiKey" is not masked by key-name rule
-    expect(output.secretToken).toBe('********'); // matched by key name
+    expect(output.user.apiKey).toBe('********'); // matched by key name 'key'
+    expect(output.secretToken).toBe('********'); // matched by key name 'token'
   });
 });

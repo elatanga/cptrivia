@@ -2557,11 +2557,11 @@ export const DirectorPanel: React.FC<Props> = ({
                             {armingTileId === q.id && <Loader2 className="w-4 h-4 animate-spin text-gold-500" />}
                           </div>
                           <div className="mt-1 text-[9px] uppercase tracking-widest text-zinc-500">Col {tileColumnIndex >= 0 ? tileColumnIndex + 1 : '?'}</div>
-                          {specialMoveBadge.showTag && (
+                          {specialMoveTagState !== 'none' && (
                             <div
                               data-testid={`special-move-director-tag-${q.id}`}
-                              data-state={specialMoveBadge.visualState}
-                              className={`mt-2 inline-flex items-center rounded border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${specialMoveBadge.tone === 'red'
+                              data-state={specialMoveTagState}
+                              className={`mt-2 inline-flex items-center rounded border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${specialMoveTagState === 'armed'
                                 ? 'bg-red-700/90 border-red-400/70 text-red-100'
                                 : 'bg-zinc-800/90 border-zinc-500/60 text-zinc-300 grayscale'}`}
                             >

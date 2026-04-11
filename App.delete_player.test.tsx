@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import App from './App';
@@ -60,15 +61,15 @@ describe('Director Panel: Delete Player (Fix Verification)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
     await waitFor(() => screen.getByText(/Template Library/i));
     
-    // Create Template with default players
-    fireEvent.click(screen.getByRole('button', { name: /^Create Template$/i }));
-    await waitFor(() => screen.getByPlaceholderText(/e\.g\. Science Night 2024/i));
-    fireEvent.change(screen.getByPlaceholderText(/e\.g\. Science Night 2024/i), { target: { value: 'Delete Game' } });
+    // Create Template with 2 players
+    fireEvent.click(screen.getByText(/Create Template/i));
+    await waitFor(() => screen.getByPlaceholderText(/e.g. Science Night 2024/i));
+    fireEvent.change(screen.getByPlaceholderText(/Show or Game Topic/i), { target: { value: 'Delete Game' } });
     
     // Use Start Building to initialize with default players
     fireEvent.click(screen.getByText(/Start Manual Studio Building/i));
-    await waitFor(() => screen.getByTestId('save-template-button'));
-    fireEvent.click(screen.getByTestId('save-template-button'));
+    await waitFor(() => screen.getByText(/Save Template/i));
+    fireEvent.click(screen.getByText(/Save Template/i));
     await waitFor(() => screen.getByText(/Play Show/i));
     fireEvent.click(screen.getByText(/Play Show/i));
     await waitFor(() => screen.getByText(/End Show/i));
@@ -142,4 +143,6 @@ describe('Director Panel: Delete Player (Fix Verification)', () => {
     expect(state.selectedPlayerId).not.toBe(state.players.find((p: any) => p.name === 'PLAYER 1')?.id);
   });
 });
+
+
 

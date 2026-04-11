@@ -27,8 +27,7 @@ const SPECIAL_MOVE_LABELS: Record<string, string> = {
 
 const isSpecialMoveContext = (event: GameAnalyticsEvent): boolean => {
   const context = event.context || {};
-  if (typeof context.specialMoveType === 'string' && context.specialMoveType.trim()) return true;
-  if (typeof context.specialMoveName === 'string' && context.specialMoveName.trim()) return true;
+  if (context.specialMoveType || context.specialMoveName) return true;
   if (typeof context.note === 'string' && SPECIAL_MOVE_NOTE_REGEX.test(context.note)) return true;
   return false;
 };
@@ -38,7 +37,8 @@ export const deriveResolvedSpecialMoveTileIds = (events: GameAnalyticsEvent[] | 
   for (const event of events || []) {
     const tileId = event?.context?.tileId;
     if (!tileId) continue;
-    if (!RESOLUTION_EVENT_TYPES.has(event.type)) continue;
+    const isResolutionEvent = event.type === 'POINTS_AWARDED' || event.type === 'POINTS_STOLEN' || event.type === 'TILE_VOIDED' || event.type === 'QUESTION_RETURNED' || event.type === 'SCORE_ADJUSTED';
+    if (!isResolutionEvent) continue;
     if (!isSpecialMoveContext(event)) continue;
     resolved.add(tileId);
   }
@@ -70,9 +70,8 @@ export const deriveResolvedSpecialMoveLabelsByTileId = (
 };
 
 export const getTileSpecialMoveTagState = (isArmed: boolean, wasResolved: boolean): TileSpecialMoveTagState => {
-  const model = getTileSpecialMoveBadgeModel(isArmed, wasResolved);
-  if (model.visualState === 'resolved') return 'resolved';
-  if (model.visualState === 'armed') return 'armed';
+  if (wasResolved) return 'resolved';
+  if (isArmed) return 'armed';
   return 'none';
 };
 

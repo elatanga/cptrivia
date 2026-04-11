@@ -2,43 +2,41 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 import { authService } from './services/authService';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+
+declare const jest: any;
+declare const describe: any;
+declare const test: any;
+declare const expect: any;
+declare const beforeEach: any;
 
 // Mock sound service
-vi.mock('./services/soundService', () => ({
+jest.mock('./services/soundService', () => ({
   soundService: {
-    playClick: vi.fn(),
-    playSelect: vi.fn(),
-    playReveal: vi.fn(),
-    playAward: vi.fn(),
-    playSteal: vi.fn(),
-    playVoid: vi.fn(),
-    playDoubleOrNothing: vi.fn(),
-    playTimerTick: vi.fn(),
-    playTimerAlarm: vi.fn(),
-    playToast: vi.fn(),
-    setMute: vi.fn(), getMute: vi.fn().mockReturnValue(false),
-    setVolume: vi.fn(), getVolume: vi.fn().mockReturnValue(0.5)
+    playClick: jest.fn(),
+    playSelect: jest.fn(),
+    playReveal: jest.fn(),
+    playAward: jest.fn(),
+    playSteal: jest.fn(),
+    playVoid: jest.fn(),
+    playDoubleOrNothing: jest.fn(),
+    playTimerTick: jest.fn(),
+    playTimerAlarm: jest.fn(),
+    playToast: jest.fn(),
+    setMute: jest.fn(), getMute: jest.fn().mockReturnValue(false),
+    setVolume: jest.fn(), getVolume: jest.fn().mockReturnValue(0.5)
   }
 }));
 
 // Mock Gemini
-vi.mock('./services/geminiService', () => ({
-  generateTriviaGame: vi.fn().mockResolvedValue([]),
-  generateSingleQuestion: vi.fn().mockResolvedValue({ text: 'AI Q', answer: 'AI A' }),
-  getGeminiConfigHealth: vi.fn().mockReturnValue({
-    isConfigured: true,
-    configured: true,
-    hasApiKey: true,
-    model: 'test-model',
-    reason: null,
-  }),
+jest.mock('./services/geminiService', () => ({
+  generateTriviaGame: jest.fn().mockResolvedValue([]),
+  generateSingleQuestion: jest.fn().mockResolvedValue({ text: 'AI Q', answer: 'AI A' })
 }));
 
 describe('Responsive Layout Tests', () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.clearAllMocks();
+    jest.clearAllMocks();
   });
 
   const setViewport = (width: number) => {

@@ -13,14 +13,13 @@ const tileContentKeys = ['text', 'answer', 'options', 'explanation', 'difficulty
 const hasOwn = (obj: unknown, key: string) => Object.prototype.hasOwnProperty.call(obj as object, key);
 
 const cloneQuestionWithContent = (base: Question, generated: Question): Question => {
-  const next = { ...(base as unknown as Record<string, unknown>) };
-  const generatedContent = generated as unknown as Record<string, unknown>;
+  const next: Record<string, unknown> = { ...base };
   tileContentKeys.forEach((key) => {
     if (hasOwn(generated, key)) {
-      next[key] = generatedContent[key];
+      next[key] = (generated as Record<string, unknown>)[key];
     }
   });
-  return next as unknown as Question;
+  return next as Question;
 };
 
 export const isTileActive = (question: Question): boolean => {

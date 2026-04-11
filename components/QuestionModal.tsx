@@ -2,7 +2,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ShieldAlert, ArrowLeft, Trash2, Trophy, Eye } from 'lucide-react';
 import { Question, Player, GameTimer, BoardViewSettings } from '../types';
-import { QuestionModalSpecialMoveModel } from '../modules/specialMoves/modalSummary';
 import { soundService } from '../services/soundService';
 import { logger } from '../services/logger';
 import { CountdownOverlay } from './CountdownOverlay';
@@ -69,7 +68,13 @@ interface Props {
   selectedPlayerId: string | null;
   timer: GameTimer;
   viewSettings?: Partial<BoardViewSettings> | null;
-  specialMoveSummary?: QuestionModalSpecialMoveModel | null;
+  specialMoveSummary?: {
+    moveType: string;
+    displayTitle: string;
+    pointsEffect: string;
+    penaltyEffect?: string;
+    stealPolicy: 'NO STEAL' | 'STEAL ALLOWED';
+  } | null;
   allowSteal?: boolean;
   stealDisabledReason?: string;
   questionCountdownRemainingSeconds?: number;

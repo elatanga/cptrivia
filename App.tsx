@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { AppShell } from './components/AppShell';
 import { ToastContainer } from './components/Toast';
 import { LoginScreen } from './components/LoginScreen';
-import { BootstrapScreen } from './components/BootstrapScreen';
 import { ShowSelection } from './components/ShowSelection';
 import { TemplateDashboard } from './components/TemplateDashboard';
 import { GameBoard } from './components/GameBoard';
@@ -42,7 +41,6 @@ import {
   rotateActiveMemberForTeamById,
 } from './services/teamsMode';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
-import { firebaseConfigError, missingKeys } from './services/firebase';
 
 const QUESTION_TIMER_DURATION_OPTIONS = [5, 7, 8, 10, 15] as const;
 const DEFAULT_QUESTION_TIMER_DURATION_SECONDS = 10;
@@ -117,8 +115,8 @@ const App: React.FC = () => {
   // App Boot State
   const [isConfigured, setIsConfigured] = useState(false);
   const [authChecked, setAuthChecked] = useState(false); 
-  const [systemStatusError, setSystemStatusError] = useState<string | null>(null);
   
+  const [bootstrapToken, setBootstrapToken] = useState<string | null>(null);
 
   const [session, setSession] = useState<{ id: string; username: string; role: UserRole } | null>(null);
   const [activeShow, setActiveShow] = useState<Show | null>(null);
@@ -828,25 +826,20 @@ const App: React.FC = () => {
   // Admin Polling
   useEffect(() => {
     let interval: number;
-    if (session?.role === 'MASTER_ADMIN') {
-        const check = async () => {
-            try {
-              const pending = await authService.getPendingRequestCount(session.username);
-              setPendingRequests(prev => {
-                  if (pending > prev) {
-                      soundService.playToast('info');
-                      addToast('info', `New Request: ${pending} Pending`);
-                  }
-                  return pending;
-              });
-            } catch {
-              setPendingRequests(0);
-            }
+    if (session?.role === 'ADMIN' || session?.role === 'MASTER_ADMIN') {
+        const check = () => {
+            const reqs = authService.getRequests();
+            const pending = reqs.filter(r => r.status === 'PENDING').length;
+            setPendingRequests(prev => {
+                if (pending > prev) {
+                    soundService.playToast('info');
+                    addToast('info', `New Request: ${pending} Pending`);
+                }
+                return pending;
+            });
         };
-        void check(); 
-        interval = window.setInterval(() => { void check(); }, 30000); 
-    } else {
-      setPendingRequests(0);
+        check(); 
+        interval = window.setInterval(check, 30000); 
     }
     return () => clearInterval(interval);
   }, [session]);
@@ -1233,7 +1226,7 @@ const App: React.FC = () => {
     };
     initializeApp();
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [handleStorageChange, initializeApp]);
+  }, []);
 
   const addToast = (type: ToastMessage['type'], message: string) => {
     setToasts(prev => [...prev, { id: Math.random().toString(), type, message }]);
@@ -1242,6 +1235,18 @@ const App: React.FC = () => {
 
   // --- ACTIONS ---
 
+  const handleBootstrap = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const token = await authService.bootstrapMasterAdmin('admin');
+      setBootstrapToken(token);
+      setIsConfigured(true);
+      addToast('success', 'Master Admin Created Successfully');
+    } catch (e: any) {
+      addToast('error', e.message);
+      if (e.code === 'ERR_BOOTSTRAP_COMPLETE') setTimeout(() => window.location.reload(), 2000);
+    }
+  };
 
   const handlePopout = () => {
     const width = 1024;
@@ -1735,7 +1740,6 @@ const App: React.FC = () => {
       teams: newTeams,
       activeQuestionId: null,
       activeCategoryId: null,
-      selectedPlayerId: nextSelectedPlayerId,
       timer: { ...current.timer, endTime: null, isRunning: false },
       lastPlays: updatedPlays
     };
@@ -1795,8 +1799,8 @@ const App: React.FC = () => {
     }
 
     // AUTO-ADVANCE PLAYER SELECTION AFTER PLAY COMPLETION
-    // Authoritative rule: VOID advances turn; RETURN never advances turn.
-    const shouldAutoAdvance = action === 'award' || action === 'steal' || action === 'void';
+    // Only advance if this was a scored play (award, steal, or fail resolution)
+    const shouldAutoAdvance = action === 'award' || action === 'steal' || resolvesAsFail;
     if (shouldAutoAdvance && newPlayers.length > 0) {
       const autoAdvanceFromTeamId = scoringTargetId || current.selectedPlayerId;
       const nextSelectedPlayerId =
@@ -1890,12 +1894,6 @@ const App: React.FC = () => {
 
   const handleSelectPlayer = (id: string) => {
     const p = gameState.players.find(pl => pl.id === id);
-    if (gameState.selectedPlayerId !== id) {
-      logger.info('scoreboard_selection_manual_override', {
-        from: gameState.selectedPlayerId,
-        to: id,
-      });
-    }
     soundService.playSelect();
     emitGameEvent('PLAYER_SELECTED', {
        actor: { role: 'director' },
@@ -1903,17 +1901,6 @@ const App: React.FC = () => {
     });
     saveGameState({ ...gameState, selectedPlayerId: id });
   };
-
-  const activeCategory = gameState.categories.find(c => c.id === gameState.activeCategoryId);
-  const activeQuestion = activeCategory?.questions.find(q => q.id === gameState.activeQuestionId);
-  const isMasterAdmin = session?.role === 'MASTER_ADMIN';
-  const showShortcuts = viewMode === 'BOARD' && gameState.isGameStarted;
-
-  useEffect(() => {
-    if (viewMode === 'ADMIN' && !isMasterAdmin) {
-      setViewMode('BOARD');
-    }
-  }, [viewMode, isMasterAdmin]);
 
   if (!authChecked) return (
     <div className="h-screen w-screen flex items-center justify-center bg-black text-white">
@@ -1924,30 +1911,26 @@ const App: React.FC = () => {
     </div>
   );
 
-  if (systemStatusError) return (
-    <div className="h-screen w-screen flex items-center justify-center bg-black text-white px-4">
+  if (!isConfigured) return (
+    <div className="h-screen w-screen flex items-center justify-center bg-black text-white">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
-      <div className="w-full max-w-lg bg-zinc-900 border border-red-900/60 rounded-2xl p-8 shadow-2xl text-center">
-        <p className="text-[10px] uppercase tracking-[0.3em] font-black text-red-400">System Initialization Error</p>
-        <h2 className="mt-4 text-3xl font-serif text-white">Unable to Verify Studio Status</h2>
-        <p className="mt-4 text-sm text-zinc-300 leading-relaxed">{systemStatusError}</p>
-        <p className="mt-2 text-xs text-zinc-500">Bootstrap is hidden until the authoritative backend confirms that the system is uninitialized.</p>
-        <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
-          <button onClick={() => { void initializeApp(); }} className="px-5 py-3 rounded-xl bg-gold-600 hover:bg-gold-500 text-black font-black uppercase tracking-[0.2em] text-xs">
-            Retry Status Check
-          </button>
-          <a href="mailto:support@cruzpham.com" className="px-5 py-3 rounded-xl border border-zinc-700 hover:border-zinc-500 text-zinc-300 font-black uppercase tracking-[0.2em] text-xs">
-            Contact Support
-          </a>
-        </div>
+      <div className="max-w-md w-full p-8 border border-gold-600 rounded-2xl bg-zinc-900 text-center relative overflow-hidden">
+        <h1 className="text-3xl font-serif text-gold-500 mb-4">SYSTEM BOOTSTRAP</h1>
+        <button onClick={handleBootstrap} className="w-full bg-gold-600 text-black font-bold py-3 rounded uppercase tracking-wider hover:bg-gold-500">Create Master Admin</button>
       </div>
     </div>
   );
 
-  if (!isConfigured) return (
+  if (bootstrapToken) return (
     <div className="h-screen w-screen flex items-center justify-center bg-black text-white">
-      <ToastContainer toasts={toasts} removeToast={removeToast} />
-      <BootstrapScreen onComplete={() => setIsConfigured(true)} addToast={addToast} />
+      <div className="max-w-md w-full p-8 border border-red-600 rounded-2xl bg-zinc-900 text-center">
+         <h1 className="text-3xl font-serif text-red-500 mb-4">MASTER TOKEN GENERATED</h1>
+         <div className="bg-black p-4 rounded border border-zinc-700 flex items-center justify-between mb-8">
+           <code className="text-gold-500 font-mono text-lg">{bootstrapToken}</code>
+           <button onClick={() => navigator.clipboard.writeText(bootstrapToken)} className="text-zinc-500 hover:text-white"><Copy className="w-5 h-5"/></button>
+         </div>
+         <button onClick={() => setBootstrapToken(null)} className="w-full bg-zinc-800 text-white font-bold py-3 rounded uppercase tracking-wider">I have saved it safely</button>
+      </div>
     </div>
   );
 
@@ -1993,6 +1976,10 @@ const App: React.FC = () => {
     );
   }
 
+  const activeCategory = gameState.categories.find(c => c.id === gameState.activeCategoryId);
+  const activeQuestion = activeCategory?.questions.find(q => q.id === gameState.activeQuestionId);
+  const isAdmin = session?.role === 'ADMIN' || session?.role === 'MASTER_ADMIN';
+  const showShortcuts = viewMode === 'BOARD' && gameState.isGameStarted;
 
   return (
     <AppShell activeShowTitle={gameState.showTitle || (activeShow ? activeShow.title : undefined)} username={session?.username} onLogout={handleLogout} shortcuts={showShortcuts ? <ShortcutsPanel /> : null}>
@@ -2033,7 +2020,7 @@ const App: React.FC = () => {
           {!activeShow ? (
             <>
                <ShowSelection username={session.username} onSelectShow={setActiveShow} />
-               {isMasterAdmin && (
+               {isAdmin && (
                  <div className="absolute bottom-4 right-4">
                    <button onClick={() => setViewMode('ADMIN')} className="flex items-center gap-2 text-xs font-bold uppercase text-zinc-500 hover:text-gold-500 bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-full relative group">
                      <Shield className="w-3 h-3" /> Admin Console
@@ -2041,7 +2028,7 @@ const App: React.FC = () => {
                    </button>
                  </div>
                )}
-               {viewMode === 'ADMIN' && isMasterAdmin && <div className="fixed inset-0 z-50"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
+               {viewMode === 'ADMIN' && <div className="fixed inset-0 z-50"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
             </>
           ) : (
             <>
@@ -2050,7 +2037,7 @@ const App: React.FC = () => {
                    <div className="bg-zinc-900 border border-zinc-800 p-1 rounded-full flex gap-1">
                      <button onClick={() => setViewMode('BOARD')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'BOARD' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:text-white'}`}><Monitor className="w-3 h-3" /> Board</button>
                      <button onClick={() => setViewMode('DIRECTOR')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'DIRECTOR' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}><Grid className="w-3 h-3" /> Director</button>
-                      {isMasterAdmin && <button onClick={() => setViewMode('ADMIN')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'ADMIN' ? 'bg-purple-600 text-white' : 'text-zinc-500 hover:text-white'}`}><Shield className="w-3 h-3" /> Admin</button>}
+                     {isAdmin && <button onClick={() => setViewMode('ADMIN')} className={`px-6 py-2 rounded-full text-xs font-bold uppercase flex items-center gap-2 ${viewMode === 'ADMIN' ? 'bg-purple-600 text-white' : 'text-zinc-500 hover:text-white'}`}><Shield className="w-3 h-3" /> Admin</button>}
                    </div>
                  </div>
                )}
@@ -2161,7 +2148,7 @@ const App: React.FC = () => {
                      onDecreaseTimerVolume={decreaseTimerVolume}
                    />
                  </div>
-                 {viewMode === 'ADMIN' && isMasterAdmin && <div className="absolute inset-0 z-50 bg-zinc-950"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
+                 {viewMode === 'ADMIN' && <div className="absolute inset-0 z-50 bg-zinc-950"><AdminPanel currentUser={session.username} onClose={() => setViewMode('BOARD')} addToast={addToast} /></div>}
                </div>
             </>
           )}

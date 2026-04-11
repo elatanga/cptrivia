@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import cors from "cors"; // 1. Import cors
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,17 +15,6 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const app = express();
-
-// Option B: Restricted (Recommended)
-app.use(cors({
-  origin: [
-    "https://cptrivia-test--cruzpham-trivia-prod.us-central1.hosted.app",
-    /\.hosted\.app$/ // Matches any Firebase hosting preview URL
-  ],
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
-
 
 // 1. CONSTANTS & ENV
 const PORT = process.env.PORT || 8080;
@@ -50,19 +38,6 @@ app.get("/runtime-config.js", (req, res) => {
   }
 
   const safe = (v) => String(v || "").replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
-  const declaredBuildEnv = String(process.env.BUILD_ENV || "production").trim().toLowerCase();
-  const deployedRuntime = ["production", "staging", "test"].includes(declaredBuildEnv);
-  const allowLocalMocks = deployedRuntime ? "false" : String(process.env.ALLOW_LOCAL_MOCKS || "false");
-  const enableFirebaseAnonAuth = deployedRuntime ? "false" : String(process.env.ENABLE_FIREBASE_ANON_AUTH || "false");
-  const functionsRegion = String(process.env.FUNCTIONS_REGION || "us-central1");
-  const functionsBaseUrl = String(process.env.FUNCTIONS_BASE_URL || "");
-
-  if (deployedRuntime && String(process.env.ALLOW_LOCAL_MOCKS || '').toLowerCase() === 'true') {
-    console.warn("RUNTIME WARNING: ALLOW_LOCAL_MOCKS requested in deployed runtime and has been forced off.");
-  }
-  if (deployedRuntime && String(process.env.ENABLE_FIREBASE_ANON_AUTH || '').toLowerCase() === 'true') {
-    console.warn("RUNTIME WARNING: ENABLE_FIREBASE_ANON_AUTH requested in deployed runtime and has been forced off.");
-  }
 
   const configContent = `
     window.__RUNTIME_CONFIG__ = {
@@ -72,8 +47,6 @@ app.get("/runtime-config.js", (req, res) => {
       FIREBASE_STORAGE_BUCKET: "${safe(process.env.FIREBASE_STORAGE_BUCKET)}",
       FIREBASE_MESSAGING_SENDER_ID: "${safe(process.env.FIREBASE_MESSAGING_SENDER_ID)}",
       FIREBASE_APP_ID: "${safe(process.env.FIREBASE_APP_ID)}",
-      FUNCTIONS_REGION: "${safe(functionsRegion)}",
-      FUNCTIONS_BASE_URL: "${safe(functionsBaseUrl)}",
       API_KEY: "${safe(process.env.API_KEY)}",
       GEMINI_API_KEY: "${safe(process.env.GEMINI_API_KEY)}",
       GEMINI_MODEL: "${safe(process.env.GEMINI_MODEL)}",
