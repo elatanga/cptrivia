@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Settings, Users, Grid, Edit, Save, X, RefreshCw, Wand2, MonitorOff, ExternalLink, RotateCcw, Play, Pause, Timer, Type, Layout, Star, Trash2, AlertTriangle, UserPlus, Check, BarChart3, Info, Hash, Clock, History, Copy, Trash, Download, ChevronDown, ChevronUp, Sparkles, Sliders, Loader2, Minus, Plus, ShieldAlert, Volume2 } from 'lucide-react';
-import { GameState, Question, Difficulty, Category, BoardViewSettings, Player, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType } from '../types';
+import { GameState, Question, Difficulty, Category, BoardViewSettings, Player, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType, Team, TeamPlayStyle } from '../types';
 import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from '../types';
 import { generateSingleQuestion, generateCategoryQuestions } from '../services/geminiService';
 import { logger } from '../services/logger';
@@ -11,10 +11,13 @@ import { CategoryRegenerationMode, isTileActive, preserveTileStateOnRegenerate, 
 import { DirectorAiRegenerator } from './DirectorAiRegenerator';
 import { DirectorSettingsPanel } from './DirectorSettingsPanel';
 import { DirectorSoundBoardPanel } from './DirectorSoundBoardPanel';
+import { getTeamsValidationError as getTeamsModeValidationError, resetLiveScoresByMode } from '../services/teamsMode';
 import { specialMovesClient, type SMSBackendMode } from '../modules/specialMoves/client/specialMovesClient';
 import { SMSOverlayDoc } from '../modules/specialMoves/firestoreTypes';
 import { getBoardPointColumns, getGiftMoveGlobalDisabledReason, getGiftMoveTileDisabledReason, getTileColumnIndex, isGiftActivatedMove } from '../modules/specialMoves/eligibility';
-import { deriveResolvedSpecialMoveTileIds, getTileSpecialMoveBadgeModel } from '../modules/specialMoves/tileTagState';
+import { BUILD_GATED_SPECIAL_MOVES, GIFT_SPECIAL_MOVE_TYPES, SPECIAL_MOVE_CATALOG, STANDARD_SPECIAL_MOVE_TYPES } from '../modules/specialMoves/catalog';
+import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds, getTileSpecialMoveTagState, getTileSpecialMoveTagText } from '../modules/specialMoves/tileTagState';
+import { normalizeHmsToSeconds, secondsToHms } from '../services/sessionTimerUtils';
 
 interface Props {
   gameState: GameState;
@@ -38,6 +41,7 @@ interface Props {
   sessionTimerEnabled?: boolean;
   onSessionTimerToggle?: (enabled: boolean) => void;
   onSessionTimerStart?: (preset: '15m' | '30m' | '1h' | '1h30m' | '2h') => void;
+  onSessionTimerStartWithDuration?: (durationSeconds: number) => void;
   onSessionTimerPause?: () => void;
   onSessionTimerReset?: () => void;
   timerAudio?: TimerAudioSettings;
@@ -69,6 +73,7 @@ export const DirectorPanel: React.FC<Props> = ({
   sessionTimerEnabled,
   onSessionTimerToggle,
   onSessionTimerStart,
+  onSessionTimerStartWithDuration,
   onSessionTimerPause,
   onSessionTimerReset,
   timerAudio,
@@ -118,7 +123,7 @@ export const DirectorPanel: React.FC<Props> = ({
     searchText: string;
   };
 
-  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'SOUND_BOARD' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
+  const [activeTab, setActiveTab] = useState<'GAME' | 'PLAYERS' | 'TEAMS' | 'BOARD' | 'MOVES' | 'MOVES_HELP' | 'COUNTER_STUDIO' | 'SOUND_BOARD' | 'LOGS_AUDIT' | 'STATS' | 'SETTINGS'>('BOARD');
   const [editingQuestion, setEditingQuestion] = useState<{cIdx: number, qIdx: number} | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [selectedMoveType, setSelectedMoveType] = useState<SpecialMoveType>('DOUBLE_TROUBLE');
@@ -150,46 +155,25 @@ export const DirectorPanel: React.FC<Props> = ({
   const [newPlayerName, setNewPlayerName] = useState('');
   const [confirmResetAll, setConfirmResetAll] = useState(false);
 
-  const moveLabels: Record<SpecialMoveType, string> = {
-    DOUBLE_TROUBLE: 'DOUBLE OR LOSE',
-    TRIPLE_THREAT: 'TRIPLE OR LOSE',
-    SABOTAGE: 'SAFE BET',
-    MEGA_STEAL: 'LOCKOUT',
-    DOUBLE_WINS_OR_NOTHING: 'DOUBLE YOUR WINS OR NOTHING',
-    TRIPLE_WINS_OR_NOTHING: 'TRIPLE YOUR WINS OR NOTHING',
-    SAFE_BET: 'SAFE BET',
-    LOCKOUT: 'LOCKOUT',
-    SUPER_SAVE: 'SUPER SAVE',
-    GOLDEN_GAMBLE: 'GOLDEN GAMBLE',
-    SHIELD_BOOST: 'SHIELD BOOST',
-    FINAL_SHOT: 'FINAL SHOT',
-  };
+  const moveLabels: Record<SpecialMoveType, string> = useMemo(
+    () => Object.fromEntries(
+      Object.entries(SPECIAL_MOVE_CATALOG).map(([moveType, details]) => [moveType, details.displayTitle])
+    ) as Record<SpecialMoveType, string>,
+    []
+  );
 
-  const standardMoveTypes: SpecialMoveType[] = [
-    'DOUBLE_TROUBLE',
-    'TRIPLE_THREAT',
-    'SAFE_BET',
-    'LOCKOUT',
-    'DOUBLE_WINS_OR_NOTHING',
-    'TRIPLE_WINS_OR_NOTHING',
-  ];
+  const standardMoveTypes: SpecialMoveType[] = STANDARD_SPECIAL_MOVE_TYPES;
 
-  const giftMoveTypes: SpecialMoveType[] = ['SUPER_SAVE', 'GOLDEN_GAMBLE', 'SHIELD_BOOST', 'FINAL_SHOT'];
+  const giftMoveTypes: SpecialMoveType[] = GIFT_SPECIAL_MOVE_TYPES;
 
-  const moveDescriptions: Record<SpecialMoveType, string> = {
-    DOUBLE_TROUBLE: 'Tile only. Correct = 2x. Fail/return = lose tile value. No steal.',
-    TRIPLE_THREAT: 'Tile only. Correct = 3x. Fail/return = lose 130% of tile value. No steal.',
-    SABOTAGE: 'Legacy alias for Safe Bet.',
-    MEGA_STEAL: 'Legacy alias for Lockout.',
-    SAFE_BET: 'Tile only. Correct = +50%. Wrong = no penalty. No steal.',
-    LOCKOUT: 'Tile only. No steal allowed. Normal award, no extra fail penalty.',
-    DOUBLE_WINS_OR_NOTHING: 'Endgame challenge. Top-2 only. Correct doubles total score, wrong resets to 0.',
-    TRIPLE_WINS_OR_NOTHING: 'Endgame challenge. Top-2 only. Correct triples total score, wrong resets to 0.',
-    SUPER_SAVE: 'Gift required. First 3 columns only. Correct = 3x. No steal.',
-    GOLDEN_GAMBLE: 'Gift required. Middle columns only. Correct = +125%. Wrong = -50%. No steal.',
-    SHIELD_BOOST: 'Gift required. Non-final column only. Correct = 2x. Wrong = no penalty. No steal.',
-    FINAL_SHOT: 'Gift required. Last 2 columns only. Correct = 3x. Wrong = lose tile value. No steal.',
-  };
+  const moveDescriptions: Record<SpecialMoveType, string> = useMemo(
+    () => Object.fromEntries(
+      Object.entries(SPECIAL_MOVE_CATALOG).map(([moveType, details]) => [moveType, details.description])
+    ) as Record<SpecialMoveType, string>,
+    []
+  );
+
+  const buildGatedMoveCards = BUILD_GATED_SPECIAL_MOVES;
 
   const backendModeLabels: Record<SMSBackendMode, string> = {
     FUNCTIONS: 'Functions',
@@ -713,6 +697,7 @@ export const DirectorPanel: React.FC<Props> = ({
     version: 1
   };
   const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
+  const resolvedSpecialMoveLabelsByTileId = useMemo(() => deriveResolvedSpecialMoveLabelsByTileId(gameState.events), [gameState.events]);
 
   const isEndgameMove = (moveType: SpecialMoveType) => moveType === 'DOUBLE_WINS_OR_NOTHING' || moveType === 'TRIPLE_WINS_OR_NOTHING';
   const isTileMove = (moveType: SpecialMoveType) => !isEndgameMove(moveType);
@@ -731,6 +716,52 @@ export const DirectorPanel: React.FC<Props> = ({
   );
   const hasActiveTile = !!gameState.activeCategoryId && !!gameState.activeQuestionId;
   const isSessionTimerFeatureEnabled = sessionTimerEnabled ?? true;
+
+  const [questionManualHms, setQuestionManualHms] = useState(() => {
+    const initial = secondsToHms(questionTimerDurationSeconds || 0);
+    return {
+      hours: String(initial.hours),
+      minutes: String(initial.minutes),
+      seconds: String(initial.seconds),
+    };
+  });
+
+  const [sessionManualHms, setSessionManualHms] = useState(() => {
+    const initial = secondsToHms(sessionTimer?.durationSeconds || 0);
+    return {
+      hours: String(initial.hours),
+      minutes: String(initial.minutes),
+      seconds: String(initial.seconds),
+    };
+  });
+
+  useEffect(() => {
+    const next = secondsToHms(questionTimerDurationSeconds || 0);
+    setQuestionManualHms({
+      hours: String(next.hours),
+      minutes: String(next.minutes),
+      seconds: String(next.seconds),
+    });
+  }, [questionTimerDurationSeconds]);
+
+  useEffect(() => {
+    const next = secondsToHms(sessionTimer?.durationSeconds || 0);
+    setSessionManualHms({
+      hours: String(next.hours),
+      minutes: String(next.minutes),
+      seconds: String(next.seconds),
+    });
+  }, [sessionTimer?.durationSeconds]);
+
+  const updateHmsField = (
+    setter: React.Dispatch<React.SetStateAction<{ hours: string; minutes: string; seconds: string }>>,
+    key: 'hours' | 'minutes' | 'seconds',
+    raw: string,
+  ) => {
+    if (!/^\d*$/.test(raw)) return;
+    setter((prev) => ({ ...prev, [key]: raw }));
+  };
+
   const rankedPlayers = useMemo(
     () => [...gameState.players].sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
@@ -1007,6 +1038,184 @@ export const DirectorPanel: React.FC<Props> = ({
     addToast('success', `Added ${name}`);
   };
 
+  const isTeamsMode = (gameState.playMode || 'INDIVIDUALS') === 'TEAMS';
+  const activeTeamPlayStyle = gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE';
+  const teamPlayStyleLabel = activeTeamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'TAKE TURNS' : 'PLAYS AS ONE';
+  const canEditTeams = !gameState.isGameStarted;
+  const teamsValidationError = isTeamsMode
+    ? getTeamsModeValidationError('TEAMS', gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE', gameState.teams || [])
+    : null;
+
+  const setTeamsState = (teams: Team[], teamPlayStyle?: TeamPlayStyle) => {
+    const normalizedTeams = teams.map((team, teamIndex) => ({
+      ...team,
+      name: normalizePlayerName(team.name) || `TEAM ${teamIndex + 1}`,
+      score: Number(team.score || 0),
+      members: (team.members || []).map((member, memberIndex) => ({
+        ...member,
+        name: normalizePlayerName(member.name) || `MEMBER ${memberIndex + 1}`,
+        score: Number(member.score || 0),
+        orderIndex: memberIndex,
+      })),
+      activeMemberId: team.members?.some((member) => member.id === team.activeMemberId)
+        ? team.activeMemberId
+        : team.members?.[0]?.id,
+    }));
+
+    // Preserve live player stats (score, wildcards, steals, etc.) for teams that
+    // already exist in the current player list. Only create a fresh entry for
+    // brand-new teams that have no matching player yet.
+    const existingPlayersById: Record<string, Player> = {};
+    (gameState.players || []).forEach((p) => { existingPlayersById[p.id] = p; });
+
+    const contestants = normalizedTeams.map((team) => {
+      const existing = existingPlayersById[team.id];
+      if (existing) {
+        return {
+          ...existing,
+          name: team.name,
+          score: Number(team.score || 0),
+        };
+      }
+      return {
+        id: team.id,
+        name: team.name,
+        score: Number(team.score || 0),
+        color: '#ffffff',
+        wildcardsUsed: 0,
+        wildcardActive: false,
+        stealsCount: 0,
+        questionsAnswered: 0,
+        lostOrVoidedCount: 0,
+        specialMovesUsedCount: 0,
+        specialMovesUsedNames: [],
+      };
+    });
+
+    onUpdateState({
+      ...gameState,
+      playMode: 'TEAMS',
+      teamPlayStyle: teamPlayStyle || gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE',
+      teams: normalizedTeams,
+      players: contestants,
+      selectedPlayerId: contestants.some((player) => player.id === gameState.selectedPlayerId)
+        ? gameState.selectedPlayerId
+        : contestants[0]?.id || null,
+    });
+  };
+
+  const handleToggleTeamsMode = (enabled: boolean) => {
+    if (!canEditTeams) {
+      addToast('error', 'Teams setup is locked once gameplay starts.');
+      return;
+    }
+
+    if (!enabled) {
+      onUpdateState({
+        ...gameState,
+        playMode: 'INDIVIDUALS',
+        teamPlayStyle: gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE',
+        teams: gameState.teams || [],
+      });
+      return;
+    }
+
+    const seedTeams = (gameState.teams && gameState.teams.length > 0)
+      ? gameState.teams
+      : [
+          {
+            id: crypto.randomUUID(),
+            name: 'TEAM 1',
+            score: 0,
+            members: [{ id: crypto.randomUUID(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+            activeMemberId: undefined,
+          },
+          {
+            id: crypto.randomUUID(),
+            name: 'TEAM 2',
+            score: 0,
+            members: [{ id: crypto.randomUUID(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+            activeMemberId: undefined,
+          },
+        ];
+
+    setTeamsState(seedTeams, gameState.teamPlayStyle || 'TEAM_PLAYS_AS_ONE');
+  };
+
+  const handleUpdateTeamPlayStyle = (teamPlayStyle: TeamPlayStyle) => {
+    if (!canEditTeams) {
+      addToast('error', 'Team play style cannot change during active gameplay.');
+      return;
+    }
+
+    if (teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS') {
+      const nextError = getTeamsModeValidationError('TEAMS', teamPlayStyle, gameState.teams || []);
+      if (nextError) {
+        addToast('error', nextError);
+        return;
+      }
+    }
+
+    setTeamsState(gameState.teams || [], teamPlayStyle);
+  };
+
+  const handleAddTeamConfig = () => {
+    const nextTeams = [
+      ...(gameState.teams || []),
+      {
+        id: crypto.randomUUID(),
+        name: `TEAM ${(gameState.teams || []).length + 1}`,
+        score: 0,
+        members: [{ id: crypto.randomUUID(), name: 'MEMBER 1', score: 0, orderIndex: 0 }],
+        activeMemberId: undefined,
+      },
+    ];
+    setTeamsState(nextTeams);
+  };
+
+  const handleRemoveTeamConfig = (teamId: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).filter((team) => team.id !== teamId));
+  };
+
+  const handleUpdateTeamName = (teamId: string, name: string) => {
+    setTeamsState((gameState.teams || []).map((team) => team.id === teamId ? { ...team, name } : team));
+  };
+
+  const handleAddTeamMemberConfig = (teamId: string) => {
+    setTeamsState((gameState.teams || []).map((team) => {
+      if (team.id !== teamId) return team;
+      const members = [
+        ...(team.members || []),
+        { id: crypto.randomUUID(), name: `MEMBER ${(team.members || []).length + 1}`, score: 0, orderIndex: (team.members || []).length },
+      ];
+      return { ...team, members, activeMemberId: team.activeMemberId || members[0]?.id };
+    }));
+  };
+
+  const handleUpdateTeamMemberConfig = (teamId: string, memberId: string, name: string) => {
+    setTeamsState((gameState.teams || []).map((team) => {
+      if (team.id !== teamId) return team;
+      return {
+        ...team,
+        members: (team.members || []).map((member) => member.id === memberId ? { ...member, name } : member),
+      };
+    }));
+  };
+
+  const handleRemoveTeamMemberConfig = (teamId: string, memberId: string) => {
+    if (!canEditTeams) return;
+    setTeamsState((gameState.teams || []).map((team) => {
+      if (team.id !== teamId) return team;
+      const members = (team.members || []).filter((member) => member.id !== memberId);
+      return {
+        ...team,
+        members,
+        activeMemberId: members.some((member) => member.id === team.activeMemberId) ? team.activeMemberId : members[0]?.id,
+      };
+    }));
+  };
+
   const handleUpdateViewSettings = (updates: Partial<BoardViewSettings>) => {
     const currentSettings = sanitizeBoardViewSettings(gameState.viewSettings);
     const sanitizedPatch = sanitizeBoardViewSettingsPatch(updates);
@@ -1040,6 +1249,48 @@ export const DirectorPanel: React.FC<Props> = ({
       actor: { role: 'director' }, 
       context: { after: safeUpdates } 
     });
+  };
+
+  const safeConfirm = (message: string): boolean => {
+    try {
+      return typeof window !== 'undefined' && typeof window.confirm === 'function'
+        ? window.confirm(message)
+        : false;
+    } catch {
+      return false;
+    }
+  };
+
+  const buildStateWithResetLiveScores = (state: GameState): GameState => {
+    const mode = state.playMode || 'INDIVIDUALS';
+    const { players, teams } = resetLiveScoresByMode(state.players || [], state.teams || [], mode);
+    return {
+      ...state,
+      players,
+      teams,
+    };
+  };
+
+  const handleResetLiveScores = () => {
+    if (!safeConfirm('Reset all live scores to zero?')) return;
+    onUpdateState(buildStateWithResetLiveScores(gameState));
+    emitGameEvent('SCORE_ADJUSTED', {
+      actor: { role: 'director' },
+      context: { note: 'Reset all live scores to zero from Players tab', delta: 0 },
+    });
+    addToast('info', 'Live scores reset to zero.');
+  };
+
+  const transformStateAfterBoardRegen = (nextState: GameState): GameState => {
+    if (!safeConfirm('Do you also want to reset live scores to zero?')) {
+      return nextState;
+    }
+    emitGameEvent('SCORE_ADJUSTED', {
+      actor: { role: 'director' },
+      context: { note: 'Reset all live scores to zero after AI board regeneration', delta: 0 },
+    });
+    addToast('info', 'Board regenerated and live scores reset to zero.');
+    return buildStateWithResetLiveScores(nextState);
   };
 
   const handleArmMove = async (tileId: string) => {
@@ -1094,6 +1345,18 @@ export const DirectorPanel: React.FC<Props> = ({
         correlationId: crypto.randomUUID()
       });
 
+      onUpdateState({
+        ...gameState,
+        categories: gameState.categories.map((category) => ({
+          ...category,
+          questions: category.questions.map((question) => (
+            question.id === tileId
+              ? { ...question, specialMoveType: selectedMoveType }
+              : question
+          ))
+        }))
+      });
+
       logger.info('director_special_move_armed', { gameId, tileId, moveType: selectedMoveType });
       emitGameEvent('SPECIAL_MOVE_ARMED', {
         actor: { role: 'director' },
@@ -1134,6 +1397,17 @@ export const DirectorPanel: React.FC<Props> = ({
         actorId: 'director',
         idempotencyKey: crypto.randomUUID(),
         correlationId: crypto.randomUUID()
+      });
+
+      onUpdateState({
+        ...gameState,
+        categories: gameState.categories.map((category) => ({
+          ...category,
+          questions: category.questions.map((question) => {
+            if (!question.specialMoveType) return question;
+            return { ...question, specialMoveType: undefined };
+          })
+        }))
       });
 
       logger.info('director_special_move_armory_cleared', { gameId });
@@ -1417,6 +1691,9 @@ export const DirectorPanel: React.FC<Props> = ({
           <button onClick={() => setActiveTab('PLAYERS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'PLAYERS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <Users className="w-4 h-4" /> Players
           </button>
+          <button onClick={() => setActiveTab('TEAMS')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'TEAMS' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
+            <Users className="w-4 h-4" /> Teams
+          </button>
           <button aria-label="Moves Tab" onClick={() => setActiveTab('MOVES')} className={`px-4 py-2 text-xs font-bold uppercase rounded flex items-center gap-2 ${activeTab === 'MOVES' ? 'bg-gold-600 text-black' : 'text-zinc-500 hover:bg-zinc-900'}`}>
             <ShieldAlert className="w-4 h-4" /> Special Moves
           </button>
@@ -1457,35 +1734,53 @@ export const DirectorPanel: React.FC<Props> = ({
                 <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
                   <Users className="w-4 h-4" /> Contestant Management
                 </h3>
-                <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Live roster overrides for game session</p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Live roster overrides for game session</span>
+                  {isTeamsMode && (
+                    <>
+                      <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-blue-200">Teams Mode</span>
+                      <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-purple-200">{teamPlayStyleLabel}</span>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="flex gap-2">
-                {!confirmResetAll ? (
-                  <button 
-                    onClick={() => setConfirmResetAll(true)}
-                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase transition-all"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Reset All Wildcards
-                  </button>
-                ) : (
-                  <button 
-                    onClick={handleResetAllWildcards}
-                    className="bg-red-600 hover:bg-red-500 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase animate-pulse shadow-lg shadow-red-900/20"
-                  >
-                    <AlertTriangle className="w-3.5 h-3.5" /> Click to Confirm Reset All
-                  </button>
-                )}
-                <button 
-                  onClick={() => setIsAddingPlayer(true)}
-                  disabled={(gameState.players || []).length >= 8}
-                  className="bg-gold-600 hover:bg-gold-500 text-black font-black px-5 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase disabled:opacity-30 transition-all shadow-xl shadow-gold-900/10 active:scale-95"
+                <button
+                  onClick={handleResetLiveScores}
+                  className="bg-red-700/90 hover:bg-red-600 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase transition-all shadow-lg shadow-red-950/20"
                 >
-                  <UserPlus className="w-4 h-4" /> Add Player
+                  <RotateCcw className="w-3.5 h-3.5" /> Reset Live Scores
                 </button>
+                {!isTeamsMode && (
+                  <>
+                    {!confirmResetAll ? (
+                      <button 
+                        onClick={() => setConfirmResetAll(true)}
+                        className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase transition-all"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Reset All Wildcards
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={handleResetAllWildcards}
+                        className="bg-red-600 hover:bg-red-500 text-white font-black px-4 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase animate-pulse shadow-lg shadow-red-900/20"
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" /> Click to Confirm Reset All
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => setIsAddingPlayer(true)}
+                      disabled={(gameState.players || []).length >= 8}
+                      className="bg-gold-600 hover:bg-gold-500 text-black font-black px-5 py-2.5 rounded-xl text-[10px] flex items-center gap-2 uppercase disabled:opacity-30 transition-all shadow-xl shadow-gold-900/10 active:scale-95"
+                    >
+                      <UserPlus className="w-4 h-4" /> Add Player
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
-            {isAddingPlayer && (
+            {!isTeamsMode && isAddingPlayer && (
               <div className="bg-zinc-900 p-5 rounded-2xl border border-gold-500/30 flex gap-3 animate-in slide-in-from-top-2 shadow-2xl">
                 <input 
                   autoFocus
@@ -1500,98 +1795,279 @@ export const DirectorPanel: React.FC<Props> = ({
               </div>
             )}
 
-            <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-sm">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-black/60 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
-                  <tr>
-                    <th className="p-5 border-b border-zinc-800">Contestant Name</th>
-                    <th className="p-5 border-b border-zinc-800">Live Score</th>
-                    <th className="p-5 border-b border-zinc-800">Wildcards</th>
-                    <th className="p-5 border-b border-zinc-800">Steals</th>
-                    <th className="p-5 border-b border-zinc-800">Special Moves</th>
-                    <th className="p-5 border-b border-zinc-800 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/40">
-                  {(gameState.players || []).map(p => (
-                    <tr key={p.id} className="hover:bg-white/[0.02] transition-colors group">
-                      <td className="p-5">
-                        <input 
-                          value={p.name}
-                          onChange={e => handleUpdatePlayer(p.id, 'name', normalizePlayerName(e.target.value))}
-                          className="bg-transparent border-b border-transparent focus:border-gold-500 outline-none font-black text-sm text-white w-full uppercase tracking-tight transition-all py-1"
-                          placeholder="NAME REQUIRED"
-                        />
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-3">
-                          <button 
-                            onClick={() => handleUpdatePlayer(p.id, 'score', p.score - 100)}
-                            className="p-2 bg-black rounded-lg hover:text-red-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
-                            title="Subtract 100"
-                          ><Minus className="w-4 h-4"/></button>
-                          <span className="font-mono text-gold-500 font-black min-w-[5rem] text-center text-xl drop-shadow-md select-none">{p.score}</span>
-                          <button 
-                            onClick={() => handleUpdatePlayer(p.id, 'score', p.score + 100)}
-                            className="p-2 bg-black rounded-lg hover:text-green-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
-                            title="Add 100"
-                          ><Plus className="w-4 h-4"/></button>
-                        </div>
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-2">
-                           <button 
-                             disabled={(p.wildcardsUsed || 0) >= 4}
-                             onClick={() => handleUseWildcard(p.id)}
-                             title="Increment Wildcard Usage"
-                             className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase flex items-center gap-2 transition-all ${(p.wildcardsUsed || 0) >= 4 ? 'bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed' : 'bg-gold-600/10 border-gold-600/30 text-gold-500 hover:bg-gold-600 hover:text-black'}`}
-                           >
-                             <Star className={`w-3 h-3 ${(p.wildcardsUsed || 0) > 0 ? 'fill-current' : ''}`} /> 
-                             {(p.wildcardsUsed || 0) >= 4 ? 'MAX 4 USED' : `${p.wildcardsUsed || 0}/4`}
-                           </button>
-                           <button 
-                             disabled={(p.wildcardsUsed || 0) === 0}
-                             onClick={() => handleResetWildcards(p.id)}
-                             title="Reset Wildcards"
-                             className="p-2 text-zinc-600 hover:text-red-500 disabled:opacity-0 transition-all"
-                           >
-                             <RotateCcw className="w-4 h-4" />
-                           </button>
-                        </div>
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-2 text-purple-400">
-                          <ShieldAlert className="w-4 h-4" />
-                          <span className="font-mono font-black text-sm">{p.stealsCount || 0}</span>
-                        </div>
-                      </td>
-                      <td className="p-5">
-                        <div className="flex items-center gap-2 text-red-400" title={(p.specialMovesUsedNames || []).join(', ')}>
-                          <Sparkles className="w-4 h-4" />
-                          <span className="font-mono font-black text-sm">{p.specialMovesUsedCount || 0}</span>
-                        </div>
-                      </td>
-                      <td className="p-5 text-right">
-                        <button 
-                          /* Fix: Replace undefined 'id' with 'p.id' */
-                          onClick={() => handleRemovePlayer(p.id)}
-                          className="p-3 text-zinc-800 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10 rounded-xl"
-                          title="Delete Contestant"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {(!gameState.players || gameState.players.length === 0) && (
+            {!isTeamsMode && (
+              <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-sm">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-black/60 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
                     <tr>
-                      <td colSpan={6} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
-                        No contestants registered for this session
-                      </td>
+                      <th className="p-5 border-b border-zinc-800">Contestant Name</th>
+                      <th className="p-5 border-b border-zinc-800">Live Score</th>
+                      <th className="p-5 border-b border-zinc-800">Wildcards</th>
+                      <th className="p-5 border-b border-zinc-800">Steals</th>
+                      <th className="p-5 border-b border-zinc-800">Special Moves</th>
+                      <th className="p-5 border-b border-zinc-800 text-right">Actions</th>
                     </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/40">
+                    {(gameState.players || []).map(p => (
+                      <tr key={p.id} className="hover:bg-white/[0.02] transition-colors group">
+                        <td className="p-5">
+                          <input 
+                            value={p.name}
+                            onChange={e => handleUpdatePlayer(p.id, 'name', normalizePlayerName(e.target.value))}
+                            className="bg-transparent border-b border-transparent focus:border-gold-500 outline-none font-black text-sm text-white w-full uppercase tracking-tight transition-all py-1"
+                            placeholder="NAME REQUIRED"
+                          />
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => handleUpdatePlayer(p.id, 'score', p.score - 100)}
+                              className="p-2 bg-black rounded-lg hover:text-red-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
+                              title="Subtract 100"
+                            ><Minus className="w-4 h-4"/></button>
+                            <span className="font-mono text-gold-500 font-black min-w-[5rem] text-center text-xl drop-shadow-md select-none">{p.score}</span>
+                            <button 
+                              onClick={() => handleUpdatePlayer(p.id, 'score', p.score + 100)}
+                              className="p-2 bg-black rounded-lg hover:text-green-500 text-zinc-600 transition-colors border border-zinc-800 active:scale-90"
+                              title="Add 100"
+                            ><Plus className="w-4 h-4"/></button>
+                          </div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2">
+                             <button 
+                               disabled={(p.wildcardsUsed || 0) >= 4}
+                               onClick={() => handleUseWildcard(p.id)}
+                               title="Increment Wildcard Usage"
+                               className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase flex items-center gap-2 transition-all ${(p.wildcardsUsed || 0) >= 4 ? 'bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed' : 'bg-gold-600/10 border-gold-600/30 text-gold-500 hover:bg-gold-600 hover:text-black'}`}
+                             >
+                               <Star className={`w-3 h-3 ${(p.wildcardsUsed || 0) > 0 ? 'fill-current' : ''}`} /> 
+                               {(p.wildcardsUsed || 0) >= 4 ? 'MAX 4 USED' : `${p.wildcardsUsed || 0}/4`}
+                             </button>
+                             <button 
+                               disabled={(p.wildcardsUsed || 0) === 0}
+                               onClick={() => handleResetWildcards(p.id)}
+                               title="Reset Wildcards"
+                               className="p-2 text-zinc-600 hover:text-red-500 disabled:opacity-0 transition-all"
+                             >
+                               <RotateCcw className="w-4 h-4" />
+                             </button>
+                          </div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2 text-purple-400">
+                            <ShieldAlert className="w-4 h-4" />
+                            <span className="font-mono font-black text-sm">{p.stealsCount || 0}</span>
+                          </div>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2 text-red-400" title={(p.specialMovesUsedNames || []).join(', ')}>
+                            <Sparkles className="w-4 h-4" />
+                            <span className="font-mono font-black text-sm">{p.specialMovesUsedCount || 0}</span>
+                          </div>
+                        </td>
+                        <td className="p-5 text-right">
+                          <button 
+                            onClick={() => handleRemovePlayer(p.id)}
+                            className="p-3 text-zinc-800 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10 rounded-xl"
+                            title="Delete Contestant"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {(!gameState.players || gameState.players.length === 0) && (
+                      <tr>
+                        <td colSpan={6} className="p-16 text-center text-zinc-700 italic text-[11px] uppercase font-black tracking-[0.3em] bg-black/20">
+                          No contestants registered for this session
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {isTeamsMode && (
+              <div className="space-y-4">
+                <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-wider font-black text-zinc-400">
+                    {`${(gameState.teams || []).length} team${(gameState.teams || []).length === 1 ? '' : 's'} • ${gameState.players.length} total contestants`}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-wider font-black text-zinc-500">
+                    {activeTeamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+                      ? 'Active member badge reflects current turn state'
+                      : 'Team totals drive scoring while member list stays visible for context'}
+                  </div>
+                </div>
+
+                {(gameState.teams || []).length === 0 ? (
+                  <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-14 text-center text-zinc-500 text-[11px] uppercase font-black tracking-[0.2em]">
+                    No teams configured yet. Open the Teams tab to set up rosters.
+                  </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {(gameState.teams || []).map((team) => {
+                      const members = team.members || [];
+                      const isSelected = gameState.selectedPlayerId === team.id;
+                      return (
+                        <div key={team.id} className={`rounded-2xl border p-4 bg-zinc-900/30 ${isSelected ? 'border-gold-500/70 shadow-lg shadow-gold-900/20' : 'border-zinc-800'}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="text-white font-black uppercase tracking-wide truncate">{team.name}</h4>
+                                <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-blue-200">Team</span>
+                                <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-950/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-purple-200">{teamPlayStyleLabel}</span>
+                              </div>
+                              <div className="mt-1 text-[10px] uppercase tracking-wider font-bold text-zinc-500">
+                                {members.length} player{members.length === 1 ? '' : 's'}
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className="text-[9px] uppercase tracking-widest text-zinc-500 font-black">Team Score</div>
+                              <div className="font-mono text-2xl text-gold-500 font-black leading-none">{Number(team.score || 0)}</div>
+                            </div>
+                          </div>
+
+                          {activeTeamPlayStyle === 'TEAM_PLAYS_AS_ONE' && (
+                            <div className="mt-3 rounded-xl border border-zinc-800 bg-black/40 p-2 text-[11px] text-zinc-300 uppercase tracking-wide">
+                              {members.map((member) => member.name).join(' • ') || 'No members'}
+                            </div>
+                          )}
+
+                          {activeTeamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' && (
+                            <div className="mt-3 space-y-1.5">
+                              {members.map((member) => {
+                                const isActive = team.activeMemberId === member.id;
+                                return (
+                                  <div key={member.id} className={`rounded-lg border px-2.5 py-2 flex items-center justify-between gap-2 ${isActive ? 'border-gold-500/40 bg-gold-900/20' : 'border-zinc-800 bg-black/30'}`}>
+                                    <div className="min-w-0 flex items-center gap-2">
+                                      <span className="text-[11px] font-bold uppercase text-zinc-200 truncate">{member.name}</span>
+                                      {isActive && <span className="inline-flex items-center rounded-full border border-gold-500/50 bg-gold-900/40 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-gold-300">Active</span>}
+                                    </div>
+                                    <span className="font-mono text-sm font-black text-zinc-200">{Number(member.score || 0)}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'TEAMS' && (
+          <div className="space-y-6 animate-in fade-in duration-300 max-w-7xl mx-auto">
+            <div className="bg-zinc-900/40 p-5 rounded-2xl border border-zinc-800 shadow-lg">
+              <h3 className="text-gold-500 font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                <Users className="w-4 h-4" /> Teams Mode
+              </h3>
+              <p className="text-[10px] text-zinc-500 uppercase font-bold mt-1 tracking-wider">Configure teams and team play style.</p>
+              {!canEditTeams && (
+                <p className="text-[10px] text-amber-300 uppercase font-bold mt-2">Play style and mode are locked after gameplay starts. Team names and roster can still be edited.</p>
+              )}
+            </div>
+
+            <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between gap-3 bg-black/40 border border-zinc-800 rounded-lg px-3 py-2">
+                <span className="text-[11px] uppercase tracking-wider font-black text-zinc-300">Teams mode enabled</span>
+                <button
+                  onClick={() => handleToggleTeamsMode(!isTeamsMode)}
+                  className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-widest ${isTeamsMode ? 'bg-cyan-600 text-black' : 'bg-zinc-700 text-zinc-200'}`}
+                >
+                  {isTeamsMode ? 'On' : 'Off'}
+                </button>
+              </div>
+
+              {isTeamsMode && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      disabled={!canEditTeams}
+                      onClick={() => handleUpdateTeamPlayStyle('TEAM_PLAYS_AS_ONE')}
+                      className={`py-2 rounded text-[10px] font-bold border transition-all ${gameState.teamPlayStyle === 'TEAM_PLAYS_AS_ONE' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                    >
+                      Team plays as one
+                    </button>
+                    <button
+                      disabled={!canEditTeams}
+                      onClick={() => handleUpdateTeamPlayStyle('TEAM_MEMBERS_TAKE_TURNS')}
+                      className={`py-2 rounded text-[10px] font-bold border transition-all ${gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                    >
+                      Team members take turns
+                    </button>
+                  </div>
+
+                  <div className="text-[10px] text-zinc-500 uppercase">
+                    {gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+                      ? 'Team members take turns: all teams must have the same number of players and rotate by member index across teams.'
+                      : 'Team plays as one: teams can have different numbers of players and score is tracked at the team level.'}
+                  </div>
+
+                  {teamsValidationError && (
+                    <div className="text-[10px] text-amber-300 uppercase font-bold tracking-wide border border-amber-500/30 bg-amber-950/20 rounded-lg px-3 py-2">
+                      {teamsValidationError}
+                    </div>
                   )}
-                </tbody>
-              </table>
+
+                  <div className="flex justify-end">
+                    <button
+                      onClick={handleAddTeamConfig}
+                      className="bg-gold-600 hover:bg-gold-500 text-black font-black px-4 py-2 rounded-xl text-[10px] flex items-center gap-2 uppercase"
+                    >
+                      <Plus className="w-3 h-3" /> Add Team
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {(gameState.teams || []).map((team) => (
+                      <div key={team.id} className="bg-black/40 border border-zinc-800 rounded-xl p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <input
+                            value={team.name}
+                            onChange={(e) => handleUpdateTeamName(team.id, e.target.value)}
+                            className="flex-1 bg-black border border-zinc-800 rounded px-2 py-1 text-[11px] uppercase text-white"
+                            placeholder="TEAM NAME"
+                          />
+                          <span className="text-[10px] px-2 py-1 rounded border border-blue-700/40 bg-blue-900/20 text-blue-300 uppercase font-black">
+                            {gameState.teamPlayStyle === 'TEAM_MEMBERS_TAKE_TURNS' ? 'TURN MODE' : 'PLAYS AS ONE'}
+                          </span>
+                          <button onClick={() => handleAddTeamMemberConfig(team.id)} className="text-[10px] text-gold-500 hover:text-white font-bold px-2 py-1 border border-zinc-800 rounded">+ MEMBER</button>
+                          <button disabled={!canEditTeams} onClick={() => handleRemoveTeamConfig(team.id)} className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 border border-zinc-800 rounded disabled:opacity-40">REMOVE</button>
+                        </div>
+
+                        <div className="space-y-1">
+                          {(team.members || []).map((member) => (
+                            <div key={member.id} className="flex items-center gap-2">
+                              <input
+                                value={member.name}
+                                onChange={(e) => handleUpdateTeamMemberConfig(team.id, member.id, e.target.value)}
+                                className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[10px] uppercase text-zinc-200"
+                                placeholder="MEMBER NAME"
+                              />
+                              <button disabled={!canEditTeams} onClick={() => handleRemoveTeamMemberConfig(team.id, member.id)} className="text-[10px] text-zinc-500 hover:text-red-400 px-2 py-1 disabled:opacity-40">X</button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-2 text-[9px] text-zinc-500 uppercase">{team.name || 'TEAM'} ({(team.members || []).length} members)</div>
+                      </div>
+                    ))}
+                    {(gameState.teams || []).length === 0 && (
+                      <div className="text-[10px] text-zinc-500 uppercase border border-dashed border-zinc-800 rounded-lg p-3 text-center">
+                        No teams configured.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -1639,6 +2115,54 @@ export const DirectorPanel: React.FC<Props> = ({
                       </button>
                     ))}
                   </div>
+                  <div className="bg-black/30 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="question-timer-manual-hms">
+                    <div className="text-[10px] uppercase tracking-widest font-black text-cyan-200">Manual Duration (H/M/S)</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        aria-label="Question timer hours"
+                        value={questionManualHms.hours}
+                        onChange={(e) => updateHmsField(setQuestionManualHms, 'hours', e.target.value)}
+                        inputMode="numeric"
+                        className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-cyan-500"
+                        placeholder="H"
+                      />
+                      <input
+                        aria-label="Question timer minutes"
+                        value={questionManualHms.minutes}
+                        onChange={(e) => updateHmsField(setQuestionManualHms, 'minutes', e.target.value)}
+                        inputMode="numeric"
+                        className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-cyan-500"
+                        placeholder="M"
+                      />
+                      <input
+                        aria-label="Question timer seconds"
+                        value={questionManualHms.seconds}
+                        onChange={(e) => updateHmsField(setQuestionManualHms, 'seconds', e.target.value)}
+                        inputMode="numeric"
+                        className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-cyan-500"
+                        placeholder="S"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const totalSeconds = normalizeHmsToSeconds(
+                          questionManualHms.hours,
+                          questionManualHms.minutes,
+                          questionManualHms.seconds,
+                        );
+                        if (!totalSeconds) {
+                          addToast('error', 'Enter a valid non-zero Question timer duration.');
+                          return;
+                        }
+                        onQuestionTimerDurationChange?.(totalSeconds);
+                        addToast('info', `Question timer set to ${totalSeconds}s`);
+                      }}
+                      className="w-full px-3 py-2 rounded-lg bg-cyan-700/80 hover:bg-cyan-600 text-white text-[10px] font-black uppercase tracking-widest"
+                    >
+                      Apply Question Timer
+                    </button>
+                  </div>
                   {questionTimer?.isRunning && (
                     <div className="bg-black/40 border border-cyan-500/30 rounded-lg p-3">
                       <div className="text-[12px] text-cyan-300 font-bold mb-2">
@@ -1682,20 +2206,77 @@ export const DirectorPanel: React.FC<Props> = ({
                   </div>
                   <p className="text-[10px] text-zinc-500 uppercase tracking-wide">Session timer controls stay idle while disabled.</p>
                   {!sessionTimer?.remainingSeconds ? (
-                    <div className="flex gap-2 flex-wrap">
-                      {(['15m', '30m', '1h', '1h30m', '2h'] as const).map((preset) => (
+                    <div className="space-y-3">
+                      <div className="flex gap-2 flex-wrap">
+                        {(['15m', '30m', '1h', '1h30m', '2h'] as const).map((preset) => (
+                          <button
+                            key={preset}
+                            onClick={() => {
+                              if (onSessionTimerStart) onSessionTimerStart(preset);
+                              addToast('success', `Game timer started: ${preset}`);
+                            }}
+                            disabled={!isSessionTimerFeatureEnabled}
+                            className="px-4 py-2 rounded-lg font-black text-[11px] uppercase tracking-widest transition-all bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="bg-black/30 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="session-timer-manual-hms">
+                        <div className="text-[10px] uppercase tracking-widest font-black text-purple-200">Manual Duration (H/M/S)</div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <input
+                            aria-label="Session timer hours"
+                            value={sessionManualHms.hours}
+                            onChange={(e) => updateHmsField(setSessionManualHms, 'hours', e.target.value)}
+                            inputMode="numeric"
+                            className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-purple-500"
+                            placeholder="H"
+                          />
+                          <input
+                            aria-label="Session timer minutes"
+                            value={sessionManualHms.minutes}
+                            onChange={(e) => updateHmsField(setSessionManualHms, 'minutes', e.target.value)}
+                            inputMode="numeric"
+                            className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-purple-500"
+                            placeholder="M"
+                          />
+                          <input
+                            aria-label="Session timer seconds"
+                            value={sessionManualHms.seconds}
+                            onChange={(e) => updateHmsField(setSessionManualHms, 'seconds', e.target.value)}
+                            inputMode="numeric"
+                            className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-purple-500"
+                            placeholder="S"
+                          />
+                        </div>
                         <button
-                          key={preset}
-                          onClick={() => {
-                            if (onSessionTimerStart) onSessionTimerStart(preset);
-                            addToast('success', `Game timer started: ${preset}`);
-                          }}
+                          type="button"
                           disabled={!isSessionTimerFeatureEnabled}
-                          className="px-4 py-2 rounded-lg font-black text-[11px] uppercase tracking-widest transition-all bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                          onClick={() => {
+                            const totalSeconds = normalizeHmsToSeconds(
+                              sessionManualHms.hours,
+                              sessionManualHms.minutes,
+                              sessionManualHms.seconds,
+                            );
+                            if (!totalSeconds) {
+                              addToast('error', 'Enter a valid non-zero Session timer duration.');
+                              return;
+                            }
+                            if (onSessionTimerStartWithDuration) {
+                              onSessionTimerStartWithDuration(totalSeconds);
+                            } else {
+                              addToast('error', 'Custom session timer start is unavailable.');
+                              return;
+                            }
+                            addToast('success', `Game timer started: ${totalSeconds}s`);
+                          }}
+                          className="w-full px-3 py-2 rounded-lg bg-purple-700/80 hover:bg-purple-600 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest"
                         >
-                          {preset}
+                          Apply Session Timer
                         </button>
-                      ))}
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-black/40 border border-purple-500/30 rounded-lg p-4">
@@ -1854,6 +2435,33 @@ export const DirectorPanel: React.FC<Props> = ({
               </div>
             </div>
 
+            <div className="rounded-2xl border border-zinc-700/60 bg-zinc-900/20 p-4 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-200 font-black">Build-gated Guide Moves</div>
+                  <p className="text-[11px] text-zinc-400 mt-1">Visible for production parity with the reference guide. These remain disabled unless their gameplay systems are enabled.</p>
+                </div>
+                <span className="inline-flex items-center rounded-full border border-zinc-500/50 bg-zinc-800/50 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-zinc-200">Guide Listed</span>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {buildGatedMoveCards.map((move) => (
+                  <button
+                    key={move.id}
+                    type="button"
+                    disabled
+                    aria-label={`${move.displayTitle} build-gated`}
+                    className="rounded-2xl border border-zinc-800 bg-black/35 p-4 text-left opacity-60 cursor-not-allowed"
+                  >
+                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Guide Move</div>
+                    <div className="mt-2 text-sm font-black uppercase tracking-wide text-zinc-200">{move.displayTitle}</div>
+                    <div className="mt-2 text-[10px] text-zinc-400 leading-relaxed">{move.description}</div>
+                    <div className="mt-2 text-[10px] font-black text-amber-300">{move.disabledReason}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="rounded-xl border border-zinc-800 bg-black/30 px-4 py-3 text-[11px] text-zinc-300">
               <span className="font-black text-gold-400 uppercase">Active move: {moveLabels[selectedMoveType]}</span>
               {isGiftActivatedMove(selectedMoveType) && <span className="ml-2 inline-flex items-center rounded-full border border-amber-400/50 bg-amber-900/30 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-200">Gift Required</span>}
@@ -1927,7 +2535,8 @@ export const DirectorPanel: React.FC<Props> = ({
                     {cat.questions.map((q) => {
                       const deployment = currentOverlay.deploymentsByTileId[q.id];
                       const isArmed = deployment?.status === 'ARMED';
-                      const specialMoveBadge = getTileSpecialMoveBadgeModel(!!isArmed, resolvedSpecialMoveTileIds.has(q.id));
+                      const specialMoveTagState = getTileSpecialMoveTagState(!!isArmed, resolvedSpecialMoveTileIds.has(q.id));
+                      const specialMoveTagText = getTileSpecialMoveTagText(deployment?.moveType, specialMoveTagState, resolvedSpecialMoveLabelsByTileId[q.id]);
                       const isPlayable = !q.isAnswered && !q.isVoided;
                       const giftTileDisabledReason = isGiftActivatedMove(selectedMoveType)
                         ? getGiftMoveTileDisabledReason(selectedMoveType, gameState.categories, q.id)
@@ -1956,7 +2565,7 @@ export const DirectorPanel: React.FC<Props> = ({
                                 ? 'bg-red-700/90 border-red-400/70 text-red-100'
                                 : 'bg-zinc-800/90 border-zinc-500/60 text-zinc-300 grayscale'}`}
                             >
-                              {specialMoveBadge.label}
+                              {specialMoveTagText}
                             </div>
                           )}
                           <div className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">
@@ -2245,7 +2854,7 @@ export const DirectorPanel: React.FC<Props> = ({
 
         {activeTab === 'BOARD' && (
           <div className="space-y-8 animate-in fade-in duration-300">
-            <DirectorAiRegenerator gameState={gameState} onUpdateState={onUpdateState} addToast={addToast} emitGameEvent={emitGameEvent} />
+            <DirectorAiRegenerator gameState={gameState} onUpdateState={onUpdateState} addToast={addToast} emitGameEvent={emitGameEvent} onTransformSuccessfulState={transformStateAfterBoardRegen} />
             <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${gameState.categories.length}, minmax(180px, 1fr))` }}>
               {gameState.categories.map((cat, cIdx) => (
                 <div key={cat.id} className="space-y-3">

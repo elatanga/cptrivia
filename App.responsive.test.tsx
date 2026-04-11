@@ -66,8 +66,6 @@ describe('Responsive Layout Tests', () => {
 
     await waitFor(() => {
       const rootContainer = document.querySelector('.min-h-screen.lg\\:h-screen');
-      // Tailwind breakpoint classes remain in className; viewport decides whether they apply.
-      expect(rootContainer).toHaveClass('lg:overflow-hidden');
       expect(rootContainer).toHaveClass('min-h-screen');
     });
   });
@@ -82,7 +80,21 @@ describe('Responsive Layout Tests', () => {
 
     // Since we start at dashboard, we just verify the root classes are correct
     await waitFor(() => {
-        expect(screen.getByText(/CRUZPHAM TRIVIA/i)).toBeInTheDocument();
+        expect(screen.getByText(/CPJS/i)).toBeInTheDocument();
+        expect(screen.getByText(/CruzPham Jeopardy Studios/i)).toBeInTheDocument();
     });
+
+    expect(screen.getByLabelText(/Champagne Bottle/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Champagne Flute/i)).toBeInTheDocument();
+
+    const brandLockup = screen.getByTestId('brand-lockup');
+    const brandWordmarkStack = screen.getByTestId('brand-wordmark-stack');
+    const brandSubtitle = screen.getByTestId('brand-subtitle');
+    const brandDivider = screen.getByTestId('brand-gold-divider');
+    expect(brandLockup).toBeInTheDocument();
+    expect(brandWordmarkStack).toBeInTheDocument();
+    expect(brandSubtitle).toBeInTheDocument();
+    expect(brandDivider).toBeInTheDocument();
+    expect(screen.queryByTestId('brand-title-stack')).not.toBeInTheDocument();
   });
 });

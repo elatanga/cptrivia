@@ -192,22 +192,31 @@ const getViewportCompactFactor = (viewportWidth: number) => {
 
 export const getTriviaBoardLayoutTokens = (
   settings: BoardViewSettings,
-  viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280
+  viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280,
+  rowCount = 5
 ): TriviaBoardLayoutTokens => {
   const safe = sanitizeBoardViewSettings(settings);
   const compact = getViewportCompactFactor(viewportWidth);
   const scale = getScaleMap(safe.tileScale).factor;
   const densityScale = clamp(1 + (safe.tilePaddingScale - 1) * 0.3, 0.82, 1.18);
 
-  const categoryTitleFontPx = clamp(Math.round(getScaleMap(safe.categoryTitleScale).px * compact), 10, 28);
+  // Auto-fit: proportionally shrink tile height/font for boards with more than 5 rows so all
+  // tiles remain visible without any manual Director Panel adjustment.
+  const rowDensityFactor = rowCount > 5 ? Math.max(0.50, 5 / rowCount) : 1.0;
+
+  // Expanded max clamp (28→32) so XL category headers are clearly larger at wide viewports.
+  const categoryTitleFontPx = clamp(Math.round(getScaleMap(safe.categoryTitleScale).px * compact), 10, 32);
   const categoryLineClamp = categoryTitleFontPx >= 22 ? 2 : 3;
   const categoryTitleLineHeight = categoryTitleFontPx >= 20 ? 1.1 : 1.2;
   const categoryPaddingPx = clamp(Math.round((8 + (safe.tilePaddingScale - 1) * 4) * compact), 4, 14);
 
   const boardGapPx = clamp(Math.round((10 + (safe.tilePaddingScale - 1) * 6) * compact), 6, 18);
-  const tileMinWidthPx = clamp(Math.round(88 * scale * compact * densityScale), 62, 136);
-  const tileMinHeightPx = clamp(Math.round(72 * scale * compact * densityScale), 52, 124);
-  const tilePointFontPx = clamp(Math.round(38 * scale * compact * densityScale), 16, 82);
+  // Lowered min clamps (62→44 width, 52→36 height) so XS scale produces visibly smaller tiles
+  // than S/M, creating a wider effective visual range across settings.
+  // rowDensityFactor reduces tile size proportionally when row count exceeds 5.
+  const tileMinWidthPx = clamp(Math.round(88 * scale * compact * densityScale), 44, 136);
+  const tileMinHeightPx = clamp(Math.round(72 * scale * compact * densityScale * rowDensityFactor), 36, 124);
+  const tilePointFontPx = clamp(Math.round(38 * scale * compact * densityScale * rowDensityFactor), 12, 82);
   const tileInnerPaddingPx = clamp(Math.round((4 + (safe.tilePaddingScale - 1) * 4) * compact), 2, 10);
   const categoryMinHeightPx = clamp(Math.round((categoryTitleFontPx * categoryLineClamp * categoryTitleLineHeight) + (categoryPaddingPx * 2)), 38, 96);
 

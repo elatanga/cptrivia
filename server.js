@@ -75,10 +75,10 @@ app.get("/runtime-config.js", (req, res) => {
       FUNCTIONS_REGION: "${safe(functionsRegion)}",
       FUNCTIONS_BASE_URL: "${safe(functionsBaseUrl)}",
       API_KEY: "${safe(process.env.API_KEY)}",
-      BUILD_ENV: "${safe(process.env.BUILD_ENV || "production")}",
-      BUILD_VERSION: "${safe(process.env.BUILD_VERSION || "unknown")}",
-      ALLOW_LOCAL_MOCKS: "${safe(allowLocalMocks)}",
-      ENABLE_FIREBASE_ANON_AUTH: "${safe(enableFirebaseAnonAuth)}" 
+      GEMINI_API_KEY: "${safe(process.env.GEMINI_API_KEY)}",
+      GEMINI_MODEL: "${safe(process.env.GEMINI_MODEL)}",
+      AI_MODEL: "${safe(process.env.AI_MODEL)}",
+      BUILD_ENV: "${safe(process.env.BUILD_ENV || "production")}"
     };
   `;
   res.status(200).send(configContent);

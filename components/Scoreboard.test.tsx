@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Scoreboard } from './Scoreboard';
 import { Player, BoardViewSettings } from '../types';
@@ -32,6 +32,11 @@ const mockViewSettings: BoardViewSettings = {
   playerNameScale: 'M',
   scoreboardScale: 1.0,
   tilePaddingScale: 1.0,
+  questionModalSize: 'Medium',
+  questionMaxWidthPercent: 80,
+  questionFontScale: 1,
+  questionContentPadding: 12,
+  multipleChoiceColumns: 'auto',
   updatedAt: new Date().toISOString(),
 };
 
@@ -136,5 +141,135 @@ describe('Scoreboard: Desktop Visibility & Layout (Card 1)', () => {
         viewport: expect.any(Object)
       })
     );
+  });
+
+  it('E) SESSION TIMER: Renders at top before contestants list', () => {
+    render(
+      <Scoreboard
+        players={generatePlayers(4)}
+        sessionTimerActive={true}
+        sessionTimeRemaining={95}
+        selectedPlayerId="p0"
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    const timer = screen.getByTestId('scoreboard-session-timer');
+    const contestants = screen.getByText(/CONTESTANTS/i);
+    expect(timer).toBeInTheDocument();
+    expect(timer).toHaveTextContent('1:35');
+    const timerTop = timer.getBoundingClientRect().top;
+    const contestantsTop = contestants.getBoundingClientRect().top;
+    expect(timerTop).toBeLessThanOrEqual(contestantsTop);
+  });
+
+  it('F) SESSION TIMER: Reflects live countdown updates from shared state props', () => {
+    const { rerender } = render(
+      <Scoreboard
+        players={generatePlayers(4)}
+        sessionTimerActive={true}
+        sessionTimeRemaining={95}
+        selectedPlayerId="p0"
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    expect(screen.getByTestId('scoreboard-session-timer')).toHaveTextContent('1:35');
+
+    rerender(
+      <Scoreboard
+        players={generatePlayers(4)}
+        sessionTimerActive={true}
+        sessionTimeRemaining={90}
+        selectedPlayerId="p0"
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    expect(screen.getByTestId('scoreboard-session-timer')).toHaveTextContent('1:30');
+  });
+
+  it('G) SESSION TIMER: applies warning styles and warning-level data attributes', () => {
+    const { rerender } = render(
+      <Scoreboard
+        players={generatePlayers(4)}
+        sessionTimerActive={true}
+        sessionTimeRemaining={55}
+        sessionTimerWarningLevel="warning"
+        selectedPlayerId="p0"
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    const warningTimer = screen.getByTestId('scoreboard-session-timer');
+    expect(warningTimer).toHaveAttribute('data-warning-level', 'warning');
+
+    rerender(
+      <Scoreboard
+        players={generatePlayers(4)}
+        sessionTimerActive={true}
+        sessionTimeRemaining={9}
+        sessionTimerWarningLevel="urgent"
+        selectedPlayerId="p0"
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    const urgentTimer = screen.getByTestId('scoreboard-session-timer');
+    expect(urgentTimer).toHaveAttribute('data-warning-level', 'urgent');
+  });
+
+  it('H) SESSION TIMER: Start/Restart/Stop controls trigger shared callbacks', () => {
+    const onStart = vi.fn();
+    const onRestart = vi.fn();
+    const onStop = vi.fn();
+
+    render(
+      <Scoreboard
+        players={generatePlayers(4)}
+        sessionTimerConfiguredSeconds={180}
+        sessionTimeRemaining={180}
+        showSessionTimerControls={true}
+        onSessionTimerStart={onStart}
+        onSessionTimerRestart={onRestart}
+        onSessionTimerStop={onStop}
+        selectedPlayerId="p0"
+        onAddPlayer={vi.fn()}
+        onUpdateScore={vi.fn()}
+        onSelectPlayer={vi.fn()}
+        gameActive={true}
+        viewSettings={mockViewSettings}
+      />
+    );
+
+    expect(screen.getByTestId('scoreboard-session-timer-controls')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onRestart).toHaveBeenCalledTimes(1);
+    expect(onStop).toHaveBeenCalledTimes(1);
   });
 });

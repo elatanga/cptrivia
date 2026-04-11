@@ -14,6 +14,14 @@ const INVALID_API_KEY_VALUES = new Set([
   'null'
 ]);
 
+const DEFAULT_GEMINI_TEXT_MODEL = 'gemini-3.1-pro-preview';
+const SUPPORTED_GEMINI_31_MODELS = new Set([
+  'gemini-3.1-pro-preview',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-3.1-flash-image-preview',
+  'gemini-3.1-flash-live-preview'
+]);
+
 const isUsableApiKey = (raw?: string) => {
   const value = (raw || '').trim();
   if (!value) return false;
@@ -55,6 +63,43 @@ export const resolveGeminiApiKey = (): string => {
     'AI is not configured. Set GEMINI_API_KEY (or API_KEY) and reload the app.',
     logger.getCorrelationId()
   );
+};
+
+export const resolveGeminiModel = (): string => {
+  const runtimeConfig = getRuntimeConfig();
+  const processEnv = (typeof process !== 'undefined' && (process as any).env) ? (process as any).env : {};
+  const viteEnv = (typeof import.meta !== 'undefined' && (import.meta as any).env) ? (import.meta as any).env : {};
+
+  const configuredModel = [
+    runtimeConfig.GEMINI_MODEL,
+    runtimeConfig.AI_MODEL,
+    viteEnv.VITE_GEMINI_MODEL,
+    processEnv.GEMINI_MODEL,
+    processEnv.AI_MODEL
+  ].find((value) => !!(value || '').trim())?.trim();
+
+  if (!configuredModel) return DEFAULT_GEMINI_TEXT_MODEL;
+  if (SUPPORTED_GEMINI_31_MODELS.has(configuredModel)) return configuredModel;
+
+  logger.warn('aiGen_invalid_model_config', {
+    configuredModel,
+    fallbackModel: DEFAULT_GEMINI_TEXT_MODEL
+  });
+
+  return DEFAULT_GEMINI_TEXT_MODEL;
+};
+
+const createGeminiClient = (generationId: string) => {
+  try {
+    return new GoogleGenAI({ apiKey: resolveGeminiApiKey() });
+  } catch (error: any) {
+    if (error instanceof AppError) throw error;
+    logger.error('aiGen_provider_init_failed', {
+      generationId,
+      message: error?.message || 'unknown_error'
+    });
+    throw new AppError('ERR_AI_GENERATION', 'AI provider initialization failed.', logger.getCorrelationId());
+  }
 };
 
 export const getGeminiConfigHealth = (): { ready: boolean; message: string } => {
@@ -100,7 +145,7 @@ const extractAndParseJson = (text: string, generationId: string) => {
     logger.info("aiGen_parseSuccess", { generationId });
     return data;
   } catch (e: any) {
-    logger.error("aiGen_parseError", { generationId, message: e.message, snippet: text.substring(0, 100) });
+    logger.error("aiGen_parseError", { generationId, message: e.message, textLength: text.length });
     throw new Error(`AI returned invalid format: ${e.message}`);
   }
 };
@@ -142,6 +187,12 @@ async function withRetry<T>(operation: (attempt: number) => Promise<T>, retries 
       return await operation(i);
     } catch (err: any) {
       lastError = err;
+      logger.error('aiGen_request_failed', {
+        attempt: i + 1,
+        maxAttempts: retries + 1,
+        message: err?.message || 'unknown_error',
+        status: err?.status
+      });
       logger.warn(`AI Operation failed (attempt ${i + 1}/${retries + 1})`, { message: err.message });
       if (err.status && err.status >= 400 && err.status < 500 && err.status !== 429) {
         throw new AppError('ERR_FORBIDDEN', 'AI Request Rejected: ' + (err.message || 'Client Error'), logger.getCorrelationId());
@@ -163,7 +214,8 @@ export const generateTriviaGame = async (
 ): Promise<Category[]> => {
   logger.info("aiGen_start", { generationId, mode: 'full_board', topic, rows: numQuestions, cols: numCategories, difficulty });
 
-  const ai = new GoogleGenAI({ apiKey: resolveGeminiApiKey() });
+  const ai = createGeminiClient(generationId);
+  const model = resolveGeminiModel();
 
   return withRetry(async (attempt) => {
     const prompt = `Generate a trivia game board about "${topic}". 
@@ -178,7 +230,7 @@ export const generateTriviaGame = async (
     logger.info("aiGen_requestSent", { generationId });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -246,8 +298,9 @@ export const generateSingleQuestion = async (
   generationId: string = "unknown"
 ): Promise<{text: string, answer: string}> => {
   logger.info("aiGen_start", { generationId, mode: 'single_q', topic, categoryContext, points });
-  const ai = new GoogleGenAI({ apiKey: resolveGeminiApiKey() });
-  
+  const ai = createGeminiClient(generationId);
+  const model = resolveGeminiModel();
+
   return withRetry(async (attempt) => {
     const prompt = `Write a single trivia question and answer.
       Topic: ${topic}
@@ -256,7 +309,7 @@ export const generateSingleQuestion = async (
       ${attempt > 0 ? "RETURN VALID JSON ONLY." : ""}`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -286,7 +339,8 @@ export const generateCategoryQuestions = async (
   generationId: string = "unknown"
 ): Promise<Question[]> => {
   logger.info("aiGen_start", { generationId, mode: 'category_rewrite', topic, categoryTitle, count });
-  const ai = new GoogleGenAI({ apiKey: resolveGeminiApiKey() });
+  const ai = createGeminiClient(generationId);
+  const model = resolveGeminiModel();
 
   return withRetry(async (attempt) => {
     const prompt = `Generate ${count} trivia questions for the category "${categoryTitle}" within the topic "${topic}".
@@ -295,7 +349,7 @@ export const generateCategoryQuestions = async (
       ${attempt > 0 ? "IMPORTANT: RETURN VALID JSON ONLY." : ""}`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model,
       contents: prompt,
       config: {
         responseMimeType: "application/json",

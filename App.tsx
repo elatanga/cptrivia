@@ -15,19 +15,32 @@ import { ConfirmationModal } from './components/ConfirmationModal';
 import { EndGameCelebrationModal } from './components/EndGameCelebrationModal';
 import { authService } from './services/authService';
 import { dataService } from './services/dataService';
-import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType } from './types';
+import { GameState, Category, Player, ToastMessage, Question, Show, GameTemplate, UserRole, Session, BoardViewSettings, PlayEvent, AnalyticsEventType, GameAnalyticsEvent, SpecialMoveType, Team } from './types';
 import { QuestionCountdownTimer, SessionGameTimer, TimerAudioSettings } from './types';
 import { soundService } from './services/soundService';
 import { logger } from './services/logger';
 import { normalizePlayerName } from './services/utils';
-import { getInitialAutoSelectedPlayer, getNextPlayerSelection } from './services/playerSelectionCycle';
+import { getTimerWarningLevel, resolveSessionTimerDuration, shouldAutoEndOnSessionExpiry } from './services/sessionTimerUtils';
 import { useSpecialMovesOverlay } from './hooks/useSpecialMovesOverlay';
 import { applySpecialMovesDecorator } from './modules/specialMoves/scoringDecorator';
-import { doesReturnResolveAsFail, isStealBlockedForMove, normalizeSpecialMoveType } from './modules/specialMoves/logic';
-import { getQuestionModalSpecialMoveModel, getSpecialMoveDisplayName } from './modules/specialMoves/modalSummary';
-import { deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
+import { doesReturnResolveAsFail, isStealBlockedForMove } from './modules/specialMoves/logic';
+import { deriveResolvedSpecialMoveLabelsByTileId, deriveResolvedSpecialMoveTileIds } from './modules/specialMoves/tileTagState';
+import { getSpecialMoveCatalogEntry, getSpecialMoveDisplayTitle } from './modules/specialMoves/catalog';
+import { resolveQuestionActionPoints } from './modules/gameplay/resolveQuestionActionPoints';
 import { getDefaultBoardViewSettings, sanitizeBoardViewSettings } from './services/boardViewSettings';
 import { deriveEndGameCelebrationResult, isTriviaBoardComplete } from './services/endGameCelebration';
+import { getNextPlayerSelection, getInitialAutoSelectedPlayer } from './services/playerSelectionCycler';
+import {
+  DEFAULT_PLAY_MODE,
+  DEFAULT_TEAM_PLAY_STYLE,
+  applyScoreDeltaByMode,
+  buildContestantsFromTeams,
+  getNextTeamTurnSelection,
+  getTeamsValidationError,
+  normalizeGameStateForTeams,
+  normalizeTemplateConfigForTeams,
+  rotateActiveMemberForTeamById,
+} from './services/teamsMode';
 import { Monitor, Grid, Shield, Copy, Loader2, ExternalLink, Power } from 'lucide-react';
 import { firebaseConfigError, missingKeys } from './services/firebase';
 
@@ -60,6 +73,46 @@ const resolveTemplateTimerEnabled = (
   return currentEnabled;
 };
 
+const resolveTemplateTimerDurationSeconds = (
+  template: GameTemplate,
+  fallback: number,
+) => {
+  const raw = Number(template.config?.quickTimerDurationSeconds);
+  return resolveSessionTimerDuration(Number.isFinite(raw) ? raw : fallback, fallback);
+};
+
+type QuestionModalSpecialMoveModel = {
+  moveType: SpecialMoveType;
+  displayTitle: string;
+  pointsEffect: string;
+  penaltyEffect?: string;
+  stealPolicy: 'NO STEAL' | 'STEAL ALLOWED';
+};
+
+const getQuestionModalSpecialMoveModel = (moveType?: SpecialMoveType): QuestionModalSpecialMoveModel | null => {
+  if (!moveType) return null;
+  const details = getSpecialMoveCatalogEntry(moveType);
+  if (!details) {
+    return {
+      moveType,
+      displayTitle: moveType.replace(/_/g, ' '),
+      pointsEffect: 'SPECIAL RULE ACTIVE',
+      stealPolicy: isStealBlockedForMove(moveType) ? 'NO STEAL' : 'STEAL ALLOWED',
+    };
+  }
+  return {
+    moveType,
+    displayTitle: details.displayTitle,
+    pointsEffect: details.pointsEffect,
+    penaltyEffect: details.penaltyEffect,
+    stealPolicy: details.stealPolicy,
+  };
+};
+
+const getSpecialMoveDisplayName = (moveType?: SpecialMoveType): string | undefined => {
+  return getSpecialMoveDisplayTitle(moveType);
+};
+
 const App: React.FC = () => {
   // App Boot State
   const [isConfigured, setIsConfigured] = useState(false);
@@ -82,6 +135,7 @@ const App: React.FC = () => {
   const [showTimerExpiredPrompt, setShowTimerExpiredPrompt] = useState(false);
   const [isEndGameCelebrationOpen, setIsEndGameCelebrationOpen] = useState(false);
   const [hasShownEndGameCelebration, setHasShownEndGameCelebration] = useState(false);
+  const [activeQuickGameMode, setActiveQuickGameMode] = useState<'single_player' | 'two_player' | null>(null);
 
   // --- ADMIN NOTIFICATIONS ---
   const [pendingRequests, setPendingRequests] = useState(0);
@@ -92,6 +146,9 @@ const App: React.FC = () => {
     isGameStarted: false,
     categories: [],
     players: [],
+    playMode: DEFAULT_PLAY_MODE,
+    teamPlayStyle: DEFAULT_TEAM_PLAY_STYLE,
+    teams: [],
     activeQuestionId: null,
     activeCategoryId: null,
     selectedPlayerId: null,
@@ -143,16 +200,31 @@ const App: React.FC = () => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const specialMovesOverlay = useSpecialMovesOverlay(gameState.isGameStarted ? activeShow?.id : undefined);
   const resolvedSpecialMoveTileIds = useMemo(() => deriveResolvedSpecialMoveTileIds(gameState.events), [gameState.events]);
+  const resolvedSpecialMoveLabelsByTileId = useMemo(() => deriveResolvedSpecialMoveLabelsByTileId(gameState.events), [gameState.events]);
   // Ref keeps the overlay current inside stable callbacks without being a dep.
   const specialMovesOverlayRef = useRef(specialMovesOverlay);
   useEffect(() => {
     specialMovesOverlayRef.current = specialMovesOverlay;
   }, [specialMovesOverlay]);
   const isBoardComplete = useMemo(() => isTriviaBoardComplete(gameState.categories), [gameState.categories]);
-  const celebrationResult = useMemo(() => deriveEndGameCelebrationResult(gameState.players), [gameState.players]);
+  const celebrationResult = useMemo(
+    () => deriveEndGameCelebrationResult(gameState.players, {
+      playMode: gameState.playMode,
+      teams: gameState.teams || [],
+      singlePlayerQuickMode: activeQuickGameMode === 'single_player',
+    }),
+    [gameState.players, gameState.playMode, gameState.teams, activeQuickGameMode]
+  );
+  const sessionTimerWarningLevel = useMemo(
+    () => getTimerWarningLevel(sessionTimer.remainingSeconds),
+    [sessionTimer.remainingSeconds]
+  );
+  const hasEmittedFinalMinuteWarningRef = useRef(false);
+  const hasHandledSessionExpiryRef = useRef(false);
   const questionTimerDurationRef = useRef(questionTimerDurationSeconds);
   const questionTimerEnabledRef = useRef(questionTimerEnabled);
   const sessionTimerEnabledRef = useRef(sessionTimerEnabled);
+  const activeQuickGameModeRef = useRef(activeQuickGameMode);
   const activeTileMoveTypeRef = useRef<SpecialMoveType | undefined>(activeTileMoveType);
 
   useEffect(() => {
@@ -168,6 +240,16 @@ const App: React.FC = () => {
   }, [sessionTimerEnabled]);
 
   useEffect(() => {
+    activeQuickGameModeRef.current = activeQuickGameMode;
+  }, [activeQuickGameMode]);
+
+  useEffect(() => {
+    if (!gameState.isGameStarted) {
+      hasHandledSessionExpiryRef.current = false;
+    }
+  }, [gameState.isGameStarted]);
+
+  useEffect(() => {
     activeTileMoveTypeRef.current = activeTileMoveType;
   }, [activeTileMoveType]);
 
@@ -179,10 +261,16 @@ const App: React.FC = () => {
     }
     if (activeTileMoveTypeRef.current) return;
     const deployment = specialMovesOverlay?.deploymentsByTileId?.[activeTileId];
-    if (deployment?.status === 'ARMED') {
-      setActiveTileMoveType(normalizeSpecialMoveType(deployment.moveType));
+    const activeQuestionFromState = gameState.categories
+      .flatMap((category) => category.questions)
+      .find((question) => question.id === activeTileId);
+    const resolvedMoveType = (deployment?.status === 'ARMED'
+      ? (deployment.moveType as SpecialMoveType | undefined)
+      : undefined) || activeQuestionFromState?.specialMoveType;
+    if (resolvedMoveType) {
+      setActiveTileMoveType(resolvedMoveType);
     }
-  }, [gameState.activeQuestionId, specialMovesOverlay]);
+  }, [gameState.activeQuestionId, gameState.categories, specialMovesOverlay]);
 
   // Tracks remainingSeconds via ref so stopQuestionTimer can log it
   // without capturing questionTimer.remainingSeconds as a dep (which
@@ -218,6 +306,24 @@ const App: React.FC = () => {
     if (gameState.activeQuestionId || gameState.activeCategoryId) return;
     if (showTimerExpiredPrompt || showEndGameConfirm) return;
 
+    setQuestionTimer((prev) => ({
+      ...prev,
+      isRunning: false,
+      isStopped: true,
+      remainingSeconds: 0,
+      startedAt: null,
+      endsAt: null,
+      activeQuestionId: null,
+    }));
+    setSessionTimer((prev) => ({
+      ...prev,
+      isRunning: false,
+      isStopped: true,
+      remainingSeconds: 0,
+      startedAt: null,
+      endsAt: null,
+    }));
+
     setIsEndGameCelebrationOpen(true);
     setHasShownEndGameCelebration(true);
   }, [
@@ -229,45 +335,39 @@ const App: React.FC = () => {
     isEndGameCelebrationOpen,
     showTimerExpiredPrompt,
     showEndGameConfirm,
-  ]);
+   ]);
 
-  useEffect(() => {
-    if (!gameState.isGameStarted) return;
+   // INITIAL AUTO-SELECTION SAFETY
+   // When game becomes active with no valid current selection, auto-select first player.
+   useEffect(() => {
+     if (!gameState.isGameStarted || gameState.players.length === 0) {
+       return;
+     }
 
-    const hasValidSelection = Boolean(
-      gameState.selectedPlayerId && gameState.players.some((p) => p.id === gameState.selectedPlayerId)
-    );
-    if (hasValidSelection) return;
+     const autoSelected = getInitialAutoSelectedPlayer(gameState.players, gameState.selectedPlayerId);
+     if (autoSelected && autoSelected !== gameState.selectedPlayerId) {
+       const nextPlayer = gameState.players.find(p => p.id === autoSelected);
+       if (nextPlayer) {
+         logger.info('initial_auto_selection', {
+           selectedPlayerId: autoSelected,
+           selectedPlayerName: nextPlayer.name,
+           reason: 'game_active_no_valid_selection'
+         });
+         saveGameState({ ...gameState, selectedPlayerId: autoSelected });
+       }
+     }
+   }, [gameState.isGameStarted, gameState.players.length]);
 
-    const nextSelectedPlayerId = getInitialAutoSelectedPlayer(gameState.players, gameState.selectedPlayerId);
-    if (!nextSelectedPlayerId) return;
-
-    if (gameState.selectedPlayerId) {
-      logger.info('scoreboard_selection_invalid_fallback_first', {
-        from: gameState.selectedPlayerId,
-        to: nextSelectedPlayerId,
-        playersCount: gameState.players.length,
-      });
-    } else {
-      logger.info('scoreboard_selection_auto_initial', {
-        to: nextSelectedPlayerId,
-        playersCount: gameState.players.length,
-      });
-    }
-
-    saveGameState({ ...gameState, selectedPlayerId: nextSelectedPlayerId });
-  }, [gameState.isGameStarted, gameState.players, gameState.selectedPlayerId]);
-
-  // Layout Logging
-  useEffect(() => {
-    const logLayout = () => {
-      const isCompact = window.innerWidth < 1024;
-      logger.info("layout_mode", { compact: isCompact, width: window.innerWidth, height: window.innerHeight });
-    };
-    logLayout();
-    window.addEventListener('resize', logLayout);
-    return () => window.removeEventListener('resize', logLayout);
-  }, []);
+   // Layout Logging
+   useEffect(() => {
+     const logLayout = () => {
+       const isCompact = window.innerWidth < 1024;
+       logger.info("layout_mode", { compact: isCompact, width: window.innerWidth, height: window.innerHeight });
+     };
+     logLayout();
+     window.addEventListener('resize', logLayout);
+     return () => window.removeEventListener('resize', logLayout);
+   }, []);
 
   // --- PERSISTENCE & SYNC ---
   const saveGameState = (state: GameState) => {
@@ -298,6 +398,12 @@ const App: React.FC = () => {
       }
     });
 
+    if (shouldAutoEndOnSessionExpiry(activeQuickGameModeRef.current)) {
+      addToast('info', 'Session timer expired. Showing results.');
+      handleEndGameAfterTimerExpired();
+      return;
+    }
+
     addToast('info', 'Game time expired. Continue or end the game.');
     setShowTimerExpiredPrompt(true);
   };
@@ -321,7 +427,17 @@ const App: React.FC = () => {
   };
 
   const handleEndGameAfterTimerExpired = () => {
-    const voidedCategories = gameState.categories.map((cat) => ({
+    if (hasHandledSessionExpiryRef.current) {
+      return;
+    }
+
+    const current = gameStateRef.current;
+    if (!current.isGameStarted) {
+      return;
+    }
+    hasHandledSessionExpiryRef.current = true;
+
+    const voidedCategories = current.categories.map((cat) => ({
       ...cat,
       questions: cat.questions.map((q) =>
         !q.isAnswered && !q.isVoided ? { ...q, isVoided: true } : q
@@ -329,13 +445,11 @@ const App: React.FC = () => {
     }));
 
     saveGameState({
-      ...gameState,
+      ...current,
       categories: voidedCategories,
-      isGameStarted: false,
       activeQuestionId: null,
       activeCategoryId: null,
-      timer: { ...gameState.timer, endTime: null, isRunning: false },
-      lastPlays: []
+      timer: { ...current.timer, endTime: null, isRunning: false },
     });
 
     emitGameEvent('SESSION_ENDED', {
@@ -344,8 +458,6 @@ const App: React.FC = () => {
     });
 
     setShowTimerExpiredPrompt(false);
-    setIsEndGameCelebrationOpen(false);
-    setHasShownEndGameCelebration(false);
     setQuestionTimer({
       durationSeconds: resolveQuestionCountdownDuration(questionTimerDurationRef.current),
       remainingSeconds: 0,
@@ -356,15 +468,16 @@ const App: React.FC = () => {
       activeQuestionId: null,
     });
     setSessionTimer({
-      durationSeconds: 0,
+      durationSeconds: Math.max(0, Math.floor(sessionTimer.durationSeconds || 0)),
       remainingSeconds: 0,
       isRunning: false,
       isStopped: true,
       startedAt: null,
       endsAt: null,
-      selectedPreset: null,
+      selectedPreset: sessionTimer.selectedPreset || null,
     });
-    setViewMode('BOARD');
+    setIsEndGameCelebrationOpen(true);
+    setHasShownEndGameCelebration(true);
   };
 
   const getSoundSnapshot = useCallback(() => {
@@ -586,7 +699,8 @@ const App: React.FC = () => {
 
   const handleStorageChange = useCallback((e: StorageEvent) => {
     if (e.key === 'cruzpham_gamestate' && e.newValue) {
-      setGameState(JSON.parse(e.newValue));
+      const parsed = normalizeGameStateForTeams(JSON.parse(e.newValue));
+      setGameState(parsed);
       return;
     }
 
@@ -878,119 +992,126 @@ const App: React.FC = () => {
     });
   };
 
-  const initializeApp = useCallback(async () => {
-     setAuthChecked(false);
-     setSystemStatusError(null);
-     try {
-       const status = await authService.getBootstrapStatus();
-       setIsConfigured(status.masterReady);
+  const handleResumeSessionTimer = useCallback(() => {
+    if (!sessionTimerEnabledRef.current) return;
 
-       if (!status.masterReady) {
-         logger.warn('bootstrap_visible_backend_uninitialized', {
-           bootstrapCompleted: status.bootstrapCompleted ?? false,
-           initializedAt: status.initializedAt ?? null,
-         });
-       } else {
-         logger.info('bootstrap_suppressed_backend_initialized', {
-           bootstrapCompleted: status.bootstrapCompleted ?? true,
-           initializedAt: status.initializedAt ?? null,
-         });
+    setSessionTimer((prev) => {
+      if (prev.isRunning) return prev;
+      const configuredDuration = Math.max(1, Math.floor(prev.durationSeconds || 0));
+      const usableRemaining = Math.max(0, Math.floor(prev.remainingSeconds || 0));
+      const nextRemaining = usableRemaining > 0 ? usableRemaining : configuredDuration;
+      if (nextRemaining <= 0) return prev;
 
-         const storedSessionId = localStorage.getItem('cruzpham_active_session_id') || (() => {
-           try {
-             const legacySession = localStorage.getItem('cruzpham_user_session');
-             if (!legacySession) return null;
-             const parsed = JSON.parse(legacySession);
-             return typeof parsed?.id === 'string' ? parsed.id : null;
-           } catch {
-             return null;
-           }
-         })();
-         if (storedSessionId) {
-           const result = await authService.restoreSession(storedSessionId);
-           if (result.success && result.session) {
-             setSession({ id: result.session.id, username: result.session.username, role: result.session.role });
-             try {
-               const uiStateRaw = localStorage.getItem('cruzpham_ui_state');
-               if (uiStateRaw) {
-                 const uiState = JSON.parse(uiStateRaw);
-                 if (uiState.activeShowId) {
-                   const restoredShow = dataService.getShowById(uiState.activeShowId);
-                   if (restoredShow) setActiveShow(restoredShow);
-                 }
-                 if (uiState.viewMode) setViewMode(uiState.viewMode);
-               }
-             } catch (e) { logger.warn('hydrateUIStateFailed'); }
-           } else {
-             localStorage.removeItem('cruzpham_active_session_id');
-             localStorage.removeItem('cruzpham_user_session');
-             localStorage.removeItem('cruzpham_ui_state');
-           }
-         }
-       }
-       
-       const savedState = localStorage.getItem('cruzpham_gamestate');
-       if (savedState) {
-         const parsed = JSON.parse(savedState);
-         parsed.viewSettings = sanitizeBoardViewSettings(parsed.viewSettings);
-         
-         if (!parsed.lastPlays) parsed.lastPlays = [];
-         if (!parsed.events) parsed.events = [];
-         
-         setGameState(parsed);
-         if (parsed.showTitle) {
-            setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: parsed.showTitle, createdAt: '' });
-         }
-       }
+      const now = Date.now();
+      logger.info('session_timer_start_or_resume', {
+        remainingSeconds: nextRemaining,
+        durationSeconds: configuredDuration,
+      });
+      emitGameEvent('SESSION_TIMER_RESUMED', { actor: { role: 'director' }, context: {} });
 
-       const savedTimerState = localStorage.getItem(TIMER_STATE_STORAGE_KEY);
-       if (savedTimerState) {
-         try {
-           const timerState = JSON.parse(savedTimerState);
-           const resolvedDuration = resolveQuestionCountdownDuration(timerState.questionTimerDurationSeconds);
-           setQuestionTimerEnabled(timerState.questionTimerEnabled !== false);
-           setQuestionTimerDurationSeconds(resolvedDuration);
-           if (timerState.questionTimer) setQuestionTimer(timerState.questionTimer);
-           if (timerState.sessionTimer) setSessionTimer(timerState.sessionTimer);
-         } catch (error: any) {
-           logger.warn('timer_state_restore_failed', { message: error?.message });
-         }
-       }
-     } catch (e: any) {
-       const bootstrapErrorMessage = String(e?.message || '');
-       const isBootstrapTransportFailure = e?.code === 'ERR_NETWORK'
-         || e?.name === 'TypeError'
-         || /cors|cross-origin|failed to fetch|network/i.test(bootstrapErrorMessage);
+      return {
+        ...prev,
+        durationSeconds: configuredDuration,
+        remainingSeconds: nextRemaining,
+        isRunning: true,
+        isStopped: false,
+        startedAt: now,
+        endsAt: now + nextRemaining * 1000,
+      };
+    });
+  }, [emitGameEvent]);
 
-       logger.error('bootstrap_error_occurred', {
-         message: e?.message,
-         code: e?.code,
-       });
-       // ERR_NETWORK = transport failure (CORS, fetch blocked, connection timeout, etc.)
-       // These are NOT server initialization failures, so we allow local bootstrap to proceed
-       if (isBootstrapTransportFailure) {
-         logger.warn('bootstrap_network_unavailable_using_local', {
-           fallbackMode: 'local_authority',
-           isTransport: true,
-           message: bootstrapErrorMessage,
-         });
-         // Don't set systemStatusError; allow Bootstrap screen to show with local mode
-         // The app will complete and isConfigured will default to false,
-         // which triggers the Bootstrap screen. This allows user to bootstrap locally
-         // even when backend is temporarily unreachable or has CORS issues.
-       } else {
-         // Unexpected/unclassified error; show recovery UI
-         logger.error('bootstrap_unexpected_error', { 
-           code: e?.code,
-           message: e?.message,
-         });
-         setSystemStatusError('Unable to verify system status. Please try again or contact support.');
-       }
-       console.error('System Initialization Error', e);
-     } finally {
-       setAuthChecked(true);
-     }
-  }, []);
+  const handleRestartSessionTimer = useCallback(() => {
+    if (!sessionTimerEnabledRef.current) return;
+
+    setSessionTimer((prev) => {
+      const durationSeconds = Math.max(1, Math.floor(prev.durationSeconds || 0));
+      if (durationSeconds <= 0) return prev;
+      const now = Date.now();
+
+      logger.info('session_timer_restart', { durationSeconds });
+      emitGameEvent('SESSION_TIMER_START', {
+        actor: { role: 'director' },
+        context: { note: `Game timer restarted: ${durationSeconds}s` },
+      });
+
+      return {
+        ...prev,
+        durationSeconds,
+        remainingSeconds: durationSeconds,
+        isRunning: true,
+        isStopped: false,
+        startedAt: now,
+        endsAt: now + durationSeconds * 1000,
+      };
+    });
+  }, [emitGameEvent]);
+
+  const handleStopSessionTimer = useCallback(() => {
+    if (!sessionTimerEnabledRef.current) return;
+
+    setSessionTimer((prev) => {
+      if (!prev.isRunning) return prev;
+      logger.info('session_timer_stop', {
+        remainingSeconds: prev.remainingSeconds,
+        preset: prev.selectedPreset,
+      });
+      emitGameEvent('SESSION_TIMER_PAUSED', { actor: { role: 'director' }, context: {} });
+      return { ...prev, isRunning: false, isStopped: true, endsAt: null };
+    });
+  }, [emitGameEvent]);
+
+  /**
+   * Start the Session Game Timer with an explicit number of seconds.
+   * Used by quick-game presets and custom manual duration entries.
+   * The Director Panel calls this when the "Quick Start" button is pressed.
+   */
+  const handleStartSessionTimerWithDuration = useCallback((seconds: number) => {
+    const safeSeconds = Math.max(1, Math.floor(seconds));
+    if (!sessionTimerEnabledRef.current) {
+      logger.info('session_timer_start_blocked_disabled', { seconds: safeSeconds });
+      addToast('info', 'Enable Session Game Timer first.');
+      return;
+    }
+    const now = Date.now();
+    const newTimer: SessionGameTimer = {
+      durationSeconds: safeSeconds,
+      remainingSeconds: safeSeconds,
+      isRunning: true,
+      isStopped: false,
+      startedAt: now,
+      endsAt: now + safeSeconds * 1000,
+      selectedPreset: null,
+    };
+    setSessionTimer(newTimer);
+    logger.info('session_timer_start_custom', { durationSeconds: safeSeconds });
+    emitGameEvent('SESSION_TIMER_START', {
+      actor: { role: 'director' },
+      context: { note: `Game timer started: ${safeSeconds}s (custom)` },
+    });
+  }, [emitGameEvent]);
+
+  useEffect(() => {
+    if (!gameState.isGameStarted || !sessionTimerEnabled || !sessionTimer.isRunning) {
+      hasEmittedFinalMinuteWarningRef.current = false;
+      return;
+    }
+
+    if (sessionTimer.remainingSeconds <= 60 && sessionTimer.remainingSeconds > 0 && !hasEmittedFinalMinuteWarningRef.current) {
+      hasEmittedFinalMinuteWarningRef.current = true;
+      addToast('info', 'Final 60 seconds.');
+      emitGameEvent('SESSION_TIMER_START', {
+        actor: { role: 'system' },
+        context: { note: 'Session timer entered final 60-second warning window.' },
+      });
+    }
+  }, [
+    gameState.isGameStarted,
+    sessionTimerEnabled,
+    sessionTimer.isRunning,
+    sessionTimer.remainingSeconds,
+    emitGameEvent,
+  ]);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -1038,16 +1159,36 @@ const App: React.FC = () => {
            parsed.players = (parsed.players || []).map((p: Player) => ({
              ...p,
              stealsCount: Number(p?.stealsCount || 0),
+             questionsAnswered: Number(p?.questionsAnswered || 0),
+             lostOrVoidedCount: Number(p?.lostOrVoidedCount || 0),
              specialMovesUsedCount: Number(p?.specialMovesUsedCount || 0),
              specialMovesUsedNames: Array.isArray(p?.specialMovesUsedNames) ? p.specialMovesUsedNames : [],
            }));
+           parsed.teams = (parsed.teams || []).map((team: Team) => ({
+             ...team,
+             members: (team.members || []).map((member) => ({
+               ...member,
+               stealsCount: Number(member?.stealsCount || 0),
+               questionsAnswered: Number(member?.questionsAnswered || 0),
+               lostOrVoidedCount: Number(member?.lostOrVoidedCount || 0),
+               specialMovesUsedCount: Number(member?.specialMovesUsedCount || 0),
+               specialMovesUsedNames: Array.isArray(member?.specialMovesUsedNames) ? member.specialMovesUsedNames : [],
+             })),
+           }));
+           const normalized = normalizeGameStateForTeams(parsed as GameState);
+           if (normalized.playMode === 'TEAMS' && normalized.players.length === 0 && (normalized.teams || []).length > 0) {
+             normalized.players = buildContestantsFromTeams(normalized.teams || []);
+           }
+           if (normalized.players.length > 0 && !normalized.players.some((player) => player.id === normalized.selectedPlayerId)) {
+             normalized.selectedPlayerId = normalized.players[0].id;
+           }
            
-           if (!parsed.lastPlays) parsed.lastPlays = [];
-           if (!parsed.events) parsed.events = [];
+           if (!normalized.lastPlays) normalized.lastPlays = [];
+           if (!normalized.events) normalized.events = [];
            
-           setGameState(parsed);
-           if (parsed.showTitle && !activeShow) {
-              setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: parsed.showTitle, createdAt: '' });
+           setGameState(normalized);
+           if (normalized.showTitle && !activeShow) {
+              setActiveShow(prev => prev || { id: 'restored-ghost', userId: 'restored', title: normalized.showTitle, createdAt: '' });
            }
          }
 
@@ -1128,7 +1269,7 @@ const App: React.FC = () => {
   const handleLoginSuccess = (newSession: Session) => {
     setSession({ id: newSession.id, username: newSession.username, role: newSession.role });
     localStorage.setItem('cruzpham_active_session_id', newSession.id);
-    addToast('success', 'Welcome to CruzPham Trivia Studios!');
+    addToast('success', 'Welcome to CP Jeopardy Studios!');
   };
 
   const handleLogout = () => {
@@ -1143,12 +1284,14 @@ const App: React.FC = () => {
       setViewMode('BOARD');
       setIsEndGameCelebrationOpen(false);
       setHasShownEndGameCelebration(false);
+      setActiveQuickGameMode(null);
     }
   };
 
   // --- GAME LOGIC ---
 
   const handlePlayTemplate = (template: GameTemplate) => {
+    hasHandledSessionExpiryRef.current = false;
     setIsEndGameCelebrationOpen(false);
     setHasShownEndGameCelebration(false);
 
@@ -1167,16 +1310,55 @@ const App: React.FC = () => {
       };
     });
 
+    const normalizedTemplateConfig = normalizeTemplateConfigForTeams(template.config);
+    const templateTeamsValidationError = getTeamsValidationError(
+      normalizedTemplateConfig.playMode || DEFAULT_PLAY_MODE,
+      normalizedTemplateConfig.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE,
+      normalizedTemplateConfig.teams || []
+    );
+    if (templateTeamsValidationError) {
+      logger.warn('template_play_blocked_invalid_teams', {
+        templateId: template.id,
+        reason: templateTeamsValidationError,
+        playMode: normalizedTemplateConfig.playMode,
+        teamPlayStyle: normalizedTemplateConfig.teamPlayStyle,
+      });
+      addToast('error', templateTeamsValidationError);
+      return;
+    }
+
+    const isTeamsMode = normalizedTemplateConfig.playMode === 'TEAMS' && (normalizedTemplateConfig.teams || []).length > 0;
     const targetPlayerCount = resolveTemplatePlayerCount(template);
     const timerEnabledFromTemplate = resolveTemplateTimerEnabled(template, questionTimerEnabled);
+    const timerDurationFromTemplate = resolveTemplateTimerDurationSeconds(template, questionTimerDurationSeconds);
 
-    const initPlayers: Player[] = (template.config.playerNames || []).slice(0, Math.max(0, targetPlayerCount)).map(name => ({
-      id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: []
-    }));
+    const initTeams = isTeamsMode
+      ? (normalizedTemplateConfig.teams || []).map((team) => ({
+          ...team,
+          score: 0,
+          members: (team.members || []).map((member, index) => ({
+            ...member,
+            score: 0,
+            orderIndex: Number.isFinite(Number(member.orderIndex)) ? Number(member.orderIndex) : index,
+            stealsCount: 0,
+            questionsAnswered: 0,
+            lostOrVoidedCount: 0,
+            specialMovesUsedCount: 0,
+            specialMovesUsedNames: [],
+          })),
+          activeMemberId: team.members?.[0]?.id,
+        }))
+      : [];
 
-    if (initPlayers.length === 0 && targetPlayerCount > 0) {
+    const initPlayers: Player[] = isTeamsMode
+      ? buildContestantsFromTeams(initTeams)
+      : (template.config.playerNames || []).slice(0, Math.max(0, targetPlayerCount)).map(name => ({
+          id: crypto.randomUUID(), name: normalizePlayerName(name), score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, questionsAnswered: 0, lostOrVoidedCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: []
+        }));
+
+    if (!isTeamsMode && initPlayers.length === 0 && targetPlayerCount > 0) {
       for (let i = 0; i < targetPlayerCount; i++) {
-        initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] });
+        initPlayers.push({ id: crypto.randomUUID(), name: `PLAYER ${i + 1}`, score: 0, color: '#ffffff', wildcardsUsed: 0, wildcardActive: false, stealsCount: 0, questionsAnswered: 0, lostOrVoidedCount: 0, specialMovesUsedCount: 0, specialMovesUsedNames: [] });
       }
     }
 
@@ -1184,11 +1366,45 @@ const App: React.FC = () => {
       templateId: template.id,
       quickGameMode: template.config?.quickGameMode || null,
       quickTimerMode: template.config?.quickTimerMode || null,
+      quickTimerDurationSeconds: timerDurationFromTemplate,
       playerCount: initPlayers.length,
       timerEnabled: timerEnabledFromTemplate,
     });
 
-    handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
+    // ── BUG FIX: 1-player / 2-player quick game modes must activate the
+    // Session Game Timer, NOT the Question Countdown Timer. ────────────────
+    const templateQuickGameMode = normalizedTemplateConfig.quickGameMode;
+    const templateQuickTimerMode = normalizedTemplateConfig.quickTimerMode;
+
+    if (templateQuickGameMode && templateQuickTimerMode === 'timed') {
+      // Quick game + timed → enable Session Game Timer with configured duration
+      const sessionDurationSeconds = resolveSessionTimerDuration(
+        normalizedTemplateConfig.quickTimerDurationSeconds,
+        timerDurationFromTemplate,
+      );
+      handleToggleSessionTimerEnabled(true);
+      setSessionTimer({
+        durationSeconds: sessionDurationSeconds,
+        remainingSeconds: 0, // Director explicitly starts it from the Director Panel
+        isRunning: false,
+        isStopped: true,
+        startedAt: null,
+        endsAt: null,
+        selectedPreset: null,
+      });
+      // Ensure Question Countdown Timer is NOT auto-enabled by this quick setup
+      handleToggleQuestionTimerEnabled(false);
+    } else if (templateQuickGameMode && templateQuickTimerMode === 'untimed') {
+      // Quick game + untimed → no timer active
+      handleToggleSessionTimerEnabled(false);
+      handleToggleQuestionTimerEnabled(false);
+    } else {
+      // Standard (non-quick-game) templates: preserve existing question-timer behavior
+      handleSetQuestionTimerDuration(timerDurationFromTemplate);
+      handleToggleQuestionTimerEnabled(timerEnabledFromTemplate);
+    }
+
+    setActiveQuickGameMode(normalizedTemplateConfig.quickGameMode || null);
 
     const newState: GameState = {
       ...gameState,
@@ -1196,6 +1412,9 @@ const App: React.FC = () => {
       isGameStarted: true,
       categories: initCategories,
       players: initPlayers,
+      playMode: isTeamsMode ? 'TEAMS' : 'INDIVIDUALS',
+      teamPlayStyle: normalizedTemplateConfig.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE,
+      teams: initTeams,
       activeQuestionId: null,
       activeCategoryId: null,
       selectedPlayerId: initPlayers.length > 0 ? initPlayers[0].id : null,
@@ -1257,6 +1476,7 @@ const App: React.FC = () => {
     setShowEndGameConfirm(false);
     setIsEndGameCelebrationOpen(false);
     setHasShownEndGameCelebration(false);
+    setActiveQuickGameMode(null);
     addToast('info', 'Game Session Ended');
   };
 
@@ -1267,7 +1487,10 @@ const App: React.FC = () => {
     soundService.playSound?.('tileOpen');
 
     const deployment = specialMovesOverlayRef.current?.deploymentsByTileId?.[qId];
-    setActiveTileMoveType(deployment?.status === 'ARMED' ? normalizeSpecialMoveType(deployment.moveType) : undefined);
+    const selectedTileMoveType = (deployment?.status === 'ARMED'
+      ? (deployment.moveType as SpecialMoveType | undefined)
+      : undefined) || q?.specialMoveType;
+    setActiveTileMoveType(selectedTileMoveType);
 
     if (questionTimerEnabled) {
       const selectedDuration = resolveQuestionCountdownDuration(questionTimerDurationRef.current);
@@ -1313,9 +1536,10 @@ const App: React.FC = () => {
     resolvingQuestionIdRef.current = activeQ.id;
 
     const basePoints = (activeQ.isDoubleOrNothing ? activeQ.points * 2 : activeQ.points);
-    const tileMoveType = normalizeSpecialMoveType(
-      activeTileMoveTypeRef.current || specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType
-    );
+    const overlayMoveType = specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.status === 'ARMED'
+      ? specialMovesOverlayRef.current?.deploymentsByTileId?.[activeQ.id]?.moveType
+      : undefined;
+    const tileMoveType = activeTileMoveTypeRef.current || overlayMoveType || activeQ.specialMoveType;
     const stealBlocked = isStealBlockedForMove(tileMoveType);
     const resolvesAsFail = action === 'return' && doesReturnResolveAsFail(tileMoveType);
 
@@ -1326,13 +1550,14 @@ const App: React.FC = () => {
       return;
     }
 
-    const points = (action === 'award' || action === 'steal' || resolvesAsFail)
-      ? applySpecialMovesDecorator(basePoints, {
-          tileId: activeQ.id,
-          moveType: tileMoveType,
-          outcome: action === 'award' ? 'AWARD' : action === 'steal' ? 'STEAL' : 'FAIL'
-        })
-      : basePoints;
+    const points = resolveQuestionActionPoints({
+      action,
+      resolvesAsFail,
+      basePoints,
+      tileId: activeQ.id,
+      moveType: tileMoveType,
+      applyDecorator: applySpecialMovesDecorator,
+    });
     const specialMoveName = getSpecialMoveDisplayName(tileMoveType);
     const shouldTrackSpecialMoveUsage = Boolean(tileMoveType) && (action === 'award' || action === 'steal' || resolvesAsFail);
 
@@ -1347,7 +1572,8 @@ const App: React.FC = () => {
             ...q,
             isRevealed: false,
             isAnswered: action === 'award' || action === 'steal' || resolvesAsFail,
-            isVoided: action === 'void' || resolvesAsFail
+            isVoided: action === 'void' || resolvesAsFail,
+            specialMoveType: action === 'return' && !resolvesAsFail ? q.specialMoveType : undefined,
           };
         })
       };
@@ -1357,12 +1583,30 @@ const App: React.FC = () => {
     let awardedPlayerName = '';
     let stealerPlayerName = '';
     const attemptedPlayer = current.players.find(p => p.id === current.selectedPlayerId);
+    const activePlayMode = current.playMode || DEFAULT_PLAY_MODE;
+    const activeTeamStyle = current.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE;
+
+    const awardOrStealTargetId = (action === 'award' || action === 'steal') ? targetPlayerId : null;
+    const failOrVoidTargetId = (resolvesAsFail || action === 'void') ? current.selectedPlayerId : null;
+    const statTargetId = awardOrStealTargetId || failOrVoidTargetId;
+
+    const trackedTeamForStats = activePlayMode === 'TEAMS'
+      ? (current.teams || []).find((team) => team.id === statTargetId)
+      : undefined;
+    const trackedTeamMemberId = activePlayMode === 'TEAMS' && activeTeamStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+      ? trackedTeamForStats?.activeMemberId
+      : undefined;
+    const trackedTeamMemberName = trackedTeamMemberId
+      ? trackedTeamForStats?.members?.find((member) => member.id === trackedTeamMemberId)?.name
+      : undefined;
 
     if ((action === 'award' || action === 'steal') && targetPlayerId) {
       newPlayers = newPlayers.map(p => {
         if (p.id === targetPlayerId) {
           const isSteal = action === 'steal';
           const newStealsCount = isSteal ? (p.stealsCount || 0) + 1 : (p.stealsCount || 0);
+          const nextQuestionsAnswered = (p.questionsAnswered || 0) + 1;
+          const nextLostOrVoidedCount = p.lostOrVoidedCount || 0;
           const nextSpecialMovesUsedCount = shouldTrackSpecialMoveUsage ? (p.specialMovesUsedCount || 0) + 1 : (p.specialMovesUsedCount || 0);
           const nextSpecialMovesUsedNames = shouldTrackSpecialMoveUsage && specialMoveName
             ? [...(Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []), specialMoveName]
@@ -1373,22 +1617,28 @@ const App: React.FC = () => {
             ...p,
             score: p.score + points,
             stealsCount: newStealsCount,
+            questionsAnswered: nextQuestionsAnswered,
+            lostOrVoidedCount: nextLostOrVoidedCount,
             specialMovesUsedCount: nextSpecialMovesUsedCount,
             specialMovesUsedNames: nextSpecialMovesUsedNames,
           };
         }
         return p;
       });
-    } else if (resolvesAsFail && current.selectedPlayerId) {
+    } else if ((resolvesAsFail || action === 'void') && current.selectedPlayerId) {
       newPlayers = newPlayers.map((p) => {
         if (p.id !== current.selectedPlayerId) return p;
         const nextSpecialMovesUsedCount = shouldTrackSpecialMoveUsage ? (p.specialMovesUsedCount || 0) + 1 : (p.specialMovesUsedCount || 0);
         const nextSpecialMovesUsedNames = shouldTrackSpecialMoveUsage && specialMoveName
           ? [...(Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []), specialMoveName]
           : (Array.isArray(p.specialMovesUsedNames) ? p.specialMovesUsedNames : []);
+        const nextQuestionsAnswered = resolvesAsFail ? (p.questionsAnswered || 0) + 1 : (p.questionsAnswered || 0);
+        const nextLostOrVoidedCount = (p.lostOrVoidedCount || 0) + 1;
         return {
           ...p,
           score: p.score + points,
+          questionsAnswered: nextQuestionsAnswered,
+          lostOrVoidedCount: nextLostOrVoidedCount,
           specialMovesUsedCount: nextSpecialMovesUsedCount,
           specialMovesUsedNames: nextSpecialMovesUsedNames,
         };
@@ -1440,32 +1690,49 @@ const App: React.FC = () => {
       });
     }
 
-    const hadInvalidSelection = Boolean(
-      current.selectedPlayerId && !newPlayers.some((p) => p.id === current.selectedPlayerId)
-    );
-    const nextSelectedPlayerId = getNextPlayerSelection(newPlayers, current.selectedPlayerId);
+    let newTeams = [...(current.teams || [])];
+    const scoringTargetId = (action === 'award' || action === 'steal') ? targetPlayerId : (resolvesAsFail ? current.selectedPlayerId : null);
+    const scoringDelta = (action === 'award' || action === 'steal' || resolvesAsFail) ? points : 0;
 
-    if (hadInvalidSelection) {
-      logger.info('scoreboard_selection_invalid_fallback_first', {
-        from: current.selectedPlayerId,
-        to: nextSelectedPlayerId,
-        reason: 'play_completion',
+    if (activePlayMode === 'TEAMS' && activeTeamStyle === 'TEAM_MEMBERS_TAKE_TURNS' && trackedTeamForStats?.id && trackedTeamMemberId) {
+      newTeams = newTeams.map((team) => {
+        if (team.id !== trackedTeamForStats.id) return team;
+        return {
+          ...team,
+          members: (team.members || []).map((member) => {
+            if (member.id !== trackedTeamMemberId) return member;
+            const isSteal = action === 'steal';
+            const questionAnsweredIncrement = (action === 'award' || action === 'steal' || resolvesAsFail) ? 1 : 0;
+            const lostOrVoidedIncrement = (resolvesAsFail || action === 'void') ? 1 : 0;
+            const specialMoveIncrement = shouldTrackSpecialMoveUsage ? 1 : 0;
+            const nextNames = specialMoveIncrement && specialMoveName
+              ? [...(Array.isArray(member.specialMovesUsedNames) ? member.specialMovesUsedNames : []), specialMoveName]
+              : (Array.isArray(member.specialMovesUsedNames) ? member.specialMovesUsedNames : []);
+            return {
+              ...member,
+              stealsCount: (member.stealsCount || 0) + (isSteal ? 1 : 0),
+              questionsAnswered: (member.questionsAnswered || 0) + questionAnsweredIncrement,
+              lostOrVoidedCount: (member.lostOrVoidedCount || 0) + lostOrVoidedIncrement,
+              specialMovesUsedCount: (member.specialMovesUsedCount || 0) + specialMoveIncrement,
+              specialMovesUsedNames: nextNames,
+            };
+          })
+        };
       });
     }
 
-    if (nextSelectedPlayerId !== current.selectedPlayerId) {
-      logger.info('scoreboard_selection_auto_advance', {
-        from: current.selectedPlayerId,
-        to: nextSelectedPlayerId,
-        action,
-        tileId: activeQ.id,
-      });
+    if (activePlayMode === 'TEAMS' && scoringTargetId && scoringDelta !== 0) {
+      newTeams = applyScoreDeltaByMode(newTeams, scoringTargetId, scoringDelta, activeTeamStyle);
+      if (activeTeamStyle === 'TEAM_MEMBERS_TAKE_TURNS') {
+        newTeams = rotateActiveMemberForTeamById(newTeams, scoringTargetId);
+      }
     }
 
     const newState: GameState = {
       ...current,
       categories: newCategories,
       players: newPlayers,
+      teams: newTeams,
       activeQuestionId: null,
       activeCategoryId: null,
       selectedPlayerId: nextSelectedPlayerId,
@@ -1490,6 +1757,8 @@ const App: React.FC = () => {
       rowIndex: qIdx,
       specialMoveType: tileMoveType,
       specialMoveName,
+      teamMemberId: trackedTeamMemberId,
+      teamMemberName: trackedTeamMemberName,
     };
     if (action === 'award' && targetPlayerId) {
        const p = current.players.find(pl => pl.id === targetPlayerId);
@@ -1524,6 +1793,36 @@ const App: React.FC = () => {
       const attemptedName = attemptedPlayer?.name || 'Unknown';
       addToast('error', `${Math.abs(points)} points lost by ${attemptedName}`);
     }
+
+    // AUTO-ADVANCE PLAYER SELECTION AFTER PLAY COMPLETION
+    // Only advance if this was a scored play (award, steal, or fail resolution)
+    const shouldAutoAdvance = action === 'award' || action === 'steal' || resolvesAsFail;
+    if (shouldAutoAdvance && newPlayers.length > 0) {
+      const autoAdvanceFromTeamId = scoringTargetId || current.selectedPlayerId;
+      const nextSelectedPlayerId =
+        activePlayMode === 'TEAMS' && activeTeamStyle === 'TEAM_MEMBERS_TAKE_TURNS'
+          ? getNextTeamTurnSelection(newTeams, autoAdvanceFromTeamId)
+          : getNextPlayerSelection(newPlayers, current.selectedPlayerId);
+      if (nextSelectedPlayerId && nextSelectedPlayerId !== current.selectedPlayerId) {
+        const nextPlayer = newPlayers.find(p => p.id === nextSelectedPlayerId);
+        if (nextPlayer) {
+          logger.info('auto_advance_player_selection', {
+            previousPlayerId: current.selectedPlayerId,
+            previousPlayerName: current.players.find(p => p.id === current.selectedPlayerId)?.name,
+            nextPlayerId: nextSelectedPlayerId,
+            nextPlayerName: nextPlayer.name,
+            action: action,
+            tileId: activeQ.id
+          });
+          // Update gameState with the auto-advanced selection
+          setGameState(prevState => {
+            const updatedState = { ...prevState, selectedPlayerId: nextSelectedPlayerId };
+            saveGameState(updatedState);
+            return updatedState;
+          });
+        }
+      }
+    }
   };
 
   const handleAddPlayer = (name: string) => {
@@ -1554,6 +1853,8 @@ const App: React.FC = () => {
       wildcardsUsed: 0,
       wildcardActive: false,
       stealsCount: 0,
+      questionsAnswered: 0,
+      lostOrVoidedCount: 0,
       specialMovesUsedCount: 0,
       specialMovesUsedNames: [],
     };
@@ -1574,7 +1875,17 @@ const App: React.FC = () => {
          context: { playerName: p.name, playerId, delta, note: 'Manual score adjustment' }
       });
     }
-    saveGameState({ ...gameState, players: gameState.players.map(p => p.id === playerId ? { ...p, score: p.score + delta } : p) });
+    const updatedPlayers = gameState.players.map(p => p.id === playerId ? { ...p, score: p.score + delta } : p);
+    let updatedTeams = gameState.teams || [];
+    if ((gameState.playMode || DEFAULT_PLAY_MODE) === 'TEAMS') {
+      updatedTeams = applyScoreDeltaByMode(
+        updatedTeams,
+        playerId,
+        delta,
+        gameState.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE
+      );
+    }
+    saveGameState({ ...gameState, players: updatedPlayers, teams: updatedTeams });
   };
 
   const handleSelectPlayer = (id: string) => {
@@ -1668,6 +1979,7 @@ const App: React.FC = () => {
           sessionTimerEnabled={sessionTimerEnabled}
           onSessionTimerToggle={handleToggleSessionTimerEnabled}
           onSessionTimerStart={handleStartSessionTimer}
+          onSessionTimerStartWithDuration={handleStartSessionTimerWithDuration}
           onSessionTimerPause={handlePauseSessionTimer}
           onSessionTimerReset={handleResetSessionTimer}
           timerAudio={timerAudio}
@@ -1760,10 +2072,10 @@ const App: React.FC = () => {
                             <button onClick={() => { soundService.playClick(); setShowEndGameConfirm(true); }} type="button" className="text-[10px] md:text-xs uppercase text-red-500 hover:text-red-600 font-bold tracking-wider flex items-center gap-2"><Power className="w-3 h-3" /> End Show</button>
                             <button onClick={() => setViewMode('DIRECTOR')} className="text-[10px] md:text-xs uppercase font-bold text-zinc-500 hover:text-zinc-800 flex items-center gap-2 px-3 py-1.5 rounded transition-colors"><Grid className="w-3 h-3" /> Director</button>
                           </div>
-                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} /></div>
+                          <div className="flex-1 relative w-full h-full lg:overflow-hidden"><GameBoard categories={gameState.categories} onSelectQuestion={handleSelectQuestion} viewSettings={gameState.viewSettings} overlay={specialMovesOverlay} resolvedSpecialMoveTileIds={resolvedSpecialMoveTileIds} resolvedSpecialMoveLabelsByTileId={resolvedSpecialMoveLabelsByTileId} /></div>
                         </div>
                         <div className="order-1 md:order-2 flex-none h-auto lg:h-full w-full md:w-auto relative z-30">
-                          <Scoreboard players={gameState.players} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
+                          <Scoreboard players={gameState.players} teams={gameState.teams || []} playMode={gameState.playMode || DEFAULT_PLAY_MODE} teamPlayStyle={gameState.teamPlayStyle || DEFAULT_TEAM_PLAY_STYLE} sessionTimerActive={sessionTimer.isRunning || (sessionTimer.isStopped && sessionTimer.remainingSeconds > 0)} sessionTimeRemaining={sessionTimer.remainingSeconds} sessionTimerConfiguredSeconds={sessionTimer.durationSeconds} sessionTimerWarningLevel={sessionTimerWarningLevel} showSessionTimerControls={sessionTimerEnabled && shouldAutoEndOnSessionExpiry(activeQuickGameMode)} onSessionTimerStart={handleResumeSessionTimer} onSessionTimerRestart={handleRestartSessionTimer} onSessionTimerStop={handleStopSessionTimer} selectedPlayerId={gameState.selectedPlayerId} onAddPlayer={handleAddPlayer} onUpdateScore={handleUpdateScore} onSelectPlayer={handleSelectPlayer} gameActive={gameState.isGameStarted} viewSettings={gameState.viewSettings} />
                         </div>
                         {activeQuestion && activeCategory && (
                           (() => {
@@ -1839,6 +2151,7 @@ const App: React.FC = () => {
                      sessionTimerEnabled={sessionTimerEnabled}
                      onSessionTimerToggle={handleToggleSessionTimerEnabled}
                      onSessionTimerStart={handleStartSessionTimer}
+                     onSessionTimerStartWithDuration={handleStartSessionTimerWithDuration}
                      onSessionTimerPause={handlePauseSessionTimer}
                      onSessionTimerReset={handleResetSessionTimer}
                      timerAudio={timerAudio}
