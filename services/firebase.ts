@@ -1,4 +1,5 @@
-import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
+import type { FirebaseApp } from 'firebase/app';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getFunctions, Functions } from 'firebase/functions';
 import { getAuth, Auth, signInAnonymously } from 'firebase/auth';

@@ -1,5 +1,4 @@
 
-import { logger } from './logger';
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 // Mock Logger to prevent noise during test execution
@@ -45,10 +44,12 @@ describe('SYSTEM: Configuration & Initialization', () => {
   it('FAIL: Reports error when Runtime Config is missing', async () => {
     // Clear runtime config and reload
     delete (window as any).__RUNTIME_CONFIG__;
+    const { initializeApp } = await import('firebase/app');
     const { firebaseConfigError, missingKeys } = await import('./firebase');
     expect(firebaseConfigError).toBe(true);
     expect(missingKeys).toContain('FIREBASE_API_KEY');
     expect(missingKeys).toContain('FIREBASE_PROJECT_ID');
+    expect(initializeApp).not.toHaveBeenCalled();
   });
 
   it('FAIL: Reports error when keys are placeholders', async () => {
@@ -75,6 +76,7 @@ describe('SYSTEM: Configuration & Initialization', () => {
     };
 
     vi.resetModules();
+    const { initializeApp } = await import('firebase/app');
     const { firebaseConfigError, app, projectId } = await import('./firebase');
     
     if (firebaseConfigError) {
@@ -84,5 +86,14 @@ describe('SYSTEM: Configuration & Initialization', () => {
     expect(firebaseConfigError).toBe(false);
     expect(app).toBeDefined();
     expect(projectId).toBe('test-project');
+    expect(initializeApp).toHaveBeenCalledTimes(1);
+    expect(initializeApp).toHaveBeenCalledWith({
+      apiKey: 'AIzaSyTestKey',
+      authDomain: 'test.firebaseapp.com',
+      projectId: 'test-project',
+      storageBucket: 'test.appspot.com',
+      messagingSenderId: '123456789',
+      appId: '1:123456789:web:abcdef',
+    });
   });
 });
