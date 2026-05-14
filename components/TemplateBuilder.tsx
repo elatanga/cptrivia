@@ -477,7 +477,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
       });
 
       if (initialTemplate) {
-        dataService.updateTemplate({
+        await dataService.updateTemplate({
           ...initialTemplate,
           topic: config.title,
           categories: validatedCategories,
@@ -496,7 +496,7 @@ export const TemplateBuilder: React.FC<Props> = ({ showId, initialTemplate, onCl
           }
         });
       } else {
-        dataService.createTemplate(showId, config.title, {
+        await dataService.createTemplate(showId, config.title, {
           playerCount: finalPlayerNames.length,
           playerNames: finalPlayerNames,
           categoryCount: validatedCategories.length,

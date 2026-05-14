@@ -16,23 +16,32 @@ export const ShowSelection: React.FC<Props> = ({ username, onSelectShow }) => {
   const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
-    setShows(dataService.getShowsForUser(username));
+    let cancelled = false;
+    dataService.getShowsForUserAsync(username)
+      .then((nextShows) => {
+        if (!cancelled) setShows(nextShows);
+      })
+      .catch(() => {
+        if (!cancelled) setShows(dataService.getShowsForUser(username));
+      });
+    return () => { cancelled = true; };
   }, [username]);
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
     
     soundService.playClick();
     setIsCreating(true);
-    // Simulate brief network delay
-    setTimeout(() => {
-      const show = dataService.createShow(username, newTitle.trim());
+    try {
+      await new Promise(r => setTimeout(r, 500));
+      const show = await dataService.createShow(username, newTitle.trim());
       setShows(prev => [show, ...prev]);
       setNewTitle('');
-      setIsCreating(false);
       onSelectShow(show);
-    }, 500);
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (

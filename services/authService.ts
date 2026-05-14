@@ -1,6 +1,8 @@
 
 import { User, Session, TokenRequest, AuthResponse, AuditLogEntry, UserRole, AppError, AuditAction, DeliveryLog, UserSource, UserProfile } from '../types';
 import { logger } from './logger';
+import { apiRequest } from './apiClient';
+import { usesFirebaseDataSource } from './runtimeEnvironment';
 
 const STORAGE_KEYS = {
   USERS: 'cruzpham_db_users',
@@ -108,11 +110,19 @@ async function simulateSmsProvider(to: string, message: string): Promise<{ succe
 // --- BACKEND SERVICE ---
 
 class AuthService {
+  private usersCache: User[] = [];
+  private requestsCache: TokenRequest[] = [];
+  private auditLogsCache: AuditLogEntry[] = [];
+
   constructor() {
     // No auto-seed. Rely on bootstrap.
   }
 
   // --- PRIVATE HELPERS ---
+
+  private useFirebase(): boolean {
+    return usesFirebaseDataSource();
+  }
 
   private checkUserRateLimit(actorId: string) {
     const now = Date.now();
@@ -153,16 +163,28 @@ class AuthService {
     localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
   }
   getRequests(): TokenRequest[] {
+    if (this.useFirebase()) return [...this.requestsCache];
     try { 
       const reqs = JSON.parse(localStorage.getItem(STORAGE_KEYS.REQUESTS) || '[]'); 
       return reqs.sort((a: TokenRequest, b: TokenRequest) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } catch { return []; }
   }
+  async getRequestsAsync(): Promise<TokenRequest[]> {
+    if (!this.useFirebase()) return this.getRequests();
+    this.requestsCache = await apiRequest<TokenRequest[]>('/admin/token-requests');
+    return [...this.requestsCache];
+  }
   private saveRequests(reqs: TokenRequest[]) {
     localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(reqs));
   }
   getAuditLogs(): AuditLogEntry[] {
+    if (this.useFirebase()) return [...this.auditLogsCache];
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.AUDIT) || '[]'); } catch { return []; }
+  }
+  async getAuditLogsAsync(): Promise<AuditLogEntry[]> {
+    if (!this.useFirebase()) return this.getAuditLogs();
+    this.auditLogsCache = await apiRequest<AuditLogEntry[]>('/admin/audit-logs');
+    return [...this.auditLogsCache];
   }
   private saveAuditLog(logs: AuditLogEntry[]) {
     localStorage.setItem(STORAGE_KEYS.AUDIT, JSON.stringify(logs));
@@ -191,6 +213,10 @@ class AuthService {
   // --- BOOTSTRAP SYSTEM ---
 
   async getBootstrapStatus(): Promise<{ masterReady: boolean }> {
+    if (this.useFirebase()) {
+      return apiRequest<{ masterReady: boolean }>('/bootstrap/status');
+    }
+
     logger.info('bootstrapStatusCheck');
     await new Promise(r => setTimeout(r, 150));
     
@@ -206,6 +232,14 @@ class AuthService {
   }
 
   async bootstrapMasterAdmin(username: string): Promise<string> {
+    if (this.useFirebase()) {
+      const result = await apiRequest<{ token: string }>('/bootstrap/master', {
+        method: 'POST',
+        body: JSON.stringify({ username }),
+      });
+      return result.token;
+    }
+
     logger.info('bootstrapAttempt', { username });
 
     const currentStatus = await this.getBootstrapStatus();
@@ -254,6 +288,17 @@ class AuthService {
   // --- AUTH ---
 
   async login(username: string, token: string): Promise<AuthResponse> {
+    if (this.useFirebase()) {
+      const result = await apiRequest<AuthResponse>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, token }),
+      });
+      if (result.success && result.session) {
+        localStorage.setItem('cruzpham_active_session_id', result.session.id);
+      }
+      return result;
+    }
+
     await new Promise(r => setTimeout(r, 400)); // Latency
 
     const users = this.getUsers();
@@ -302,6 +347,20 @@ class AuthService {
   }
 
   async logout(sessionId: string): Promise<void> {
+    if (this.useFirebase()) {
+      try {
+        await apiRequest<{ success: boolean }>('/auth/logout', {
+          method: 'POST',
+          body: JSON.stringify({ sessionId }),
+        });
+      } finally {
+        if (localStorage.getItem('cruzpham_active_session_id') === sessionId) {
+          localStorage.removeItem('cruzpham_active_session_id');
+        }
+      }
+      return;
+    }
+
     const sessions = this.getSessions();
     if (sessions[sessionId]) {
       delete sessions[sessionId];
@@ -314,6 +373,13 @@ class AuthService {
   }
 
   async restoreSession(sessionId: string): Promise<AuthResponse> {
+    if (this.useFirebase()) {
+      return apiRequest<AuthResponse>('/auth/restore', {
+        method: 'POST',
+        body: JSON.stringify({ sessionId }),
+      });
+    }
+
     const bsStatus = await this.getBootstrapStatus();
     if (!bsStatus.masterReady) {
       return { success: false, code: 'ERR_UNKNOWN' };
@@ -341,10 +407,25 @@ class AuthService {
   // --- ADMIN USER MANAGEMENT ---
 
   getAllUsers(): User[] {
+    if (this.useFirebase()) return [...this.usersCache];
     return this.getUsers();
   }
 
+  async getAllUsersAsync(): Promise<User[]> {
+    if (!this.useFirebase()) return this.getAllUsers();
+    this.usersCache = await apiRequest<User[]>('/admin/users');
+    return [...this.usersCache];
+  }
+
   async createUser(actorUsername: string, userData: Partial<User> & { profile?: Partial<UserProfile> }, role: UserRole, durationMinutes?: number): Promise<string> {
+    if (this.useFirebase()) {
+      const result = await apiRequest<{ token: string }>('/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({ actorUsername, userData, role, durationMinutes }),
+      });
+      return result.token;
+    }
+
     this.checkUserRateLimit(actorUsername);
     const users = this.getUsers();
     const actor = users.find(u => u.username === actorUsername);
@@ -401,6 +482,14 @@ class AuthService {
   }
 
   async refreshToken(actorUsername: string, targetUsername: string): Promise<string> {
+    if (this.useFirebase()) {
+      const result = await apiRequest<{ token: string }>(`/admin/users/${encodeURIComponent(targetUsername)}/token`, {
+        method: 'POST',
+        body: JSON.stringify({ actorUsername }),
+      });
+      return result.token;
+    }
+
     this.checkUserRateLimit(actorUsername);
     const users = this.getUsers();
     const actor = users.find(u => u.username === actorUsername);
@@ -433,6 +522,14 @@ class AuthService {
   }
 
   async toggleAccess(actorUsername: string, targetUsername: string, revoke: boolean) {
+    if (this.useFirebase()) {
+      await apiRequest<{ success: boolean }>(`/admin/users/${encodeURIComponent(targetUsername)}/access`, {
+        method: 'POST',
+        body: JSON.stringify({ actorUsername, revoke }),
+      });
+      return;
+    }
+
     const users = this.getUsers();
     const actor = users.find(u => u.username === actorUsername);
     const targetIdx = users.findIndex(u => u.username === targetUsername);
@@ -463,6 +560,14 @@ class AuthService {
   }
 
   async deleteUser(actorUsername: string, targetUsername: string) {
+    if (this.useFirebase()) {
+      await apiRequest<{ success: boolean }>(`/admin/users/${encodeURIComponent(targetUsername)}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ actorUsername }),
+      });
+      return;
+    }
+
     let users = this.getUsers();
     const actor = users.find(u => u.username === actorUsername);
     const target = users.find(u => u.username === targetUsername);
@@ -488,6 +593,13 @@ class AuthService {
   // --- DELIVERY SYSTEM ---
 
   async sendMessage(actorUsername: string, targetUsername: string, method: 'EMAIL' | 'SMS', content: string) {
+    if (this.useFirebase()) {
+      return apiRequest<DeliveryLog>('/admin/messages', {
+        method: 'POST',
+        body: JSON.stringify({ actorUsername, targetUsername, method, content }),
+      });
+    }
+
     this.checkUserRateLimit(actorUsername);
     
     const users = this.getUsers();
@@ -536,6 +648,13 @@ class AuthService {
   // --- REQUEST MANAGEMENT ---
   
   async submitTokenRequest(data: Omit<TokenRequest, 'id' | 'status' | 'createdAt' | 'updatedAt' | 'adminNotifyStatus' | 'userNotifyStatus' | 'adminNotifyError'>): Promise<TokenRequest> {
+    if (this.useFirebase()) {
+      return apiRequest<TokenRequest>('/token-requests', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    }
+
     const timestamp = new Date().toISOString();
     
     // Validate Phone strictly E.164
@@ -577,6 +696,12 @@ class AuthService {
   }
 
   async notifyAdmins(reqId: string) {
+    if (this.useFirebase()) {
+      return apiRequest<{ success: boolean }>(`/admin/token-requests/${encodeURIComponent(reqId)}/retry-notification`, {
+        method: 'POST',
+      });
+    }
+
     logger.info('notifyAdminsAttempt', { reqId });
     
     const requests = this.getRequests();
@@ -614,11 +739,23 @@ class AuthService {
   }
 
   async retryAdminNotification(reqId: string) {
+      if (this.useFirebase()) {
+        return apiRequest<{ success: boolean }>(`/admin/token-requests/${encodeURIComponent(reqId)}/retry-notification`, {
+          method: 'POST',
+        });
+      }
       return this.notifyAdmins(reqId);
   }
 
   // APPROVAL WORKFLOW
   async approveRequest(actorUsername: string, reqId: string, customUsername?: string): Promise<{ rawToken: string, user: User }> {
+    if (this.useFirebase()) {
+      return apiRequest<{ rawToken: string, user: User }>(`/admin/token-requests/${encodeURIComponent(reqId)}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ actorUsername, customUsername }),
+      });
+    }
+
     const users = this.getUsers();
     const actor = users.find(u => u.username === actorUsername);
     
@@ -687,6 +824,14 @@ class AuthService {
 
   // REJECTION WORKFLOW
   async rejectRequest(actorUsername: string, reqId: string) {
+    if (this.useFirebase()) {
+      await apiRequest<{ success: boolean }>(`/admin/token-requests/${encodeURIComponent(reqId)}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ actorUsername }),
+      });
+      return;
+    }
+
     const users = this.getUsers();
     const actor = users.find(u => u.username === actorUsername);
     

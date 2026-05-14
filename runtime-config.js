@@ -10,6 +10,7 @@ window.__RUNTIME_CONFIG__ = {
   FIREBASE_MESSAGING_SENDER_ID: "...",
   FIREBASE_APP_ID: "...",
   BUILD_ENV: "production",
+  DATA_SOURCE: "firebase",
   BUILD_VERSION: "v1"
 };
 

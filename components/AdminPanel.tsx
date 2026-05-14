@@ -47,10 +47,19 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
     refreshData();
   }, [activeTab]);
 
-  const refreshData = () => {
-    setUsers(authService.getAllUsers());
-    setRequests(authService.getRequests());
-    setAuditLogs(authService.getAuditLogs());
+  const refreshData = async () => {
+    try {
+      const [nextUsers, nextRequests, nextAuditLogs] = await Promise.all([
+        authService.getAllUsersAsync(),
+        authService.getRequestsAsync(),
+        authService.getAuditLogsAsync(),
+      ]);
+      setUsers(nextUsers);
+      setRequests(nextRequests);
+      setAuditLogs(nextAuditLogs);
+    } catch (e: any) {
+      addToast('error', e.message || 'Unable to load admin data.');
+    }
   };
 
   // --- ACTIONS ---
@@ -76,7 +85,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
       
       setIsCreating(false);
       setNewUser({ username: '', role: 'PRODUCER', duration: '', email: '', phone: '', tiktok: '', firstName: '', lastName: '' });
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', e.message);
     }
@@ -87,7 +96,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
     try {
       await authService.retryAdminNotification(reqId);
       addToast('success', 'Notification retry initiated.');
-      refreshData();
+      await refreshData();
     } catch (e) {
       addToast('error', 'Retry failed');
     } finally {
@@ -108,7 +117,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
       setCredentialModal({ username: result.user.username, token: result.rawToken });
       addToast('success', 'Request Approved & User Created');
       setApprovingReq(null);
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', e.message);
     } finally {
@@ -137,7 +146,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
         await authService.deleteUser(currentUser, username);
         addToast('info', 'User deleted.');
       }
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', e.message);
     } finally {
@@ -151,7 +160,7 @@ export const AdminPanel: React.FC<Props> = ({ currentUser, onClose, addToast }) 
     try {
       await authService.sendMessage(currentUser, targetUsername, method, msg);
       addToast('success', `${method} sent successfully.`);
-      refreshData();
+      await refreshData();
     } catch (e: any) {
       addToast('error', `Send failed: ${e.message}`);
     } finally {

@@ -34,6 +34,7 @@ describe('SYSTEM: Configuration & Initialization', () => {
 
   beforeEach(() => {
     vi.resetModules();
+    vi.clearAllMocks();
     process.env = { ...originalEnv };
     (window as any).__RUNTIME_CONFIG__ = undefined;
   });
@@ -84,5 +85,26 @@ describe('SYSTEM: Configuration & Initialization', () => {
     expect(firebaseConfigError).toBe(false);
     expect(app).toBeDefined();
     expect(projectId).toBe('test-project');
+  });
+
+  it('SUCCESS: Reuses existing Firebase app singleton when already initialized', async () => {
+    const firebaseApp = await import('firebase/app');
+    vi.mocked(firebaseApp.getApps).mockReturnValue([{ name: '[DEFAULT]' } as any]);
+
+    (window as any).__RUNTIME_CONFIG__ = {
+      FIREBASE_API_KEY: 'AIzaSyTestKey',
+      FIREBASE_AUTH_DOMAIN: 'test.firebaseapp.com',
+      FIREBASE_PROJECT_ID: 'test-project',
+      FIREBASE_STORAGE_BUCKET: 'test.appspot.com',
+      FIREBASE_MESSAGING_SENDER_ID: '123456789',
+      FIREBASE_APP_ID: '1:123456789:web:abcdef'
+    };
+
+    vi.resetModules();
+    const { app, firebaseConfigError } = await import('./firebase');
+
+    expect(firebaseConfigError).toBe(false);
+    expect(app).toEqual({ name: '[DEFAULT]' });
+    expect(firebaseApp.initializeApp).not.toHaveBeenCalled();
   });
 });

@@ -1132,7 +1132,7 @@ const App: React.FC = () => {
                     if (uiStateRaw) {
                       const uiState = JSON.parse(uiStateRaw);
                       if (uiState.activeShowId) {
-                        const restoredShow = dataService.getShowById(uiState.activeShowId);
+                        const restoredShow = await dataService.getShowByIdAsync(uiState.activeShowId);
                         if (restoredShow) setActiveShow(restoredShow);
                       }
                       if (uiState.viewMode) setViewMode(uiState.viewMode);

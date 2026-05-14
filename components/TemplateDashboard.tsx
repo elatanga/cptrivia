@@ -30,8 +30,12 @@ export const TemplateDashboard: React.FC<Props> = ({ show, onSwitchShow, onPlayT
     }
   }, [editingTemplate, onBuilderToggle]);
 
-  const loadTemplates = () => {
-    setTemplates(dataService.getTemplatesForShow(show.id));
+  const loadTemplates = async () => {
+    try {
+      setTemplates(await dataService.getTemplatesForShowAsync(show.id));
+    } catch (e: any) {
+      addToast('error', e.message || 'Unable to load templates.');
+    }
   };
 
   const handleCreateNew = () => {
@@ -48,12 +52,12 @@ export const TemplateDashboard: React.FC<Props> = ({ show, onSwitchShow, onPlayT
     setEditingTemplate(t);
   };
 
-  const handleDelete = (e: React.MouseEvent, id: string) => {
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     soundService.playClick();
     if (confirm('Delete this template permanently?')) {
-      dataService.deleteTemplate(id);
-      loadTemplates();
+      await dataService.deleteTemplate(id);
+      await loadTemplates();
       addToast('info', 'Template deleted.');
     }
   };
@@ -80,11 +84,11 @@ export const TemplateDashboard: React.FC<Props> = ({ show, onSwitchShow, onPlayT
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const content = event.target?.result as string;
-        dataService.importTemplate(show.id, content);
-        loadTemplates();
+        await dataService.importTemplate(show.id, content);
+        await loadTemplates();
         addToast('success', 'Template imported successfully.');
       } catch (err: any) {
         addToast('error', `Import failed: ${err.message}`);

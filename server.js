@@ -1,6 +1,10 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createCorsMiddleware } from "./server/cors.js";
+import { createProductionApiRouter } from "./server/productionApi.js";
+import { resolveRuntimeConfigEnv } from "./server/runtimeConfig.js";
+import { safeLog } from "./server/safeLog.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +19,10 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const app = express();
+
+app.use(express.json({ limit: "1mb" }));
+app.use(createCorsMiddleware({ log: safeLog }));
+app.use("/api", createProductionApiRouter({ log: safeLog }));
 
 // 1. CONSTANTS & ENV
 const PORT = process.env.PORT || 8080;
@@ -38,6 +46,11 @@ app.get("/runtime-config.js", (req, res) => {
   }
 
   const safe = (v) => String(v || "").replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  const { buildEnv, productionRuntime, requestedDataSource, dataSource } = resolveRuntimeConfigEnv(process.env);
+
+  if (productionRuntime && requestedDataSource.toLowerCase() !== "firebase") {
+    safeLog("WARNING", "mockDataSourceIgnoredInProduction", { buildEnv, requestedDataSource });
+  }
 
   const configContent = `
     window.__RUNTIME_CONFIG__ = {
@@ -51,7 +64,8 @@ app.get("/runtime-config.js", (req, res) => {
       GEMINI_API_KEY: "${safe(process.env.GEMINI_API_KEY)}",
       GEMINI_MODEL: "${safe(process.env.GEMINI_MODEL)}",
       AI_MODEL: "${safe(process.env.AI_MODEL)}",
-      BUILD_ENV: "${safe(process.env.BUILD_ENV || "production")}"
+      BUILD_ENV: "${safe(buildEnv)}",
+      DATA_SOURCE: "${safe(dataSource)}"
     };
   `;
   res.status(200).send(configContent);
